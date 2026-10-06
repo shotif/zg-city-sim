@@ -1,0 +1,25 @@
+# Dependencies and builds
+node_modules/
+dist/
+target/
+*.tsbuildinfo
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Data pipeline: raw downloads and generated assets are rebuilt by `python -m pipeline`
+pipeline/.cache/
+web/public/data/
+
+# Test output
+web/test-results/
+web/playwright-report/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
