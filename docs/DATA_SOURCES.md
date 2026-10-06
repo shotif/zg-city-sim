@@ -205,6 +205,11 @@ Selected stations around Zagreb (2025 PGDP, vehicles per day):
 
 The city street network and the toll-free Zagreb bypass (A3 Jankomir–Lučko–Ivanja Reka) have **no** stations.
 
+**In use** (`pipeline/counts.py`): 11 of these stations, placed by hand on the network from their road number and section name (Velika Mlaka's road has no number and is left out).
+- The motorway stations and Pojatno (D1) also set the traffic crossing the map's edge on their road. A share is taken off where interchanges lie between the station and the edge.
+- The four state-road stations inside the map are independent checks.
+- Results: [VALIDATION.md](VALIDATION.md).
+
 ## 5. Transport Master Plan (2020)
 
 **Documents:**

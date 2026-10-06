@@ -62,6 +62,10 @@ cargo run --release --example day -- ../web/public/data /tmp/day
 cd .. && python -m pipeline.validate /tmp/day   # writes docs/VALIDATION.md
 ```
 
+Both runners and the app simulate the calibrated share of the demand (`DEMAND_SCALE` in
+`pipeline/demand.py`, 60 % for now; see the validation report). Set `DEMAND_SCALE=1` in the
+environment to run all of it natively.
+
 ## Controls
 
 | Action | Mouse | Touch | Keys |
