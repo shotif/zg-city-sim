@@ -17,6 +17,7 @@ export const EDIT_COLORS: Record<Edit['kind'] | 'selected', number> = {
   busLane: 0xd6336c,
   ban: 0xf2c12e,
   green: 0x2fbf71,
+  road: 0x12a4a0,
 };
 
 /** Roads changed by edits, and the road being edited, drawn over the map. */
@@ -67,5 +68,45 @@ export class EditLayer {
       lines.renderOrder = 4;
       this.object.add(lines);
     }
+  }
+}
+
+/** The road being drawn (Build panel, New road): its points joined over the ground. */
+export class DrawLayer {
+  readonly object = new THREE.Group();
+
+  constructor(private readonly height: HeightFn) {
+    this.object.name = 'drawing';
+  }
+
+  show(points: readonly { x: number; z: number }[]): void {
+    for (const child of [...this.object.children]) {
+      this.object.remove(child);
+      if (child instanceof LineSegments2) {
+        child.geometry.dispose();
+        (child.material as THREE.Material).dispose();
+      }
+    }
+    if (points.length === 0) return;
+    const y = (p: { x: number; z: number }) => this.height(p.x, p.z) + LIFT + 1;
+    const positions: number[] = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+      const [a, b] = [points[i], points[i + 1]];
+      positions.push(a.x, y(a), a.z, b.x, y(b), b.z);
+    }
+    // A cross at each point clicked.
+    for (const p of points) {
+      positions.push(p.x - 6, y(p), p.z - 6, p.x + 6, y(p), p.z + 6);
+      positions.push(p.x - 6, y(p), p.z + 6, p.x + 6, y(p), p.z - 6);
+    }
+    const geometry = new LineSegmentsGeometry();
+    geometry.setPositions(new Float32Array(positions));
+    const lines = new LineSegments2(
+      geometry,
+      new THREE.Line2NodeMaterial({ color: 0xffffff, linewidth: 4, worldUnits: false }),
+    );
+    lines.frustumCulled = false;
+    lines.renderOrder = 5;
+    this.object.add(lines);
   }
 }

@@ -29,6 +29,8 @@ let lastEdgeSpeeds = -Infinity;
 /** Closed edges and edits, kept until the engine is built. */
 let closed: Uint32Array | undefined;
 let edits: { id: number; words: Uint32Array } | undefined;
+/** A network with roads drawn that came before the engine was built. */
+let network: Extract<ToWorker, { type: 'network' }> | undefined;
 let render = true;
 /** Travel-time queries being answered a few per batch, so frames keep coming. */
 let routeJob: { id: number; pairs: Uint32Array; times: Float64Array; next: number } | undefined;
@@ -53,6 +55,7 @@ async function init(message: InitMessage): Promise<void> {
   warmUntil = message.warmUntil;
   render = message.render ?? true;
   post({ type: 'ready', buildMs: performance.now() - t0, signals: engine.signalPrograms() });
+  if (network) swapNetwork(engine, network);
   if (edits) applyEdits(engine, edits);
   last = performance.now();
   tick();
@@ -61,6 +64,20 @@ async function init(message: InitMessage): Promise<void> {
 function applyEdits(sim: TrafficEngine, message: { id: number; words: Uint32Array }): void {
   const applied = sim.setEdits(message.words);
   post({ type: 'edited', id: message.id, applied, signals: sim.signalPrograms() });
+}
+
+function swapNetwork(sim: TrafficEngine, message: Extract<ToWorker, { type: 'network' }>): void {
+  let error: string | undefined;
+  try {
+    for (const [name, data] of Object.entries(message.arrays)) sim.setArray(name, data);
+    sim.replaceNetwork(message.pieces);
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e);
+  }
+  network = undefined;
+  // Edge statistics change size with the network: start them again.
+  lastEdgeSpeeds = -Infinity;
+  post({ type: 'networked', id: message.id, signals: sim.signalPrograms(), error });
 }
 
 function tick(): void {
@@ -154,6 +171,10 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
     case 'edits':
       edits = message;
       if (engine) applyEdits(engine, message);
+      break;
+    case 'network':
+      if (engine) swapNetwork(engine, message);
+      else network = message;
       break;
     case 'routeTimes':
       routeJob = {

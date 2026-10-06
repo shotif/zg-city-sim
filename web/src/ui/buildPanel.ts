@@ -8,7 +8,7 @@ import { formatClock } from './hud';
 export const SPEED_LIMITS = [30, 40, 50, 60, 70, 80, 90, 100, 110, 130];
 const NUMBER_RANGE = { min: 3, max: 180 };
 
-function el<K extends keyof HTMLElementTagNameMap>(
+export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className: string,
   parent?: HTMLElement,
@@ -19,7 +19,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-function button(label: string, parent: HTMLElement, onClick: () => void, title?: string) {
+export function button(label: string, parent: HTMLElement, onClick: () => void, title?: string) {
   const b = el('button', 'hud-button hud-speed', parent);
   b.type = 'button';
   b.textContent = label;
@@ -67,16 +67,16 @@ export interface BuildPanelCallbacks {
   onDiffMap(on: boolean): void;
 }
 
-const fmt = (n: number, digits: number) =>
+export const fmt = (n: number, digits: number) =>
   n.toLocaleString('en-GB', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
-function percent(rel: number): string {
+export function percent(rel: number): string {
   if (!Number.isFinite(rel)) return '';
   const p = Math.round(rel * 1000) / 10;
   return `${p > 0 ? '+' : ''}${p.toLocaleString('en-GB')} %`;
 }
 
-const minutes = (s: number) => fmt(s / 60, 1);
+export const minutes = (s: number) => fmt(s / 60, 1);
 
 /**
  * The Build panel (key B): pick a road on the map to close it or its lanes, change its
@@ -111,10 +111,15 @@ export class BuildPanel {
   private signals?: SignalPrograms;
   private selectedEdge?: number;
   private shown = false;
+  /** The planned project whose network is running, if any. */
+  private scenario?: string;
+
+  /** Where the tool for drawing roads goes (ui/roadDrawer.ts). */
+  readonly drawSlot: HTMLElement;
 
   constructor(
     parent: HTMLElement,
-    private readonly index: RoadIndex,
+    private index: RoadIndex,
     private readonly callbacks: BuildPanelCallbacks,
   ) {
     this.panel = el('aside', 'hud-panel build-panel', parent);
@@ -132,6 +137,7 @@ export class BuildPanel {
 
     this.hint = el('p', 'build-hint', this.panel);
     this.hint.textContent = 'Click a road on the map to change it.';
+    this.drawSlot = el('div', 'build-draw-slot', this.panel);
 
     this.road = el('section', 'build-road', this.panel);
     this.road.hidden = true;
@@ -214,6 +220,25 @@ export class BuildPanel {
     return this.shown;
   }
 
+  /** The panel, for sections added to it (planned projects). */
+  get element(): HTMLElement {
+    return this.panel;
+  }
+
+  /** The network changed (roads drawn): roads are picked and described on this index. */
+  setIndex(index: RoadIndex): void {
+    this.index = index;
+    this.select(undefined);
+  }
+
+  /** The map runs a planned project's network: compare it (and the edits) with today's. */
+  setScenario(name: string | undefined): void {
+    this.scenario = name;
+    this.compareNote.textContent = name
+      ? `Run the day again from 06:50 with ${name} and your edits, next to today's roads with the same trips.`
+      : "Run the day again from 06:50 with your edits, next to today's roads with the same trips.";
+  }
+
   get selected(): number | undefined {
     return this.selectedEdge;
   }
@@ -229,7 +254,8 @@ export class BuildPanel {
     this.edits = edits;
     this.resolved = resolved;
     this.missingNote.hidden = missing === 0;
-    this.missingNote.textContent = `${missing} edit${missing === 1 ? '' : 's'} could not be matched to today's road network and are not in force.`;
+    const network = this.scenario ? 'this' : "today's";
+    this.missingNote.textContent = `${missing} edit${missing === 1 ? '' : 's'} could not be matched to ${network} road network and are not in force.`;
     this.renderList();
     this.renderRoad();
   }
@@ -261,7 +287,8 @@ export class BuildPanel {
   /** Measures of both simulations at simulated time `time`. */
   setComparison(time: number, rows: readonly CompareRow[]): void {
     this.compareTable.hidden = false;
-    const head = `<thead><tr><th>At ${formatClock(time)}</th><th>Today</th><th>With edits</th><th>Change</th></tr></thead>`;
+    const edited = this.scenario ? 'With project' : 'With edits';
+    const head = `<thead><tr><th>At ${formatClock(time)}</th><th>Today</th><th>${edited}</th><th>Change</th></tr></thead>`;
     this.compareTable.innerHTML = head;
     const body = el('tbody', '', this.compareTable);
     for (const row of rows) {

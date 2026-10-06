@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import shapely
@@ -147,10 +148,11 @@ class Resolver:
         return Place(self.edges[sel].tolist(), float(label[0]), float(label[1]))
 
 
-def build_news() -> dict:
+def build_news(root: Path = OUTPUT_DIR) -> dict:
+    """The reports placed on the network in `root`, written there."""
     data = json.loads(SOURCE.read_text())
-    index = json.loads((OUTPUT_DIR / "network" / "net.json").read_text())
-    net = read_packed(OUTPUT_DIR / "network" / index["file"], index)
+    index = json.loads((root / "network" / "net.json").read_text())
+    net = read_packed(root / "network" / index["file"], index)
     resolver = Resolver(net, index)
 
     by_place: dict[str, list[dict]] = {}
@@ -177,7 +179,7 @@ def build_news() -> dict:
         )
     if unplaced:
         log.warning("news: could not place %s", ", ".join(unplaced))
-    out = OUTPUT_DIR / "news" / "hotspots.json"
+    out = root / "news" / "hotspots.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"about": data["about"], "hotspots": hotspots}, ensure_ascii=False))
     stats = {

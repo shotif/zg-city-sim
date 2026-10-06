@@ -1,0 +1,205 @@
+{
+ "computed": "2026-10-06",
+ "fromHour": 6,
+ "hours": 4,
+ "demandScale": 0.6,
+ "totals": {
+  "today": {
+   "delayHours": 25798.5,
+   "vehicleKm": 2835975.0,
+   "arrived": 130822.5,
+   "tripMinutes": 26.02
+  },
+  "project": {
+   "delayHours": 24405.8,
+   "vehicleKm": 2817125,
+   "arrived": 132853,
+   "tripMinutes": 25.91
+  }
+ },
+ "perHour": [
+  {
+   "hour": 6,
+   "delayHours": [
+    4866.6,
+    4867.2
+   ],
+   "vehicleKm": [
+    718682.5,
+    721241
+   ],
+   "arrived": [
+    31046.0,
+    31641
+   ],
+   "tripMinutes": [
+    23.705,
+    23.91
+   ]
+  },
+  {
+   "hour": 7,
+   "delayHours": [
+    6734.85,
+    7068.1
+   ],
+   "vehicleKm": [
+    764719.0,
+    756906
+   ],
+   "arrived": [
+    34650.0,
+    34437
+   ],
+   "tripMinutes": [
+    26.46,
+    26.52
+   ]
+  },
+  {
+   "hour": 8,
+   "delayHours": [
+    7251.9,
+    6568.5
+   ],
+   "vehicleKm": [
+    697909.0,
+    693241
+   ],
+   "arrived": [
+    32867.5,
+    34333
+   ],
+   "tripMinutes": [
+    27.725,
+    27.83
+   ]
+  },
+  {
+   "hour": 9,
+   "delayHours": [
+    6945.049999999999,
+    5902.0
+   ],
+   "vehicleKm": [
+    654664.5,
+    645737
+   ],
+   "arrived": [
+    32259.0,
+    32442
+   ],
+   "tripMinutes": [
+    26.055,
+    25.18
+   ]
+  }
+ ],
+ "travel": {
+  "perHour": [
+   {
+    "hour": 7,
+    "mean": 0.0023
+   },
+   {
+    "hour": 8,
+    "mean": -0.0045
+   },
+   {
+    "hour": 9,
+    "mean": -0.0271
+   },
+   {
+    "hour": 10,
+    "mean": -0.0441
+   }
+  ],
+  "mean": -0.0225,
+  "faster": [
+   {
+    "from": "Sesvete",
+    "to": "Trnje",
+    "today": 1499,
+    "project": 1380
+   },
+   {
+    "from": "Sesvete",
+    "to": "Velika Gorica",
+    "today": 1224,
+    "project": 1130
+   },
+   {
+    "from": "Sesvete",
+    "to": "Gornja Dubrava",
+    "today": 713,
+    "project": 664
+   }
+  ],
+  "slower": [
+   {
+    "from": "Dugo Selo",
+    "to": "Zaprešić",
+    "today": 2118,
+    "project": 2278
+   },
+   {
+    "from": "Gornji grad – Medveščak",
+    "to": "Sesvete",
+    "today": 1654,
+    "project": 1763
+   },
+   {
+    "from": "Sesvete",
+    "to": "Peščenica – Žitnjak",
+    "today": 996,
+    "project": 1026
+   }
+  ]
+ },
+ "roads": [
+  {
+   "name": "Ulica kneza Branimira",
+   "today": 1900,
+   "project": 4725
+  },
+  {
+   "name": "Zagrebačka cesta",
+   "today": 2314,
+   "project": 1574
+  },
+  {
+   "name": "Varaždinska cesta",
+   "today": 1797,
+   "project": 1301
+  },
+  {
+   "name": "Industrijska cesta",
+   "today": 1754,
+   "project": 1383
+  },
+  {
+   "name": "Vugrovečka cesta",
+   "today": 757,
+   "project": 1095
+  },
+  {
+   "name": "Željeznička cesta",
+   "today": 1522,
+   "project": 1228
+  },
+  {
+   "name": "Sopnička ulica",
+   "today": 2087,
+   "project": 1800
+  },
+  {
+   "name": "Sesvetska cesta",
+   "today": 1256,
+   "project": 1009
+  }
+ ],
+ "noise": {
+  "delay": 0.1578,
+  "travel": 0.0609
+ }
+}

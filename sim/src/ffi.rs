@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use crate::demand::{Demand, Gateway};
 use crate::edits::Edit;
-use crate::engine::{DT, Engine, RENDER_STRIDE, Trip, stat};
+use crate::engine::{DT, Engine, LanePiece, RENDER_STRIDE, Trip, stat};
 use crate::network::{Network, NetworkData};
 use crate::transit::{Transit, TransitData};
 
@@ -222,6 +222,38 @@ pub unsafe extern "C" fn zg_set_edits(words: *const u32, n: usize) -> u32 {
     };
     let edits = Edit::decode(list);
     with_state(|s| s.engine.as_mut().map_or(0, |e| e.set_edits(&edits) as u32))
+}
+
+/// Replace the running network with the arrays loaded since (`zg_array`), keeping the
+/// vehicles (`Engine::replace_network`): `n` u32 words at `words`, four per lane piece (old
+/// lane, from as f32 bits, new lane, shift as f32 bits). Returns 0, or -1 if the arrays or
+/// pieces are inconsistent (the network running is kept).
+///
+/// # Safety
+/// `words` must point to `n` u32 values (or `n` be 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_replace_network(words: *const u32, n: usize) -> i32 {
+    let list: &[u32] = if n == 0 || words.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(words, n) }
+    };
+    let pieces: Vec<LanePiece> = list
+        .chunks_exact(4)
+        .map(|w| LanePiece {
+            old: w[0],
+            from: f32::from_bits(w[1]),
+            lane: w[2],
+            shift: f32::from_bits(w[3]),
+        })
+        .collect();
+    with_state(|s| {
+        let data = std::mem::take(&mut s.data);
+        match s.engine.as_mut().map(|e| e.replace_network(data, &pieces)) {
+            Some(Ok(())) => 0,
+            _ => -1,
+        }
+    })
 }
 
 /// Pointer to one of the engine's signal arrays as it runs them (the guessed programs

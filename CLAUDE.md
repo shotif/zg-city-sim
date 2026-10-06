@@ -21,12 +21,13 @@ Read these before changing anything:
 
 | Path | What |
 |---|---|
-| `pipeline/` | Python data pipeline (`python -m pipeline <steps>`). Steps, in order: `terrain`, `ground`, `network` (OSM → SUMO netconvert → packed arrays, `simnet.py`), `buildings`, `demand` (residents, jobs, gateways), `transit` (ZET GTFS), `news`. Output goes to `web/public/data/`. |
+| `pipeline/` | Python data pipeline (`python -m pipeline <steps>`). Steps, in order: `terrain`, `ground`, `network` (OSM → SUMO netconvert → packed arrays, `simnet.py`), `buildings`, `demand` (residents, jobs, gateways), `transit` (ZET GTFS), `news`, `projects`. Output goes to `web/public/data/`. |
 | `pipeline/counts.py` | Hrvatske ceste count stations (2025), read from `pipeline/data/hc_counts_2025.json`, with working-day estimates. |
 | `pipeline/hc.py` | Tool, run by hand: downloads Hrvatske ceste's tables and PDF, places the stations on OSM roads by road number and section, reads the hourly and weekday charts, and writes `hc_counts_2025.json`. Never commit the PDF. |
 | `pipeline/census.py` | Tool, run by hand: DZS 2021 population by settlement for the counties around the City (`pipeline/data/census_2021_settlements.json`). |
 | `pipeline/gateways.py` | Traffic across the map's edge: counted sections crossing it, else typical volumes. |
 | `pipeline/validate.py` | Writes `docs/VALIDATION.md` from a day run. |
+| `pipeline/projects.py` | Planned road projects (M4c): each a patch over the OSM extract (proposed or construction ways opened, ends carried across roads, signals, bridges), built by netconvert into a network of its own with demand, transit and news (`web/public/data/projects/<id>/`, about 3 min each). `python -m pipeline.projects compare` writes their before and after numbers to `pipeline/data/projects/<id>.json`. |
 | `pipeline/data/news.json` | Curated news reports of jams (39 places). |
 | `sim/` | Rust traffic engine, compiled to WebAssembly (C ABI in `ffi.rs`) and run natively. |
 | `sim/src/engine.rs` | Vehicles, IDM/MOBIL, junction right of way, signals (`merge_signal_phases`, `retime_signals`, actuated control), routing calls, closures, statistics. |
@@ -34,9 +35,10 @@ Read these before changing anything:
 | `sim/src/router.rs` | ALT A* with weighted heuristic. |
 | `sim/src/demand.rs` | Trip generation: `HOURLY` profile, gravity model, gateways. |
 | `sim/src/transit.rs` | Trams and buses on timetable. |
+| `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
-| `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck) and `day.rs` (a whole weekday, for validation). |
-| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles, traffic map, closures, news); `src/ui/` the HUD and panels; `src/camera/` the views. |
+| `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck), `day.rs` (a whole weekday, for validation) and `compare.rs` (one network through the morning peak, for a project's before and after). |
+| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles, traffic map, closures, news, edits); `src/edit/` the edit model, road index, comparisons, projects and the junction builder (`builder.ts`: roads drawn, built into the network the engine runs); `src/ui/` the HUD and panels; `src/camera/` the views. |
 | `.github/workflows/` | `deploy.yml` (build, test, deploy main) and `live-data.yml` (copies the City's closures feed to the `live-data` branch every 15 minutes). |
 
 ## Commands
@@ -59,6 +61,10 @@ gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
 cd sim && cargo run --release --example run -- ../web/public/data/network 6 270   # 06:00 for 270 min
 cargo run --release --example day -- ../web/public/data /tmp/day                 # a whole weekday, about 1 h
 cd .. && python -m pipeline.validate /tmp/day                                     # rewrites docs/VALIDATION.md
+# A project's before and after (06:00-10:00): today's network with two seeds, then the project's
+cd sim && cargo run --release --example compare -- ../web/public/data /tmp/today.json 6 4 1   # and seed 2
+cargo run --release --example compare -- ../web/public/data/projects/<id> /tmp/p.json       # gunzip its .bin.gz first
+cd .. && python -m pipeline.projects compare <id> /tmp/p.json /tmp/today.json /tmp/today2.json
 ```
 
 Environment variables for the native runs:
@@ -70,6 +76,8 @@ Environment variables for the native runs:
 
 - **Generated data:** `web/public/data/` is generated and gitignored. CI rebuilds it from scratch on every push.
 - **Stale data in native runs:** the native runners read the unpacked `.bin` files. After rebuilding data, unpack again with `gunzip -kf`, or they quietly run on the old network.
+- **Drawn roads keep ids:** the junction builder builds every network from the one loaded, so lanes, edges and junctions loaded keep their ids and drawn ones come after. The engine is told where each lane went (`lanePieces`); keep that invariant when changing either side.
+- **Project comparisons are noisy:** two runs of today's roads with other seeds differ by about 16 % in delay over the morning peak. Compare roads near a project, not the whole network, and use the mean of two runs of today.
 - **Ids change with the network:** rebuilding the network with different netconvert options renumbers edges, lanes and links. Validate a day run against the network it ran on: `validate.py` checks the edge count.
 - **Day runs are slow:** a full simulated day takes about an hour on one core. To compare variants, run them in parallel, each built into its own `CARGO_TARGET_DIR`, so rebuilding never touches a running binary.
 - **Runs vary:** under congestion, results differ from run to run. Compare whole days, and change one thing at a time where you can.

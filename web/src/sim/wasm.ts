@@ -16,6 +16,7 @@ export interface EngineExports {
   zg_add_trip(depart: number, from: number, to: number, vtype: number): void;
   zg_set_closed(edges: number, count: number): void;
   zg_set_edits(words: number, count: number): number;
+  zg_replace_network(words: number, count: number): number;
   zg_signal_ptr(which: number): number;
   zg_signal_len(which: number): number;
   zg_route_time(from: number, to: number): number;
@@ -183,6 +184,23 @@ export class TrafficEngine {
     const applied = ex.zg_set_edits(ptr, words.length);
     if (bytes > 0) ex.zg_free(ptr, bytes);
     return applied;
+  }
+
+  /** Swap in the network whose arrays were set since (roads drawn, web/src/edit/builder.ts),
+   * keeping the vehicles: `pieces` say where the lanes running now went (four words each:
+   * old lane, from as f32 bits, new lane, shift as f32 bits). */
+  replaceNetwork(pieces: Uint32Array): void {
+    const ex = this.exports;
+    const bytes = pieces.byteLength;
+    const ptr = bytes > 0 ? ex.zg_alloc(bytes) : 0;
+    if (bytes > 0) {
+      new Uint8Array(this.memory, ptr, bytes).set(
+        new Uint8Array(pieces.buffer, pieces.byteOffset, bytes),
+      );
+    }
+    const result = ex.zg_replace_network(ptr, pieces.length);
+    if (bytes > 0) ex.zg_free(ptr, bytes);
+    if (result !== 0) throw new Error('The traffic engine rejected the changed network');
   }
 
   /** Copies of the signal programs the engine runs. */

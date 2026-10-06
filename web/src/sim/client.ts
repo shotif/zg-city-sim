@@ -1,5 +1,5 @@
 import type { FromWorker, InitMessage, ToWorker } from './protocol';
-import type { SignalPrograms } from './wasm';
+import type { NumericArray, SignalPrograms } from './wasm';
 
 export interface SimFrame {
   /** Simulated time (s since midnight). */
@@ -29,6 +29,10 @@ export class SimClient {
   editsApplied?: { id: number; applied: number };
   onFrame?: () => void;
   onEdited?: (applied: number, signals: SignalPrograms) => void;
+  /** The latest network sent runs (`error`: it could not be swapped in). */
+  onNetwork?: (signals: SignalPrograms, error?: string) => void;
+  /** Id of the latest network the worker has swapped in (0: as loaded). */
+  networkApplied = 0;
   onEdgeSpeeds?: (speeds: Uint8Array) => void;
   onReady?: (buildMs: number) => void;
   onError?: (message: string) => void;
@@ -56,6 +60,11 @@ export class SimClient {
         this.signals = message.signals;
         this.editsApplied = { id: message.id, applied: message.applied };
         if (message.id === this.editsId) this.onEdited?.(message.applied, message.signals);
+        break;
+      case 'networked':
+        this.signals = message.signals;
+        this.networkApplied = message.id;
+        if (message.id === this.networkId) this.onNetwork?.(message.signals, message.error);
         break;
       case 'frame':
         this.prev = this.cur;
@@ -174,6 +183,15 @@ export class SimClient {
   setEdits(words: Uint32Array): void {
     this.editsId += 1;
     this.send({ type: 'edits', id: this.editsId, words });
+  }
+
+  private networkId = 0;
+
+  /** Swap in a network with roads drawn, keeping the vehicles (see edit/builder.ts): its
+   * arrays (copied to the worker) and where the lanes running now went. */
+  setNetwork(arrays: Record<string, NumericArray>, pieces: Uint32Array): void {
+    this.networkId += 1;
+    this.send({ type: 'network', id: this.networkId, arrays, pieces });
   }
 
   dispose(): void {

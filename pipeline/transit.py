@@ -141,7 +141,8 @@ def place_stop(
     return (best[1], best[2]) if best else None
 
 
-def build_transit() -> dict:
+def build_transit(root: Path = OUTPUT_DIR) -> dict:
+    """The timetable placed on the network in `root`, written there."""
     started = time.monotonic()
     path = fetch_gtfs()
     to_crs = Transformer.from_crs("EPSG:4326", CRS, always_xy=True)
@@ -198,8 +199,8 @@ def build_transit() -> dict:
         )
     )
 
-    n_index = json.loads((OUTPUT_DIR / "network" / "net.json").read_text())
-    net = read_packed(OUTPUT_DIR / "network" / n_index["file"], n_index)
+    n_index = json.loads((root / "network" / "net.json").read_text())
+    net = read_packed(root / "network" / n_index["file"], n_index)
     lanes = {mode: network_lanes(net, n_index, VCLASS[mode]) for mode in (BUS, TRAM)}
     trees = {mode: shapely.STRtree(lanes[mode][3]) for mode in (BUS, TRAM)}
 
@@ -266,7 +267,7 @@ def build_transit() -> dict:
         "transitStopFrac": np.asarray([s[1] for s in all_stops], np.float32),
         "transitStopTime": np.asarray([s[2] for s in all_stops], np.float32),
     }
-    out_dir = OUTPUT_DIR / "transit"
+    out_dir = root / "transit"
     packed = write_packed(out_dir / "transit.bin.gz", arrays)
     route_table = [
         {

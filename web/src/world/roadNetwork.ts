@@ -113,16 +113,20 @@ export class RoadNetwork {
     readonly index: RoadNetworkIndex,
     /** All packed arrays, as loaded (the traffic engine takes them as they are). */
     readonly arrays: Record<string, TypedArray>,
+    /** Shapes already decoded (a network the junction builder made), else decoded here. */
+    shapes?: { lane: Float32Array; junction: Float32Array },
   ) {
     this.junctionPos = arrays.junctionPos as Float32Array;
     this.junctionType = arrays.junctionType as Uint8Array;
     this.junctionShapeOffsets = arrays.junctionShapeOffsets as Uint32Array;
-    this.junctionShape = decodePolylines(
-      arrays.junctionShapeOrigin,
-      arrays.junctionShapeOffsets,
-      arrays.junctionShapeDelta,
-      arrays.junctionShapeElev,
-    );
+    this.junctionShape =
+      shapes?.junction ??
+      decodePolylines(
+        arrays.junctionShapeOrigin,
+        arrays.junctionShapeOffsets,
+        arrays.junctionShapeDelta,
+        arrays.junctionShapeElev,
+      );
     this.edgeFrom = arrays.edgeFrom as Uint32Array;
     this.edgeTo = arrays.edgeTo as Uint32Array;
     this.edgeType = arrays.edgeType as Uint16Array;
@@ -136,12 +140,14 @@ export class RoadNetwork {
     this.laneWidth = arrays.laneWidth as Float32Array;
     this.laneAllow = arrays.laneAllow as Uint16Array;
     this.laneShapeOffsets = arrays.laneShapeOffsets as Uint32Array;
-    this.laneShape = decodePolylines(
-      arrays.laneShapeOrigin,
-      arrays.laneShapeOffsets,
-      arrays.laneShapeDelta,
-      arrays.laneShapeElev,
-    );
+    this.laneShape =
+      shapes?.lane ??
+      decodePolylines(
+        arrays.laneShapeOrigin,
+        arrays.laneShapeOffsets,
+        arrays.laneShapeDelta,
+        arrays.laneShapeElev,
+      );
 
     const typeClass = index.types.map(classifyEdgeType);
     this.edgeClass = Array.from(this.edgeType, (t) => typeClass[t]);

@@ -32,6 +32,9 @@ export type ToWorker =
   | { type: 'closures'; edges: Uint32Array }
   /** Replace the network edits in force: four words per edit (edit/edits.ts). */
   | { type: 'edits'; id: number; words: Uint32Array }
+  /** Swap in a network with roads drawn (edit/builder.ts), keeping the vehicles: its
+   * arrays, and where the lanes running now went (four words per lane piece). */
+  | { type: 'network'; id: number; arrays: Record<string, NumericArray>; pieces: Uint32Array }
   /** Travel times by car between pairs of edges (from, to, from, to, ...). */
   | { type: 'routeTimes'; id: number; pairs: Uint32Array }
   /** Vehicles that have driven onto each edge since the start, once the simulation has
@@ -54,6 +57,8 @@ export type FromWorker =
   | { type: 'ready'; buildMs: number; signals: SignalPrograms }
   /** Edits `id` are in force: how many fit the network, and the signal programs now. */
   | { type: 'edited'; id: number; applied: number; signals: SignalPrograms }
+  /** Network `id` runs (or could not be swapped in: `error`), and its signal programs. */
+  | { type: 'networked'; id: number; signals: SignalPrograms; error?: string }
   | FrameMessage
   | { type: 'edgeSpeeds'; time: number; speeds: Uint8Array }
   /** Seconds per pair asked for (-1: no route), at simulated time `time`. */

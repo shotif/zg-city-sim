@@ -15,68 +15,7 @@ import {
   withEdit,
 } from '../src/edit/edits';
 import { RoadIndex, headingOf } from '../src/edit/roadIndex';
-import { type RoadNetworkIndex, RoadNetwork } from '../src/world/roadNetwork';
-
-const NONE = 0xffffffff;
-
-/**
- * Ilica runs east (two lanes) into a signalled junction at x = 100 and on east (one
- * lane); Savska cesta leaves it north. The right lane goes straight on, the left lane
- * turns left.
- */
-function junction(): RoadNetwork {
-  const index = {
-    file: '',
-    byteLength: 0,
-    arrays: {},
-    vclassBits: { passenger: 1, bus: 2 },
-    flags: { bridge: 1, tunnel: 2, hasOpposite: 4, roundabout: 8, internal: 16 },
-    types: ['highway.primary'],
-    junctionTypes: [],
-    names: ['Ilica', 'Savska cesta'],
-    tlsTypes: [],
-    linkDirs: ['s', 'l', 'r', 't', 'L', 'R', 'invalid'],
-    linkStates: [],
-    none: NONE,
-  } as RoadNetworkIndex;
-  // Lane shapes in centimetres: origin per lane, then steps from it.
-  const lanes: [number, number, number, number][] = [
-    [500, 160, 9000, 0], // Ilica in, right lane
-    [500, -160, 9000, 0], // Ilica in, left lane
-    [10500, 160, 9000, 0], // Ilica on
-    [10160, -500, 0, -9000], // Savska cesta north
-  ];
-  return new RoadNetwork(index, {
-    junctionPos: new Float32Array([0, 0, 100, 0, 200, 0, 100, -100]),
-    junctionType: new Uint8Array(4),
-    junctionShapeOffsets: new Uint32Array([0, 0, 0, 0, 0]),
-    junctionShapeOrigin: new Int32Array(0),
-    junctionShapeDelta: new Int16Array(0),
-    junctionShapeElev: new Int16Array(0),
-    edgeFrom: new Uint32Array([0, 1, 1]),
-    edgeTo: new Uint32Array([1, 2, 3]),
-    edgeType: new Uint16Array(3),
-    edgeFlags: new Uint8Array(3),
-    edgeName: new Uint32Array([0, 0, 1]),
-    edgeLaneStart: new Uint32Array([0, 2, 3]),
-    edgeLaneCount: new Uint8Array([2, 1, 1]),
-    laneEdge: new Uint32Array([0, 0, 1, 2]),
-    laneLength: new Float32Array([90, 90, 90, 90]),
-    laneSpeed: new Float32Array([13.9, 13.9, 13.9, 13.9]),
-    laneWidth: new Float32Array([3.2, 3.2, 3.2, 3.2]),
-    laneAllow: new Uint16Array([1, 1, 1, 1]),
-    laneLinkOffsets: new Uint32Array([0, 1, 2, 2, 2]),
-    laneShapeOffsets: new Uint32Array([0, 2, 4, 6, 8]),
-    laneShapeOrigin: new Int32Array(lanes.flatMap(([x, z]) => [x, z])),
-    laneShapeDelta: new Int16Array(lanes.flatMap(([, , dx, dz]) => [0, 0, dx, dz])),
-    laneShapeElev: new Int16Array(8),
-    linkFrom: new Uint32Array([0, 1]),
-    linkTo: new Uint32Array([2, 3]),
-    linkDir: new Uint8Array([0, 1]),
-    linkJunction: new Uint32Array([1, 1]),
-    linkTls: new Uint32Array([0, 0]),
-  });
-}
+import { junction } from './fixtures';
 
 describe('RoadIndex', () => {
   const index = new RoadIndex(junction());

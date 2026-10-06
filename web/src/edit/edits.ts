@@ -6,6 +6,7 @@
  * shared list is matched to the network it is loaded on (`resolveEdits`). The list is kept
  * in local storage and shared as a link (compressed into the URL's fragment) or a file.
  */
+import { NEW_ROAD_TYPES, type RoadEdit } from './builder';
 import type { RoadIndex } from './roadIndex';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
@@ -49,7 +50,9 @@ export type Edit =
   /** No turning from one road onto another. */
   | { kind: 'ban'; from: RoadRef; to: RoadRef }
   /** Green time of one phase of a junction's signal program. */
-  | { kind: 'green'; junction: JunctionRef; phase: number; seconds: number };
+  | { kind: 'green'; junction: JunctionRef; phase: number; seconds: number }
+  /** A new road (edit/builder.ts): built into the network before the other edits apply. */
+  | RoadEdit;
 
 /** Record kinds the engine reads (sim/src/edits.rs `kind`). */
 const KIND = { close: 1, closeLane: 2, speed: 3, laneClasses: 4, ban: 5, green: 6 } as const;
@@ -72,7 +75,8 @@ function floatBits(value: number): number {
   return u32[0];
 }
 
-/** Match edits to the network: those whose roads or junction it has, and the rest. */
+/** Match edits to the network: those whose roads or junction it has, and the rest. New
+ * roads are left out: they are built into the network (`buildNetwork`). */
 export function resolveEdits(
   index: RoadIndex,
   edits: readonly Edit[],
@@ -80,6 +84,7 @@ export function resolveEdits(
   const resolved: ResolvedEdit[] = [];
   const missing: Edit[] = [];
   for (const edit of edits) {
+    if (edit.kind === 'road') continue;
     const r = resolveEdit(index, edit);
     if (r) resolved.push(r);
     else missing.push(edit);
@@ -87,7 +92,7 @@ export function resolveEdits(
   return { resolved, missing };
 }
 
-function resolveEdit(index: RoadIndex, edit: Edit): ResolvedEdit | undefined {
+function resolveEdit(index: RoadIndex, edit: Exclude<Edit, RoadEdit>): ResolvedEdit | undefined {
   switch (edit.kind) {
     case 'close':
     case 'closeLane':
@@ -155,6 +160,10 @@ export function sameTarget(a: Edit, b: Edit): boolean {
       return sameRoad(a.from, (b as typeof a).from) && sameRoad(a.to, (b as typeof a).to);
     case 'green':
       return near(a.junction, (b as typeof a).junction) && a.phase === (b as typeof a).phase;
+    case 'road': {
+      const q = (b as typeof a).points;
+      return a.points.length === q.length && a.points.every((p, i) => near(p, q[i]));
+    }
   }
 }
 
@@ -181,6 +190,18 @@ export function describeEdit(edit: Edit): string {
       return `No turn from ${roadName(edit.from)} onto ${roadName(edit.to)}`;
     case 'green':
       return `${edit.junction.name ?? 'Signals'}: phase ${edit.phase + 1} green ${edit.seconds} s`;
+    case 'road': {
+      let metres = 0;
+      for (let i = 1; i < edit.points.length; i++) {
+        const [p, q] = [edit.points[i - 1], edit.points[i]];
+        metres += Math.hypot(q.x - p.x, q.z - p.z);
+      }
+      const lanes = `${edit.lanes} lane${edit.lanes === 1 ? '' : 's'}${edit.oneway ? ' one way' : ' each way'}`;
+      const what = edit.bridge
+        ? 'New bridge'
+        : `New ${NEW_ROAD_TYPES[edit.type].label.toLowerCase()}`;
+      return `${what}, ${(metres / 1000).toFixed(1)} km, ${lanes}, ${edit.kmh} km/h`;
+    }
   }
 }
 
@@ -210,6 +231,8 @@ function compact(edit: Edit): Edit {
         ...edit,
         junction: { ...edit.junction, x: round(edit.junction.x), z: round(edit.junction.z) },
       };
+    case 'road':
+      return { ...edit, points: edit.points.map((p) => ({ x: round(p.x), z: round(p.z) })) };
     default:
       return { ...edit, road: road(edit.road) };
   }
@@ -220,7 +243,7 @@ export function serializeEdits(edits: readonly Edit[]): string {
   return JSON.stringify(saved);
 }
 
-const KINDS = new Set(['close', 'closeLane', 'speed', 'busLane', 'ban', 'green']);
+const KINDS = new Set(['close', 'closeLane', 'speed', 'busLane', 'ban', 'green', 'road']);
 
 /** Edits from a saved list; throws if it is not one. Unknown kinds are dropped. */
 export function parseEdits(text: string): Edit[] {
@@ -251,6 +274,19 @@ export function parseEdits(text: string): Edit[] {
       case 'closeLane':
       case 'busLane':
         return isRoad(e.road) && Number.isInteger(e.lane);
+      case 'road':
+        return (
+          Array.isArray(e.points) &&
+          e.points.length >= 2 &&
+          e.points.every((p) => Number.isFinite(p?.x) && Number.isFinite(p?.z)) &&
+          e.type in NEW_ROAD_TYPES &&
+          Number.isInteger(e.lanes) &&
+          e.lanes >= 1 &&
+          e.lanes <= 4 &&
+          typeof e.oneway === 'boolean' &&
+          Number.isFinite(e.kmh) &&
+          typeof e.bridge === 'boolean'
+        );
       default:
         return isRoad(e.road);
     }

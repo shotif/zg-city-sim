@@ -81,6 +81,14 @@ export interface NewsLayerInfo {
   attribution?: Attribution;
 }
 
+/** Planned road projects, each with a road network of its own (pipeline/projects.py). */
+export interface ProjectsLayerInfo {
+  /** Path of the projects index (JSON) relative to the data folder. */
+  index: string;
+  projects: { id: string; name: string }[];
+  attribution?: Attribution;
+}
+
 export interface WorldManifest {
   version: number;
   generated: string;
@@ -97,6 +105,7 @@ export interface WorldManifest {
     demand?: DemandLayer;
     transit?: TransitLayer;
     news?: NewsLayerInfo;
+    projects?: ProjectsLayerInfo;
   };
 }
 

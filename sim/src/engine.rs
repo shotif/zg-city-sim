@@ -24,6 +24,11 @@ use crate::router::{LandmarkBuild, Landmarks, Router};
 use crate::transit::{PendingRun, Transit, TransitRun};
 use crate::vtype::{self, TYPES, VType};
 
+// Swapping in a changed network while traffic runs (roads drawn in the app).
+#[path = "patch.rs"]
+mod patch;
+pub use patch::LanePiece;
+
 /// Simulation step (s).
 pub const DT: f32 = 0.5;
 /// 32-bit words per vehicle slot in the render buffer.
@@ -776,28 +781,8 @@ impl Engine {
         let n_lanes = net.lane_count();
         let n_edges = net.edge_count();
         let n_tls = net.d.tls_offset.len();
-        let n_links = net.d.link_from.len();
 
-        let mut tls_link_offsets = vec![0u32; n_tls + 1];
-        for l in 0..n_links {
-            let t = net.d.link_tls[l];
-            if t != NONE && (t as usize) < n_tls {
-                tls_link_offsets[t as usize + 1] += 1;
-            }
-        }
-        for t in 0..n_tls {
-            tls_link_offsets[t + 1] += tls_link_offsets[t];
-        }
-        let mut fill = tls_link_offsets.clone();
-        let mut tls_links = vec![0u32; tls_link_offsets[n_tls] as usize];
-        for l in 0..n_links {
-            let t = net.d.link_tls[l];
-            if t != NONE && (t as usize) < n_tls {
-                tls_links[fill[t as usize] as usize] = l as u32;
-                fill[t as usize] += 1;
-            }
-        }
-
+        let (tls_link_offsets, tls_links) = patch::tls_links(&net);
         merge_signal_phases(&mut net, &tls_link_offsets, &tls_links);
         retime_signals(&mut net, &tls_link_offsets, &tls_links);
 

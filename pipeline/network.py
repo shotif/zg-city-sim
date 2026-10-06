@@ -12,12 +12,16 @@ import logging
 import os
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import osmium
 import sumo
 
 from .config import CACHE_DIR, OUTPUT_DIR
+
+if TYPE_CHECKING:
+    from .projects import Patch
 from .osm import ATTRIBUTION as OSM_ATTRIBUTION
 from .osm import fetch_osm
 from .packed import write_packed
@@ -99,34 +103,73 @@ def wanted_way(tags: osmium.osm.TagList) -> bool:
     return tags.get("railway") in TRACKS
 
 
-def filter_roads(src: Path, dst: Path) -> dict:
-    """Write drivable roads, tracks and their turn restrictions as OSM XML for netconvert."""
+def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
+    """Write drivable roads, tracks and their turn restrictions as OSM XML for netconvert,
+    with a project's patch (pipeline/projects.py) applied if given."""
+    patch_ways = patch.ways if patch else {}
     way_ids: set[int] = set()
     node_ids: set[int] = set()
     for way in osmium.FileProcessor(str(src), osmium.osm.WAY):
-        if wanted_way(way.tags):
+        if way.id in patch_ways:
+            way_ids.add(way.id)
+        elif wanted_way(way.tags):
             way_ids.add(way.id)
             node_ids.update(n.ref for n in way.nodes)
+    for nodes, _ in patch_ways.values():
+        node_ids.update(nodes)
+    new_ways = {w: v for w, v in patch_ways.items() if w not in way_ids}
+    new_nodes = patch.nodes if patch else {}
+    node_tags = patch.node_tags if patch else {}
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name("partial-" + dst.name)  # keeps the .osm suffix osmium needs
     writer = osmium.SimpleWriter(str(tmp), overwrite=True)
     restrictions = 0
+    nodes_done = ways_done = False
+
+    def finish_nodes() -> None:
+        for node, (lon, lat, tags) in new_nodes.items():
+            writer.add_node(osmium.osm.mutable.Node(location=(lon, lat), id=node, tags=tags))
+
+    def finish_ways() -> None:
+        for way, (nodes, tags) in new_ways.items():
+            writer.add_way(osmium.osm.mutable.Way(nodes=nodes, id=way, tags=tags))
+
     for obj in osmium.FileProcessor(str(src)):
         if obj.is_node():
             if obj.id in node_ids:
-                writer.add_node(obj)
-        elif obj.is_way():
-            if obj.id in way_ids:
+                extra = node_tags.get(obj.id)
+                writer.add_node(obj.replace(tags={**dict(obj.tags), **extra}) if extra else obj)
+            continue
+        if not nodes_done:
+            finish_nodes()
+            nodes_done = True
+        if obj.is_way():
+            if obj.id in patch_ways:
+                nodes, tags = patch_ways[obj.id]
+                writer.add_way(obj.replace(nodes=nodes, tags=tags))
+            elif obj.id in way_ids:
                 writer.add_way(obj)
-        elif obj.tags.get("type") == "restriction" and any(
+            continue
+        if not ways_done:
+            finish_ways()
+            ways_done = True
+        if obj.tags.get("type") == "restriction" and any(
             m.type == "w" and m.ref in way_ids for m in obj.members
         ):
             writer.add_relation(obj)
             restrictions += 1
+    if not nodes_done:
+        finish_nodes()
+    if not ways_done:
+        finish_ways()
     writer.close()
     tmp.rename(dst)
-    return {"ways": len(way_ids), "nodes": len(node_ids), "restrictions": restrictions}
+    return {
+        "ways": len(way_ids) + len(new_ways),
+        "nodes": len(node_ids),
+        "restrictions": restrictions,
+    }
 
 
 def run_netconvert(osm_xml: Path, net_file: Path) -> None:

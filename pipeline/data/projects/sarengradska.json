@@ -1,0 +1,205 @@
+{
+ "computed": "2026-10-06",
+ "fromHour": 6,
+ "hours": 4,
+ "demandScale": 0.6,
+ "totals": {
+  "today": {
+   "delayHours": 25798.5,
+   "vehicleKm": 2835975.0,
+   "arrived": 130822.5,
+   "tripMinutes": 26.02
+  },
+  "project": {
+   "delayHours": 27138.0,
+   "vehicleKm": 2849757,
+   "arrived": 130287,
+   "tripMinutes": 26.8
+  }
+ },
+ "perHour": [
+  {
+   "hour": 6,
+   "delayHours": [
+    4866.6,
+    4822.4
+   ],
+   "vehicleKm": [
+    718682.5,
+    725867
+   ],
+   "arrived": [
+    31046.0,
+    31070
+   ],
+   "tripMinutes": [
+    23.705,
+    23.8
+   ]
+  },
+  {
+   "hour": 7,
+   "delayHours": [
+    6734.85,
+    6822.8
+   ],
+   "vehicleKm": [
+    764719.0,
+    766832
+   ],
+   "arrived": [
+    34650.0,
+    34220
+   ],
+   "tripMinutes": [
+    26.46,
+    26.47
+   ]
+  },
+  {
+   "hour": 8,
+   "delayHours": [
+    7251.9,
+    7969.0
+   ],
+   "vehicleKm": [
+    697909.0,
+    697671
+   ],
+   "arrived": [
+    32867.5,
+    32321
+   ],
+   "tripMinutes": [
+    27.725,
+    29.07
+   ]
+  },
+  {
+   "hour": 9,
+   "delayHours": [
+    6945.049999999999,
+    7523.8
+   ],
+   "vehicleKm": [
+    654664.5,
+    659387
+   ],
+   "arrived": [
+    32259.0,
+    32676
+   ],
+   "tripMinutes": [
+    26.055,
+    27.77
+   ]
+  }
+ ],
+ "travel": {
+  "perHour": [
+   {
+    "hour": 7,
+    "mean": 0.0118
+   },
+   {
+    "hour": 8,
+    "mean": 0.0101
+   },
+   {
+    "hour": 9,
+    "mean": 0.0097
+   },
+   {
+    "hour": 10,
+    "mean": 0.0175
+   }
+  ],
+  "mean": 0.0078,
+  "faster": [
+   {
+    "from": "Trnje",
+    "to": "Gornji grad – Medveščak",
+    "today": 766,
+    "project": 622
+   },
+   {
+    "from": "Trnje",
+    "to": "Trešnjevka – jug",
+    "today": 897,
+    "project": 756
+   },
+   {
+    "from": "Peščenica – Žitnjak",
+    "to": "Trnje",
+    "today": 583,
+    "project": 493
+   }
+  ],
+  "slower": [
+   {
+    "from": "Novi Zagreb – zapad",
+    "to": "Trešnjevka – jug",
+    "today": 726,
+    "project": 908
+   },
+   {
+    "from": "Trešnjevka – sjever",
+    "to": "Donji grad",
+    "today": 708,
+    "project": 882
+   },
+   {
+    "from": "Trešnjevka – jug",
+    "to": "Donji grad",
+    "today": 874,
+    "project": 1044
+   }
+  ]
+ },
+ "roads": [
+  {
+   "name": "Ulica grada Vukovara",
+   "today": 11112,
+   "project": 7715
+  },
+  {
+   "name": "Ilica",
+   "today": 2987,
+   "project": 4028
+  },
+  {
+   "name": "Zagrebačka avenija",
+   "today": 7606,
+   "project": 6570
+  },
+  {
+   "name": "Slavonska avenija",
+   "today": 7568,
+   "project": 6737
+  },
+  {
+   "name": "Selska cesta",
+   "today": 7852,
+   "project": 8595
+  },
+  {
+   "name": "Šarengradska ulica",
+   "today": 0,
+   "project": 653
+  },
+  {
+   "name": "Ulica Andrije Hebranga",
+   "today": 1396,
+   "project": 1951
+  },
+  {
+   "name": "Prilaz Gjure Deželića",
+   "today": 1458,
+   "project": 1950
+  }
+ ],
+ "noise": {
+  "delay": 0.1578,
+  "travel": 0.0609
+ }
+}

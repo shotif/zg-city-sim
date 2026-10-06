@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 
 import numpy as np
 import osmium
@@ -463,12 +464,14 @@ def attach(
     return out
 
 
-def build_demand() -> dict:
+def build_demand(root: Path = OUTPUT_DIR) -> dict:
+    """Demand on the network in `root` (the data folder, or a project's: pipeline/projects.py),
+    written there; buildings always come from the data folder."""
     started = time.monotonic()
     b_index = json.loads((OUTPUT_DIR / "buildings" / "buildings.json").read_text())
     b = read_packed(OUTPUT_DIR / "buildings" / b_index["file"], b_index)
-    n_index = json.loads((OUTPUT_DIR / "network" / "net.json").read_text())
-    net = read_packed(OUTPUT_DIR / "network" / n_index["file"], n_index)
+    n_index = json.loads((root / "network" / "net.json").read_text())
+    net = read_packed(root / "network" / n_index["file"], n_index)
 
     rings = b["buildingRings"][:-1].astype(np.int64)
     area, x, z = outer_rings(b["ringOrigin"], b["ringOffsets"], b["deltas"], rings)
@@ -519,7 +522,7 @@ def build_demand() -> dict:
     used = np.flatnonzero((home > 0) | (work > 0))
     gateway_arrays, gateways = build_gateways(net, n_index)
 
-    out_dir = OUTPUT_DIR / "demand"
+    out_dir = root / "demand"
     packed = write_packed(
         out_dir / "demand.bin.gz",
         {

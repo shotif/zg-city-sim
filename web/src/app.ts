@@ -23,14 +23,24 @@ import {
   diffBands,
   summariseTravelTimes,
 } from './edit/compare';
+import {
+  type BuiltNetwork,
+  type LaneOrigin,
+  type RoadEdit,
+  buildNetwork,
+  lanePieces,
+} from './edit/builder';
+import { type ProjectInfo, edgeMap, loadProjects, projectUrl, pullCounts } from './edit/projects';
 import { RoadIndex } from './edit/roadIndex';
-import { DATA_URL, attributions, loadManifest } from './manifest';
+import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
 import { STAT } from './sim/wasm';
 import { BuildPanel } from './ui/buildPanel';
 import { ClosureMarkers } from './ui/closureMarkers';
 import { Hud } from './ui/hud';
 import { NewsPanel } from './ui/newsPanel';
+import { ProjectsSection } from './ui/projectsSection';
+import { RoadDrawer } from './ui/roadDrawer';
 import { BuildingLayer, loadBuildings } from './world/buildingLayer';
 import {
   ClosureLayer,
@@ -40,17 +50,19 @@ import {
   placeClosures,
   zagrebNow,
 } from './world/closures';
-import { EDIT_COLORS, EditLayer } from './world/editLayer';
+import { DrawLayer, EDIT_COLORS, EditLayer } from './world/editLayer';
 import { WorldFrame } from './world/frame';
 import type { HeightFn } from './world/roadGeometry';
 import { RoadLayer } from './world/roadLayer';
-import { type RoadNetwork, laneShapeHeights, loadRoadNetwork } from './world/roadNetwork';
+import { RoadNetwork, laneShapeHeights, loadRoadNetwork } from './world/roadNetwork';
 import { NewsLayer, loadNews, placeTraffic } from './world/newsLayer';
 import { loadTerrain } from './world/terrain';
 import { TRAFFIC_BANDS, TrafficLayer } from './world/trafficLayer';
 import { VehicleLayer } from './world/vehicleLayer';
 
 const SKY = new THREE.Color(0xb9cfe0);
+/** Roads a planned project adds, drawn over the map. */
+const PROJECT_COLOR = 0x12a4a0;
 
 /** Car trips per weekday without demand data: 767k residents × 1.84 trips × 46 % by car ÷ 1.3. */
 const DAILY_TRIPS = 500_000;
@@ -93,12 +105,12 @@ function startSimulation(
   speed: number,
   render = true,
 ): SimClient {
-  const laneShapeY = laneShapeHeights(net, height);
+  const arrays = networkArrays(net, height);
   return new SimClient(
     {
       wasmUrl: new URL(WASM_URL, document.baseURI).href,
       // Views share the network's buffer, which is copied once; the heights are moved.
-      arrays: { ...net.arrays, laneShape: net.laneShape, laneShapeY, ...travel.arrays },
+      arrays: { ...arrays, ...travel.arrays },
       seed: 1,
       dailyTrips: travel.dailyTrips,
       demandScale: travel.demandScale,
@@ -107,8 +119,37 @@ function startSimulation(
       speed,
       render,
     },
-    [laneShapeY.buffer],
+    [arrays.laneShapeY.buffer],
   );
+}
+
+/** A network's arrays as the engine takes them: shapes decoded, heights of bridges. */
+function networkArrays(net: RoadNetwork, height: HeightFn) {
+  const laneShapeY = laneShapeHeights(net, height);
+  return { ...net.arrays, laneShape: net.laneShape, laneShapeY };
+}
+
+/** Lane pieces as the engine reads them: four words each, positions as f32 bits. */
+function pieceWords(pieces: ReturnType<typeof lanePieces>): Uint32Array {
+  const words = new Uint32Array(pieces.length * 4);
+  const f = new Float32Array(1);
+  const bits = new Uint32Array(f.buffer);
+  pieces.forEach((p, i) => {
+    words[i * 4] = p.old;
+    f[0] = p.from;
+    words[i * 4 + 1] = bits[0];
+    words[i * 4 + 2] = p.lane;
+    f[0] = p.shift;
+    words[i * 4 + 3] = bits[0];
+  });
+  return words;
+}
+
+/** Free the geometry of a layer taken off the scene. */
+function disposeObject(object: THREE.Object3D): void {
+  object.traverse((o) => {
+    if ('geometry' in o && o.geometry instanceof THREE.BufferGeometry) o.geometry.dispose();
+  });
 }
 
 /** Hooks for automated tests and debugging from the console. */
@@ -143,6 +184,17 @@ export interface DebugApi {
   baseline?: SimClient;
   /** Comparisons shown so far: simulated time of the last measures and travel times. */
   compared?: { stats: number; travel: number; diff: number };
+  /** Planned projects, and the one whose network is running (?project=id). */
+  projects?: ProjectInfo[];
+  project?: string;
+  /** The network the player's simulation runs (with any roads drawn), and the roads drawn:
+   * their edges, and those that could not be built. */
+  network?: RoadNetwork;
+  drawn?: { roads: number[][]; problems: BuiltNetwork['problems'] };
+  /** The tool for drawing roads. */
+  drawer?: RoadDrawer;
+  /** The ground point under a screen point (CSS pixels in the canvas). */
+  groundAt?(x: number, y: number): { x: number; z: number } | undefined;
 }
 
 declare global {
@@ -173,6 +225,12 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let buildPanel: BuildPanel | undefined;
   let baseline: SimClient | undefined;
   let setCompare: (on: boolean) => void = () => {};
+  /** The network the player's simulation runs: as loaded, with the roads drawn. */
+  let networkNow: { net: RoadNetwork; index: RoadIndex } | undefined;
+  /** Replace the layers drawn from the network (roads, traffic) for a changed network. */
+  let useNetwork: (net: RoadNetwork) => void = () => {};
+  /** Send the network with the roads drawn to a simulation started on the one loaded. */
+  let sendNetwork: (target: SimClient, fresh: boolean) => void = () => {};
   let setDiffMap: (on: boolean) => void = () => {};
   let invalidateView = () => {};
   // Edits: from a shared link, else saved in this browser.
@@ -232,6 +290,22 @@ export async function startApp(container: HTMLElement): Promise<void> {
 
     const manifest = await loadManifest();
     const frame = WorldFrame.fromManifest(manifest);
+    // A planned project (?project=id) runs on a network of its own in place of today's;
+    // today's layers stay at hand to compare with.
+    const today: WorldManifest['layers'] = { ...manifest.layers };
+    let projects: ProjectInfo[] = [];
+    if (manifest.layers.projects) {
+      projects = await loadProjects(DATA_URL + manifest.layers.projects.index).catch(
+        (error: unknown) => {
+          console.warn('Planned projects could not be loaded', error);
+          return [];
+        },
+      );
+    }
+    const project = projects.find((p) => p.id === params.get('project'));
+    if (project) Object.assign(manifest.layers, project.layers);
+    debug.projects = projects;
+    debug.project = project?.id;
 
     const coarsePointer = matchMedia('(pointer: coarse)').matches;
     const stride = Number(params.get('stride')) || (coarsePointer ? 4 : 2);
@@ -287,22 +361,39 @@ export async function startApp(container: HTMLElement): Promise<void> {
 
     /** The Build tools: road picking, the panel, the edits layer and the edit list. */
     const setUpBuild = (net: RoadNetwork, surface: HeightFn): BuildPanel => {
-      const index = new RoadIndex(net);
-      debug.roadIndex = index;
-      const layer = new EditLayer(net, surface);
+      const loaded = { net, index: new RoadIndex(net) };
+      /** The network with the roads drawn, and where its lanes lie on the one loaded. */
+      let current = {
+        net,
+        index: loaded.index,
+        origins: new Map<number, LaneOrigin>(),
+        roads: [] as number[][],
+        key: '[]',
+      };
+      let built: { key: string; result: BuiltNetwork } | undefined;
+      /** Where the lanes of the network the player's simulation runs lie. */
+      let simOrigins = new Map<number, LaneOrigin>();
+      networkNow = { net, index: loaded.index };
+      debug.roadIndex = loaded.index;
+      debug.network = net;
+      let layer = new EditLayer(net, surface);
       scene.add(layer.object);
+      const drawLayer = new DrawLayer(surface);
+      scene.add(drawLayer.object);
       let resolved: ResolvedEdit[] = [];
       const redraw = () => {
         const groups: { edges: number[]; color: number; width?: number }[] = (
           Object.keys(EDIT_COLORS) as (keyof typeof EDIT_COLORS)[]
         )
-          .filter((kind) => kind !== 'selected')
+          .filter((kind) => kind !== 'selected' && kind !== 'road')
           .map((kind) => ({
             color: EDIT_COLORS[kind],
             edges: resolved
               .filter((r) => r.edit.kind === kind)
               .flatMap((r) => (r.edit.kind === 'ban' ? r.edges.slice(0, 1) : r.edges)),
           }));
+        if (project) groups.unshift({ color: PROJECT_COLOR, edges: project.newEdges, width: 6 });
+        groups.unshift({ color: EDIT_COLORS.road, edges: current.roads.flat(), width: 6 });
         const selected = panel.selected;
         if (selected !== undefined) {
           groups.push({ color: EDIT_COLORS.selected, edges: [selected], width: 8 });
@@ -310,9 +401,67 @@ export async function startApp(container: HTMLElement): Promise<void> {
         layer.show(groups);
         invalidate();
       };
+      /** The network loaded with these roads (built once per list of roads). */
+      const buildRoads = (roads: RoadEdit[]): BuiltNetwork => {
+        const key = JSON.stringify(roads);
+        if (built?.key !== key) {
+          built = { key, result: buildNetwork(loaded.net, roads, loaded.index) };
+        }
+        return built.result;
+      };
+      sendNetwork = (target, fresh) => {
+        if (fresh) simOrigins = new Map();
+        if (current.net === loaded.net && simOrigins.size === 0) return;
+        const pieces = lanePieces(simOrigins, current.origins, (l) => loaded.net.laneLength[l]);
+        target.setNetwork(networkArrays(current.net, surface), pieceWords(pieces));
+        simOrigins = current.origins;
+      };
+      /** Build the roads in the list into the network the player's simulation runs. */
+      const useRoads = (list: Edit[]): BuiltNetwork['problems'] => {
+        const roads = list.filter((e): e is RoadEdit => e.kind === 'road');
+        const key = JSON.stringify(roads);
+        if (key === current.key) return [];
+        let problems: BuiltNetwork['problems'] = [];
+        if (roads.length === 0) {
+          current = { ...loaded, origins: new Map(), roads: [], key };
+        } else {
+          const result = buildRoads(roads);
+          problems = result.problems;
+          const next = new RoadNetwork(
+            { ...loaded.net.index, types: result.types },
+            result.arrays,
+            {
+              lane: result.laneShape,
+              junction: result.junctionShape,
+            },
+          );
+          current = {
+            net: next,
+            index: new RoadIndex(next),
+            origins: result.origins,
+            roads: result.roads,
+            key,
+          };
+        }
+        networkNow = { net: current.net, index: current.index };
+        debug.roadIndex = current.index;
+        debug.network = current.net;
+        debug.drawn = { roads: current.roads, problems };
+        scene.remove(layer.object);
+        disposeObject(layer.object);
+        layer = new EditLayer(current.net, surface);
+        scene.add(layer.object);
+        panel.setIndex(current.index);
+        useNetwork(current.net);
+        // Comparing goes on the network it started with: stop it.
+        if (baseline) setCompare(false);
+        if (sim) sendNetwork(sim, false);
+        return problems;
+      };
       const apply = (list: Edit[]) => {
+        useRoads(list);
         edits = list;
-        const matched = resolveEdits(index, list);
+        const matched = resolveEdits(current.index, list);
         resolved = matched.resolved;
         debug.edits = resolved;
         panel.setEdits(list, resolved, matched.missing.length);
@@ -323,7 +472,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         if (!sim) panel.setInForce(0);
         redraw();
       };
-      const panel = new BuildPanel(hud.element, index, {
+      const panel = new BuildPanel(hud.element, loaded.index, {
         onEdits: apply,
         onSelect: () => redraw(),
         onClose: () => {
@@ -347,12 +496,44 @@ export async function startApp(container: HTMLElement): Promise<void> {
       });
       debug.build = panel;
       hud.enableBuild();
+      if (project) panel.setScenario(project.name);
+      const drawer = new RoadDrawer(panel.drawSlot, {
+        onDrawing: (on) => {
+          if (on) panel.select(undefined);
+          invalidate();
+        },
+        onPoints: (points) => {
+          drawLayer.show(points);
+          invalidate();
+        },
+        onRoad: (road) => {
+          const roads = edits.filter((e): e is RoadEdit => e.kind === 'road');
+          const result = buildRoads([...roads, road]);
+          const problem = result.problems.find((p) => p.road === roads.length);
+          if (problem) return problem.reason;
+          apply([...edits, road]);
+          return undefined;
+        },
+      });
+      debug.drawer = drawer;
+      if (projects.length) {
+        new ProjectsSection(panel.element, projects, project?.id, {
+          onOpen: (id) => location.assign(projectUrl(location.href, id)),
+          onShow: (p) => activeRig.flyTo(p.centre[0], p.centre[1], 5000),
+        });
+      }
+      if (project) {
+        // Show what the project builds.
+        hud.setBuild(true);
+        panel.setVisible(true);
+        activeRig.flyTo(project.centre[0], project.centre[1], 5000);
+      }
 
       // A click (not a drag) on the map picks the road there while the panel is open.
       const raycaster = new THREE.Raycaster();
       const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
       const hit = new THREE.Vector3();
-      const pickAt = (px: number, py: number): number | undefined => {
+      const groundAt = (px: number, py: number): { x: number; z: number } | undefined => {
         const canvas = renderer.domElement;
         const ndc = new THREE.Vector2(
           (px / canvas.clientWidth) * 2 - 1,
@@ -366,11 +547,18 @@ export async function startApp(container: HTMLElement): Promise<void> {
           if (!raycaster.ray.intersectPlane(plane, hit)) return undefined;
           ground = terrain.heightfield.sample(hit.x, hit.z);
         }
-        const metersPerPixel = view.viewHeight / Math.max(1, canvas.clientHeight);
+        return { x: hit.x, z: hit.z };
+      };
+      const pickAt = (px: number, py: number): number | undefined => {
+        const p = groundAt(px, py);
+        if (!p) return undefined;
+        const canvas = renderer.domElement;
+        const metersPerPixel = activeRig.state().viewHeight / Math.max(1, canvas.clientHeight);
         const radius = Math.min(60, Math.max(6, metersPerPixel * 12));
-        return index.pick(hit.x, hit.z, radius);
+        return current.index.pick(p.x, p.z, radius);
       };
       debug.pickAt = pickAt;
+      debug.groundAt = groundAt;
       let down: { x: number; y: number; t: number } | undefined;
       renderer.domElement.addEventListener('pointerdown', (event) => {
         down = { x: event.offsetX, y: event.offsetY, t: performance.now() };
@@ -379,6 +567,11 @@ export async function startApp(container: HTMLElement): Promise<void> {
         if (!panel.visible || !down || event.button !== 0) return;
         const moved = Math.hypot(event.offsetX - down.x, event.offsetY - down.y);
         if (moved > 6 || performance.now() - down.t > 600) return;
+        if (drawer.active) {
+          const p = groundAt(event.offsetX, event.offsetY);
+          if (p) drawer.addPoint(p);
+          return;
+        }
         const edge = pickAt(event.offsetX, event.offsetY);
         if (edge !== undefined) panel.select(edge);
       });
@@ -405,6 +598,16 @@ export async function startApp(container: HTMLElement): Promise<void> {
       return panel;
     };
 
+    /** What the player's simulation is compared with: today's roads, run with the same
+     * trips. With a project open, today's network is another network, loaded when first
+     * compared; `toToday` takes an edge of the player's network to the same road on it. */
+    interface Baseline {
+      net: RoadNetwork;
+      travel: TravelData;
+      index: RoadIndex;
+      toToday?: Int32Array;
+    }
+
     /** Before and after: run the day again with the edits next to today's roads. */
     const setUpCompare = (
       net: RoadNetwork,
@@ -412,27 +615,46 @@ export async function startApp(container: HTMLElement): Promise<void> {
       travelData: TravelData,
       launch: (speed: number) => SimClient,
     ) => {
-      const index = debug.roadIndex;
-      if (!index) return;
-      const diffLayer = new EditLayer(net, surface);
+      const loadedIndex = debug.roadIndex;
+      if (!loadedIndex) return;
+      let diffLayer = new EditLayer(net, surface);
       scene.add(diffLayer.object);
-      // Travel times between every two of the places, from the road nearest each.
-      const placeEdges = PLACES.map((p) => index.pick(p.x, p.z, 600));
-      const pairs: [number, number][] = [];
-      for (let i = 0; i < PLACES.length; i++) {
-        for (let j = 0; j < PLACES.length; j++) {
-          if (i !== j && placeEdges[i] !== undefined && placeEdges[j] !== undefined) {
-            pairs.push([i, j]);
-          }
-        }
-      }
-      const pairWords = Uint32Array.from(
-        pairs.flatMap(([i, j]) => [placeEdges[i]!, placeEdges[j]!]),
-      );
       let timer: ReturnType<typeof setInterval> | undefined;
       let diffOn = false;
       let busy = false;
+      let run = 0;
       const compared = { stats: 0, travel: -Infinity, diff: -Infinity };
+      let todayRoads: Promise<Baseline> | undefined;
+      const baselineData = (): Promise<Baseline> => {
+        if (!project) {
+          // Today's roads are the roads loaded; with roads drawn the networks differ.
+          const now = networkNow ?? { net, index: loadedIndex };
+          const toToday = now.net === net ? undefined : edgeMap(now.index, loadedIndex);
+          return Promise.resolve({ net, travel: travelData, index: loadedIndex, toToday });
+        }
+        todayRoads ??= (async () => {
+          const [todayNet, demand, transit] = await Promise.all([
+            loadRoadNetwork(today.network!.index),
+            loadLayerArrays(today.demand?.index, 'Travel demand'),
+            loadLayerArrays(today.transit?.index, 'The ZET timetable'),
+          ]);
+          const todayIndex = new RoadIndex(todayNet);
+          return {
+            net: todayNet,
+            travel: {
+              arrays: { ...demand, ...transit },
+              dailyTrips: today.demand?.dailyCarTrips ?? DAILY_TRIPS,
+              demandScale: today.demand?.demandScale ?? 1,
+            },
+            index: todayIndex,
+          };
+        })();
+        // The project's network may have roads drawn on it since: match roads now.
+        return todayRoads.then((base) => ({
+          ...base,
+          toToday: edgeMap((networkNow ?? { index: loadedIndex }).index, base.index),
+        }));
+      };
 
       setDiffMap = (on) => {
         diffOn = on;
@@ -441,6 +663,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         invalidate();
       };
       setCompare = (on) => {
+        run++;
         if (timer) clearInterval(timer);
         timer = undefined;
         baseline?.dispose();
@@ -449,39 +672,78 @@ export async function startApp(container: HTMLElement): Promise<void> {
         setDiffMap(false);
         buildPanel?.setComparing(on);
         if (!on) return;
+        const thisRun = run;
+        if (project) buildPanel?.setStatus("Loading today's roads to compare with…");
+        baselineData()
+          .then((base) => {
+            if (thisRun === run) start(base);
+            if (project) buildPanel?.setStatus('');
+          })
+          .catch((error: unknown) => {
+            console.error(error);
+            buildPanel?.setStatus("Today's roads could not be loaded to compare with.");
+            buildPanel?.setComparing(false);
+          });
+      };
+
+      const start = (base: Baseline) => {
+        const { net: playerNet, index } = networkNow ?? { net, index: loadedIndex };
+        if (diffLayer.object.parent) scene.remove(diffLayer.object);
+        disposeObject(diffLayer.object);
+        diffLayer = new EditLayer(playerNet, surface);
+        scene.add(diffLayer.object);
+        // Travel times between every two of the places, from the road nearest each on
+        // either network.
+        const placeEdges = PLACES.map((p) => index.pick(p.x, p.z, 600));
+        const todayEdges = PLACES.map((p) => base.index.pick(p.x, p.z, 600));
+        const pairs: [number, number][] = [];
+        for (let i = 0; i < PLACES.length; i++) {
+          for (let j = 0; j < PLACES.length; j++) {
+            const ends = [placeEdges[i], placeEdges[j], todayEdges[i], todayEdges[j]];
+            if (i !== j && ends.every((e) => e !== undefined)) pairs.push([i, j]);
+          }
+        }
+        const words = (edges: (number | undefined)[]) =>
+          Uint32Array.from(pairs.flatMap(([i, j]) => [edges[i]!, edges[j]!]));
+        const [editedPairs, todayPairs] = [words(placeEdges), words(todayEdges)];
+
         // Both start at 06:50 with the same trips: the player's with the edits.
         const speed = sim?.speed ?? 1;
         sim?.dispose();
         sim = launch(speed);
-        const today = startSimulation(net, travelData, surface, speed, false);
-        if (closedEdges) today.setClosures(closedEdges);
-        baseline = today;
-        debug.baseline = today;
+        const todaySim = startSimulation(base.net, base.travel, surface, speed, false);
+        if (closedEdges) {
+          const map = base.toToday;
+          const closed = map ? Array.from(closedEdges, (e) => map[e]).filter((e) => e >= 0) : [];
+          todaySim.setClosures(map ? Uint32Array.from(closed) : closedEdges);
+        }
+        baseline = todaySim;
+        debug.baseline = todaySim;
         compared.stats = 0;
         compared.travel = -Infinity;
         compared.diff = -Infinity;
         debug.compared = compared;
         timer = setInterval(() => {
           const edited = sim;
-          if (!edited?.stats || !today.stats) return;
-          const [tToday, tEdited] = [today.stats[STAT.time], edited.stats[STAT.time]];
+          if (!edited?.stats || !todaySim.stats) return;
+          const [tToday, tEdited] = [todaySim.stats[STAT.time], edited.stats[STAT.time]];
           // Keep in step: the one ahead waits.
           edited.setHeld(tEdited - tToday > 10);
-          today.setHeld(tToday - tEdited > 10);
+          todaySim.setHeld(tToday - tEdited > 10);
           const time = Math.min(tToday, tEdited);
           // Measures as of the same simulated minute in both.
-          const minute = commonMinute(today.minutes, edited.minutes);
+          const minute = commonMinute(todaySim.minutes, edited.minutes);
           if (minute !== undefined) {
             compared.stats = minute * 60;
             buildPanel?.setComparison(
               minute * 60,
-              compareStats(today.minutes.get(minute)!, edited.minutes.get(minute)!),
+              compareStats(todaySim.minutes.get(minute)!, edited.minutes.get(minute)!),
             );
           }
           if (busy) return;
           if (time - compared.travel >= 300) {
             busy = true;
-            Promise.all([today.routeTimes(pairWords), edited.routeTimes(pairWords)])
+            Promise.all([todaySim.routeTimes(todayPairs), edited.routeTimes(editedPairs)])
               .then(([a, b]) => {
                 compared.travel = Math.min(a.time, b.time);
                 buildPanel?.setTravelTimes(
@@ -496,10 +758,12 @@ export async function startApp(container: HTMLElement): Promise<void> {
             busy = true;
             // Both counted as of the same simulated time.
             const at = Math.floor(time / 60) * 60;
-            Promise.all([today.volumes(at), edited.volumes(at)])
+            Promise.all([todaySim.volumes(at), edited.volumes(at)])
               .then(([a, b]) => {
                 compared.diff = Math.min(a.time, b.time);
-                const bands = diffBands(a.counts, b.counts, (e) => index.editable(e));
+                // Today's counts on the player's roads: a project's new roads have none.
+                const todayCounts = base.toToday ? pullCounts(a.counts, base.toToday) : a.counts;
+                const bands = diffBands(todayCounts, b.counts, (e) => index.editable(e));
                 diffLayer.show(
                   DIFF_BANDS.map((band, k) => ({ color: band.color, edges: bands[k] })).filter(
                     (g) => g.edges.length > 0,
@@ -542,6 +806,26 @@ export async function startApp(container: HTMLElement): Promise<void> {
           scene.add(roads.object);
           debug.roads = roads;
           invalidate();
+          // Roads drawn change the network: the layers drawn from it are made again.
+          useNetwork = (next) => {
+            if (roads) {
+              scene.remove(roads.object);
+              disposeObject(roads.object);
+            }
+            roads = new RoadLayer(next, surface);
+            scene.add(roads.object);
+            debug.roads = roads;
+            if (traffic) {
+              const enabled = traffic.enabled;
+              scene.remove(traffic.object);
+              disposeObject(traffic.object);
+              traffic = new TrafficLayer(next, surface);
+              traffic.enabled = enabled;
+              scene.add(traffic.object);
+              debug.traffic = traffic;
+            }
+            invalidate();
+          };
           buildPanel = setUpBuild(net, surface);
           const newsInfo = manifest.layers.news;
           if (newsInfo) {
@@ -600,7 +884,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           vehicles = new VehicleLayer(surface);
           scene.add(vehicles.object);
           debug.vehicles = vehicles;
-          traffic = new TrafficLayer(net, surface);
+          traffic = new TrafficLayer(networkNow?.net ?? net, surface);
           scene.add(traffic.object);
           debug.traffic = traffic;
           const travelData = await travel;
@@ -609,6 +893,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
             const running = startSimulation(net, travelData, surface, speed);
             debug.sim = running;
             if (closedEdges) running.setClosures(closedEdges);
+            // Roads drawn: the network with them, then the edits on it.
+            sendNetwork(running, true);
             if (editWordsNow) running.setEdits(editWordsNow);
             running.onReady = () => {
               if (running.signals) buildPanel?.setSignals(running.signals);
@@ -621,6 +907,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
               simChanged = true;
             };
             running.onEdgeSpeeds = (latest) => {
+              // Speeds measured on the network before roads were drawn or taken away.
+              if (latest.length !== (networkNow?.net ?? net).edgeCount) return;
               speeds = latest;
               traffic?.setSpeeds(latest);
               const place = news?.selected;

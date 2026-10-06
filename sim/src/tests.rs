@@ -2,7 +2,7 @@
 
 use crate::demand::{Demand, Gateway};
 use crate::edits::Edit;
-use crate::engine::{DT, Engine, Trip, stat, travel_time, trip};
+use crate::engine::{DT, Engine, LanePiece, Trip, stat, travel_time, trip};
 use crate::idm;
 use crate::network::{LINK_STATE_CHARS, NONE, Network, NetworkData, dir, edge_flag, vclass};
 use crate::rng::Rng;
@@ -141,7 +141,12 @@ impl Builder {
         self.signals.push((links.to_vec(), phases));
     }
 
-    fn build(mut self) -> Network {
+    fn build(self) -> Network {
+        Network::build(self.data()).expect("consistent test network")
+    }
+
+    /// The arrays as the pipeline exports them.
+    fn data(mut self) -> NetworkData {
         let d = &mut self.d;
         // Links sorted by from-lane, as the pipeline writes them.
         let n = d.link_from.len();
@@ -199,7 +204,7 @@ impl Builder {
             }
             d.tls_phase_offsets.push(d.phase_duration.len() as u32);
         }
-        Network::build(self.d).expect("consistent test network")
+        self.d
     }
 }
 
@@ -1398,4 +1403,229 @@ fn delay_counts_time_lost_against_the_speed_limit() {
         let km = engine.stats_array()[stat::VEHICLE_KM];
         assert!((0.9..1.1).contains(&km), "driven {km} km");
     }
+}
+
+/// From W to E either by a detour to the north, or (`direct`) straight across: W -> J0 ->
+/// (N ->) J1 -> E. The direct road and its links come last, as the app appends them.
+fn detour(direct: bool) -> (NetworkData, [u32; 4]) {
+    let mut b = Builder::default();
+    let w = b.junction(-200.0, 0.0);
+    let j0 = b.junction(0.0, 0.0);
+    let n = b.junction(300.0, -500.0);
+    let j1 = b.junction(600.0, 0.0);
+    let e = b.junction(800.0, 0.0);
+    let entry = b.road(w, j0, 1, 13.9);
+    let up = b.road(j0, n, 1, 13.9);
+    let down = b.road(n, j1, 1, 13.9);
+    let exit = b.road(j1, e, 1, 13.9);
+    for (from, to, j) in [(entry, up, j0), (up, down, n), (down, exit, j1)] {
+        let (fl, tl) = (b.lane(from, 0), b.lane(to, 0));
+        b.connect(fl, tl, j, dir::STRAIGHT, b'M');
+    }
+    let mut across = NONE;
+    if direct {
+        across = b.road(j0, j1, 1, 13.9);
+        let (el, al, xl) = (b.lane(entry, 0), b.lane(across, 0), b.lane(exit, 0));
+        b.connect(el, al, j0, dir::STRAIGHT, b'M');
+        b.connect(al, xl, j1, dir::STRAIGHT, b'm');
+        // At J1 the new road gives way to the old one where they merge.
+        b.set_logic(j1, &[(0, 0b10), (0b01, 0b01)]);
+    }
+    (b.data(), [entry, up, exit, across])
+}
+
+#[test]
+fn a_new_road_takes_traffic_while_vehicles_drive() {
+    let (base, [entry, up, exit, _]) = detour(false);
+    let (patched, [.., across]) = detour(true);
+    let mut engine = Engine::new(Network::build(base).unwrap(), 4);
+    let route = |engine: &Engine| {
+        let down = engine.net.d.lane_edge[engine.net.d.link_to[1] as usize];
+        vec![entry, up, down, exit]
+    };
+    let r = route(&engine);
+    let on_detour = engine.insert_at(
+        vtype::CAR,
+        r.clone(),
+        engine.net.edge_lanes(up).start,
+        300.0,
+        10.0,
+    );
+    let coming = engine.insert_at(
+        vtype::CAR,
+        r,
+        engine.net.edge_lanes(entry).start,
+        10.0,
+        10.0,
+    );
+    run_until(&mut engine, 2.0, |_| {});
+    let lanes = engine.net.lane_count();
+    engine
+        .replace_network(patched, &[])
+        .expect("a consistent network");
+    assert!(engine.net.lane_count() > lanes);
+    assert!(!engine.landmarks_ready());
+    // The car still on the way in takes the new road; the one on the detour drives on.
+    let mut took = false;
+    run_until(&mut engine, 120.0, |e| {
+        assert_no_overlaps(e);
+        let veh = &e.vehs[coming as usize];
+        took |= veh.alive() && veh.route.contains(&across);
+    });
+    assert!(took, "the car coming in re-planned onto the new road");
+    assert!(engine.edge_entered[across as usize] >= 1);
+    assert!(!engine.vehs[on_detour as usize].alive() && !engine.vehs[coming as usize].alive());
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (2, 0));
+    assert!(engine.landmarks_ready());
+}
+
+/// The straight road J0 -> J1 -> J2 with its first road split in the middle by a new
+/// junction J3, as the app builds it: the first half keeps its id and ends 6 m before J3,
+/// the second half is a new edge from 6 m after J3 to J1 that the old links now leave.
+/// Returns both networks, the lane, the second half's lane and the cut (m along the lane).
+fn split_road() -> (NetworkData, NetworkData, u32, u32, f32) {
+    let (base, e0, _) = straight_road(400.0, 1);
+    let base = base.data();
+    let (mut b, _, _) = straight_road(400.0, 1);
+    let lane = b.lane(e0, 0);
+    let j3 = b.junction(200.0, 0.0);
+    let z = b.d.lane_shape[1];
+    let end = b.d.lane_shape_offsets[lane as usize + 1] as usize - 1;
+    b.d.lane_shape[end * 3] = 194.0;
+    b.d.lane_length[lane as usize] = 188.0;
+    b.d.edge_to[e0 as usize] = j3;
+    let second = b.add_edge(j3, 1, 0);
+    let onto = b.add_lane(second, &[(206.0, z), (394.0, z)], 13.9, ALL);
+    b.d.edge_lane_count[second as usize] = 1;
+    for l in 0..b.d.link_from.len() {
+        if b.d.link_from[l] == lane {
+            b.d.link_from[l] = onto;
+        }
+    }
+    b.connect(lane, onto, j3, dir::STRAIGHT, b'M');
+    (base, b.data(), lane, onto, 188.0)
+}
+
+#[test]
+fn splitting_a_road_keeps_the_vehicles_on_it() {
+    let (base, patched, lane, onto, cut) = split_road();
+    let mut engine = Engine::new(Network::build(base).unwrap(), 5);
+    let (e0, e1) = (0, 1);
+    let cars: Vec<u32> = [50.0, 150.0, 250.0, 350.0]
+        .iter()
+        .map(|&pos| engine.insert_at(vtype::CAR, vec![e0, e1], lane, pos, 10.0))
+        .collect();
+    run_until(&mut engine, 1.0, |_| {});
+    let before: Vec<f32> = cars.iter().map(|&v| engine.vehs[v as usize].pos).collect();
+    // Past the cut, the old lane goes on 12 m further on as the second half's lane.
+    let pieces = [
+        LanePiece {
+            old: lane,
+            from: 0.0,
+            lane,
+            shift: 0.0,
+        },
+        LanePiece {
+            old: lane,
+            from: cut,
+            lane: onto,
+            shift: -(cut + 12.0),
+        },
+    ];
+    engine
+        .replace_network(patched, &pieces)
+        .expect("a consistent network");
+    let second = engine.net.d.lane_edge[onto as usize];
+    for (k, &v) in cars.iter().enumerate() {
+        let veh = &engine.vehs[v as usize];
+        assert_eq!(veh.route, vec![e0, second, e1]);
+        if before[k] > cut {
+            assert_eq!((veh.lane, veh.route_idx), (onto, 1));
+            assert!((veh.pos - (before[k] - 200.0)).abs() < 0.01);
+        } else {
+            assert_eq!((veh.lane, veh.route_idx, veh.pos), (lane, 0, before[k]));
+        }
+        assert_ne!(veh.next_link, NONE);
+    }
+    run_until(&mut engine, 120.0, assert_no_overlaps);
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (4, 0));
+}
+
+#[test]
+fn taking_a_road_away_again_merges_the_halves_and_drops_its_traffic() {
+    // The detour network with the direct road, and the split straight road: back to the
+    // networks without them.
+    let (with_road, [entry, up, exit, across]) = detour(true);
+    let (without, _) = detour(false);
+    let mut engine = Engine::new(Network::build(with_road).unwrap(), 6);
+    let lane_across = engine.net.edge_lanes(across).start;
+    let on_it = engine.insert_at(vtype::CAR, vec![across, exit], lane_across, 100.0, 10.0);
+    let r = vec![entry, across, exit];
+    let coming = engine.insert_at(
+        vtype::CAR,
+        r,
+        engine.net.edge_lanes(entry).start,
+        10.0,
+        10.0,
+    );
+    run_until(&mut engine, 1.0, |_| {});
+    // The direct road's lane and the internal lanes of its two links go.
+    let gone: Vec<LanePiece> = (lane_across..engine.net.lane_count() as u32)
+        .map(|old| LanePiece {
+            old,
+            from: 0.0,
+            lane: NONE,
+            shift: 0.0,
+        })
+        .collect();
+    let added_internal = engine.net.d.lane_edge.len() - lane_across as usize;
+    assert_eq!(added_internal, 3);
+    engine
+        .replace_network(without, &gone)
+        .expect("a consistent network");
+    assert!(
+        !engine.vehs[on_it as usize].alive(),
+        "the car on the road taken away left"
+    );
+    let veh = &engine.vehs[coming as usize];
+    assert!(
+        veh.alive() && veh.route.contains(&up),
+        "the car coming in re-planned"
+    );
+    run_until(&mut engine, 150.0, assert_no_overlaps);
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (1, 0));
+
+    let (split, base, lane, onto, cut) = {
+        let (base, split, lane, onto, cut) = split_road();
+        (split, base, lane, onto, cut)
+    };
+    let mut engine = Engine::new(Network::build(split).unwrap(), 7);
+    let second = engine.net.d.lane_edge[onto as usize];
+    let car = engine.insert_at(vtype::CAR, vec![0, second, 1], onto, 50.0, 10.0);
+    let via = engine.net.lane_count() as u32 - 1;
+    let pieces = [
+        LanePiece {
+            old: onto,
+            from: 0.0,
+            lane,
+            shift: cut + 12.0,
+        },
+        LanePiece {
+            old: via,
+            from: 0.0,
+            lane,
+            shift: cut,
+        },
+    ];
+    engine
+        .replace_network(base, &pieces)
+        .expect("a consistent network");
+    let veh = &engine.vehs[car as usize];
+    assert_eq!(
+        (veh.lane, veh.route.clone(), veh.route_idx),
+        (lane, vec![0, 1], 0)
+    );
+    assert!((veh.pos - 250.0).abs() < 0.01);
+    run_until(&mut engine, 60.0, assert_no_overlaps);
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (1, 0));
 }

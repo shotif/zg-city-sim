@@ -552,7 +552,7 @@ a.news-headline:hover {
 }
 
 .build-panel[hidden],
-.build-panel section[hidden] {
+.build-panel [hidden] {
   display: none;
 }
 
@@ -561,7 +561,8 @@ a.news-headline:hover {
 .build-road-info,
 .build-missing,
 .build-force,
-.build-status {
+.build-status,
+.build-draw-status {
   margin: 4px 0 8px;
   color: var(--text-dim);
   font-size: 13px;
@@ -634,12 +635,39 @@ a.news-headline:hover {
   font-size: 13px;
 }
 
-.build-compare {
+.build-compare,
+.build-projects {
   margin-top: 10px;
   border-top: 1px solid var(--panel-border);
 }
 
-.build-table {
+.build-project-status {
+  margin: 6px 0 4px;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.build-project-summary {
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+
+.build-project p.build-project-head,
+.build-project p.build-project-line {
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.build-project-line {
+  color: var(--text-dim);
+}
+
+.build-project-sources a {
+  color: inherit;
+}
+
+.build-table,
+.build-project-table {
   width: 100%;
   margin: 6px 0;
   border-collapse: collapse;
@@ -647,17 +675,21 @@ a.news-headline:hover {
 }
 
 .build-table th,
-.build-table td {
+.build-table td,
+.build-project-table th,
+.build-project-table td {
   padding: 2px 4px;
   text-align: right;
   font-weight: normal;
 }
 
-.build-table th:first-child {
+.build-table th:first-child,
+.build-project-table th:first-child {
   text-align: left;
 }
 
-.build-table thead th {
+.build-table thead th,
+.build-project-table thead th {
   color: var(--text-dim);
 }
 

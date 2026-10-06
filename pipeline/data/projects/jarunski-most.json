@@ -1,0 +1,205 @@
+{
+ "computed": "2026-10-06",
+ "fromHour": 6,
+ "hours": 4,
+ "demandScale": 0.6,
+ "totals": {
+  "today": {
+   "delayHours": 25798.5,
+   "vehicleKm": 2835975.0,
+   "arrived": 130822.5,
+   "tripMinutes": 26.02
+  },
+  "project": {
+   "delayHours": 23117.3,
+   "vehicleKm": 2827538,
+   "arrived": 133176,
+   "tripMinutes": 25.59
+  }
+ },
+ "perHour": [
+  {
+   "hour": 6,
+   "delayHours": [
+    4866.6,
+    4703.2
+   ],
+   "vehicleKm": [
+    718682.5,
+    721106
+   ],
+   "arrived": [
+    31046.0,
+    31639
+   ],
+   "tripMinutes": [
+    23.705,
+    23.84
+   ]
+  },
+  {
+   "hour": 7,
+   "delayHours": [
+    6734.85,
+    6403.8
+   ],
+   "vehicleKm": [
+    764719.0,
+    763143
+   ],
+   "arrived": [
+    34650.0,
+    35278
+   ],
+   "tripMinutes": [
+    26.46,
+    26.29
+   ]
+  },
+  {
+   "hour": 8,
+   "delayHours": [
+    7251.9,
+    6180.8
+   ],
+   "vehicleKm": [
+    697909.0,
+    700192
+   ],
+   "arrived": [
+    32867.5,
+    34203
+   ],
+   "tripMinutes": [
+    27.725,
+    27.16
+   ]
+  },
+  {
+   "hour": 9,
+   "delayHours": [
+    6945.049999999999,
+    5829.5
+   ],
+   "vehicleKm": [
+    654664.5,
+    643097
+   ],
+   "arrived": [
+    32259.0,
+    32056
+   ],
+   "tripMinutes": [
+    26.055,
+    24.88
+   ]
+  }
+ ],
+ "travel": {
+  "perHour": [
+   {
+    "hour": 7,
+    "mean": -0.0041
+   },
+   {
+    "hour": 8,
+    "mean": -0.0234
+   },
+   {
+    "hour": 9,
+    "mean": -0.0347
+   },
+   {
+    "hour": 10,
+    "mean": -0.0323
+   }
+  ],
+  "mean": -0.0274,
+  "faster": [
+   {
+    "from": "Novi Zagreb – zapad",
+    "to": "Stenjevec",
+    "today": 985,
+    "project": 725
+   },
+   {
+    "from": "Trešnjevka – jug",
+    "to": "Trnje",
+    "today": 799,
+    "project": 589
+   },
+   {
+    "from": "Novi Zagreb – zapad",
+    "to": "Podsused – Vrapče",
+    "today": 1196,
+    "project": 1008
+   }
+  ],
+  "slower": [
+   {
+    "from": "Trešnjevka – jug",
+    "to": "Stenjevec",
+    "today": 299,
+    "project": 358
+   },
+   {
+    "from": "Trešnjevka – sjever",
+    "to": "Trešnjevka – jug",
+    "today": 296,
+    "project": 341
+   },
+   {
+    "from": "Stenjevec",
+    "to": "Trešnjevka – jug",
+    "today": 349,
+    "project": 375
+   }
+  ]
+ },
+ "roads": [
+  {
+   "name": "Zagrebačka obilaznica",
+   "today": 40251,
+   "project": 37224
+  },
+  {
+   "name": "Jarunski most",
+   "today": 0,
+   "project": 2205
+  },
+  {
+   "name": "Zagrebačka avenija",
+   "today": 9729,
+   "project": 8236
+  },
+  {
+   "name": "Karlovačka cesta",
+   "today": 4806,
+   "project": 5789
+  },
+  {
+   "name": "Ljubljanska avenija",
+   "today": 4674,
+   "project": 3859
+  },
+  {
+   "name": "Jadranska avenija",
+   "today": 22577,
+   "project": 21866
+  },
+  {
+   "name": "Horvaćanska cesta",
+   "today": 4555,
+   "project": 4059
+  },
+  {
+   "name": "Zagrebačka cesta",
+   "today": 1171,
+   "project": 1462
+  }
+ ],
+ "noise": {
+  "delay": 0.1578,
+  "travel": 0.0609
+ }
+}
