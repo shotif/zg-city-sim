@@ -1,7 +1,10 @@
+eclipse-sumo~=1.27.1
 numpy~=2.5
+osmium~=4.3
 pillow~=12.3
 rasterio~=1.5
 scipy~=1.18
+sumolib~=1.27.1
 # development
 pytest~=9.1
 ruff~=0.16

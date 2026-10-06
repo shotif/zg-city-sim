@@ -38,3 +38,20 @@ describe('Heightfield', () => {
     expect(() => new Heightfield(new Float32Array(5), 3, 2, 10, 0, 0)).toThrow();
   });
 });
+
+describe('Heightfield.meshSurface', () => {
+  // 3 x 3 grid of 10 m cells, a single bump in the middle.
+  const hf = new Heightfield(new Float32Array([0, 0, 0, 0, 9, 0, 0, 0, 0]), 3, 3, 10, 0, 0);
+  const surface = hf.meshSurface(1);
+
+  it('passes through the mesh vertices', () => {
+    expect(surface(5, 5)).toBe(0);
+    expect(surface(15, 15)).toBe(9);
+  });
+
+  it('interpolates within the triangles the mesh uses', () => {
+    // Cell (0,0): corners NW 0, NE 0, SW 0, SE 9; split along SW-NE.
+    expect(surface(7.5, 7.5)).toBeCloseTo(0); // u + v = 0.5: north-west triangle, all zeros
+    expect(surface(12.5, 12.5)).toBeCloseTo(4.5); // u = v = 0.75: south-east triangle
+  });
+});

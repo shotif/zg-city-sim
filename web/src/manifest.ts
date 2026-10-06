@@ -27,6 +27,19 @@ export interface GroundLayer {
   attribution: Attribution;
 }
 
+export interface NetworkLayer {
+  /** Path of the road network index (JSON) relative to the data folder. */
+  index: string;
+  counts: {
+    junctions: number;
+    edges: number;
+    lanes: number;
+    trafficLights: number;
+    roadKm: number;
+  };
+  attribution: Attribution;
+}
+
 export interface WorldManifest {
   version: number;
   generated: string;
@@ -38,6 +51,7 @@ export interface WorldManifest {
   layers: {
     terrain?: TerrainLayer;
     ground?: GroundLayer;
+    network?: NetworkLayer;
   };
 }
 

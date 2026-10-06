@@ -4,6 +4,8 @@ import { CameraRig, type ViewMode } from './camera/CameraRig';
 import { attributions, loadManifest } from './manifest';
 import { Hud } from './ui/hud';
 import { WorldFrame } from './world/frame';
+import { RoadLayer } from './world/roadLayer';
+import { loadRoadNetwork } from './world/roadNetwork';
 import { loadTerrain } from './world/terrain';
 
 const SKY = new THREE.Color(0xb9cfe0);
@@ -11,9 +13,14 @@ const SKY = new THREE.Color(0xb9cfe0);
 /** Hooks for automated tests and debugging from the console. */
 export interface DebugApi {
   ready: boolean;
+  /** True once the road network is loaded (or known to be missing). */
+  roadsReady: boolean;
   backend: string;
   setView(mode: ViewMode): void;
+  /** Centre the view on scene (x, z) showing `viewHeight` metres. */
+  lookAt(x: number, z: number, viewHeight: number): void;
   rig?: CameraRig;
+  roads?: RoadLayer;
 }
 
 declare global {
@@ -24,7 +31,13 @@ declare global {
 
 export async function startApp(container: HTMLElement): Promise<void> {
   const params = new URLSearchParams(location.search);
-  const debug: DebugApi = { ready: false, backend: 'none', setView: () => {} };
+  const debug: DebugApi = {
+    ready: false,
+    roadsReady: false,
+    backend: 'none',
+    setView: () => {},
+    lookAt: () => {},
+  };
   window.__ZG__ = debug;
 
   let rig: CameraRig | undefined;
@@ -83,6 +96,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     const activeRig = rig;
     debug.rig = rig;
     debug.setView = (mode) => activeRig.setMode(mode, false);
+    debug.lookAt = (x, z, viewHeight) => activeRig.jumpTo(x, z, viewHeight);
 
     let dirty = true;
     const invalidate = () => {
@@ -104,17 +118,50 @@ export async function startApp(container: HTMLElement): Promise<void> {
       `Renderer: ${backend} · terrain mesh every ${stride * terrain.heightfield.resolution} m · data built ${manifest.generated}`,
     );
 
+    // Roads load after the terrain is on screen.
+    let roads: RoadLayer | undefined;
+    const networkLayer = manifest.layers.network;
+    if (networkLayer) {
+      hud.setNotice('Loading road network…');
+      const surface = terrain.heightfield.meshSurface(stride);
+      loadRoadNetwork(networkLayer.index)
+        .then((net) => {
+          roads = new RoadLayer(net, surface);
+          scene.add(roads.object);
+          debug.roads = roads;
+          invalidate();
+        })
+        .catch((error: unknown) => {
+          console.error(error);
+          hud.setNotice('The road network could not be loaded.');
+        })
+        .finally(() => {
+          debug.roadsReady = true;
+          if (roads) hud.setNotice(null);
+        });
+    } else {
+      debug.roadsReady = true;
+    }
+
     const fog = new THREE.Fog(SKY, 1, 2);
     renderer.setAnimationLoop((time: number) => {
       const moving = activeRig.update(time);
-      if (!moving && !dirty) return;
-      dirty = false;
-
       const camera = activeRig.camera;
       const view = activeRig.state();
+      const distance = camera.position.distanceTo(view.target);
+      const roadsChanged =
+        roads?.update({
+          mode: activeRig.mode,
+          target: view.target,
+          viewHeight: view.viewHeight,
+          distance: camera instanceof THREE.PerspectiveCamera ? distance : 0,
+          aspect: container.clientWidth / Math.max(1, container.clientHeight),
+        }) ?? false;
+      if (!moving && !dirty && !roadsChanged) return;
+      dirty = false;
+
       if (camera instanceof THREE.PerspectiveCamera) {
         // Haze that hides the edge of the data in the 3D view.
-        const distance = camera.position.distanceTo(view.target);
         fog.near = Math.max(3_000, distance);
         fog.far = Math.max(20_000, distance * 4);
         scene.fog = fog;

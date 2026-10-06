@@ -37,6 +37,33 @@ export class Heightfield {
     return this.heights[r * this.cols + c];
   }
 
+  /**
+   * Height function of the terrain mesh built with `stride` (buildTerrainGeometry): same
+   * vertices and the same triangle split, so things placed on it sit exactly on the surface.
+   */
+  meshSurface(stride: number): (x: number, z: number) => number {
+    const cols = Math.floor((this.cols - 1) / stride) + 1;
+    const rows = Math.floor((this.rows - 1) / stride) + 1;
+    const step = this.resolution * stride;
+    const x0 = this.west + 0.5 * this.resolution;
+    const z0 = this.north + 0.5 * this.resolution;
+    return (x, z) => {
+      const gc = clamp((x - x0) / step, 0, cols - 1);
+      const gr = clamp((z - z0) / step, 0, rows - 1);
+      const c = Math.min(Math.floor(gc), cols - 2);
+      const r = Math.min(Math.floor(gr), rows - 2);
+      const u = gc - c;
+      const v = gr - r;
+      const ha = this.at(c * stride, r * stride); // north-west
+      const he = this.at((c + 1) * stride, r * stride); // north-east
+      const hb = this.at(c * stride, (r + 1) * stride); // south-west
+      const hd = this.at((c + 1) * stride, (r + 1) * stride); // south-east
+      return u + v <= 1
+        ? ha + (he - ha) * u + (hb - ha) * v
+        : hd + (hb - hd) * (1 - u) + (he - hd) * (1 - v);
+    };
+  }
+
   /** Bilinearly interpolated height at scene (x, z), clamped to the grid. */
   sample(x: number, z: number): number {
     const fc = clamp((x - this.west) / this.resolution - 0.5, 0, this.cols - 1);

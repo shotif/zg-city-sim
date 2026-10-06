@@ -161,6 +161,14 @@ export class CameraRig {
     this.startTransition(from, { ...from, azimuth: 0 }, 'perspective');
   }
 
+  /** Move instantly to look at scene (x, z) showing `viewHeight` metres, keeping the angles. */
+  jumpTo(x: number, z: number, viewHeight: number): void {
+    const state = this.transition ? this.transition.to : this.state();
+    this.transition = null;
+    const target = new THREE.Vector3(x, this.groundHeight(x, z), z);
+    this.settle({ ...state, target, viewHeight });
+  }
+
   /** Advance transitions and inertia. Returns true while the view is still changing. */
   update(now: number): boolean {
     const transition = this.transition;

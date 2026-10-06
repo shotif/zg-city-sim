@@ -49,6 +49,7 @@ export class Hud {
   private readonly creditsList: HTMLElement;
   private readonly credits: HTMLDialogElement;
   private readonly status: HTMLElement;
+  private readonly notice: HTMLElement;
 
   constructor(container: HTMLElement, callbacks: HudCallbacks) {
     this.root = el('div', 'hud', container);
@@ -105,6 +106,10 @@ export class Hud {
     this.status = this.credits.querySelector('.hud-status')!;
     creditsButton.addEventListener('click', () => this.credits.showModal());
 
+    this.notice = el('div', 'hud-panel hud-notice', this.root);
+    this.notice.hidden = true;
+    this.notice.setAttribute('role', 'status');
+
     this.overlay = el('div', 'hud-overlay', container);
     this.setLoading('Loading Zagreb…');
 
@@ -127,6 +132,12 @@ export class Hud {
     this.overlay.className = 'hud-overlay hud-overlay-error';
     this.overlay.innerHTML = '<h2>Something went wrong</h2><p></p>';
     this.overlay.querySelector('p')!.textContent = message;
+  }
+
+  /** A small status message above the footer; null hides it. */
+  setNotice(message: string | null): void {
+    this.notice.hidden = message === null;
+    this.notice.textContent = message ?? '';
   }
 
   ready(): void {

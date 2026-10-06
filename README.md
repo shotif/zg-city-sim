@@ -21,7 +21,8 @@ See [docs/PLAN.md](docs/PLAN.md) for the vision, architecture and roadmap.
 Requirements: Node.js 22+, Python 3.12+.
 
 ```bash
-# 1. Build the data (downloads ~100 MB on first run, cached in pipeline/.cache)
+# 1. Build the data (downloads ~150 MB on first run, cached in pipeline/.cache):
+#    terrain + ground (elevation, land cover) and network (OpenStreetMap -> SUMO road network)
 python -m venv .venv && . .venv/bin/activate
 pip install -r pipeline/requirements.txt
 python -m pipeline all
