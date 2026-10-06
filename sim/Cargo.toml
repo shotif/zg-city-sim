@@ -1,0 +1,24 @@
+[package]
+name = "zg-sim"
+version = "0.1.0"
+edition = "2024"
+description = "Traffic simulation engine for ZG City Sim (runs natively and as WebAssembly)"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Time each step phase (native runs; std::time is not available in the browser build).
+profile = []
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+
+[profile.dev]
+panic = "abort"

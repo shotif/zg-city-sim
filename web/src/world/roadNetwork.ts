@@ -1,5 +1,6 @@
 import { type PackedIndex, type TypedArray, loadPacked } from '../data/packed';
 import { DATA_URL } from '../manifest';
+import type { HeightFn } from './roadGeometry';
 
 /** Index written next to the packed network arrays (pipeline/simnet.py). */
 export interface RoadNetworkIndex extends PackedIndex {
@@ -187,6 +188,41 @@ export class RoadNetwork {
     const start = this.junctionShapeOffsets[junction];
     return { start, count: this.junctionShapeOffsets[junction + 1] - start };
   }
+}
+
+/**
+ * Heights the traffic engine draws vehicles at, per lane shape point: absolute on bridges
+ * (straight between the ground at the bridge ends, as the road renderer draws them) and
+ * the elevation offset above the ground elsewhere (the renderer adds the ground).
+ */
+export function laneShapeHeights(net: RoadNetwork, height: HeightFn): Float32Array {
+  const shape = net.laneShape;
+  const out = new Float32Array(shape.length / 3);
+  for (let p = 0; p < out.length; p++) out[p] = shape[p * 3 + 2];
+  for (let lane = 0; lane < net.laneCount; lane++) {
+    if (!net.hasFlag(net.laneEdge[lane], 'bridge')) continue;
+    const { start, count } = net.lanePoints(lane);
+    if (count < 2) continue;
+    const end = start + count - 1;
+    const h0 = height(shape[start * 3], shape[start * 3 + 1]);
+    const h1 = height(shape[end * 3], shape[end * 3 + 1]);
+    let total = 0;
+    for (let p = start + 1; p <= end; p++) {
+      total += Math.hypot(shape[p * 3] - shape[p * 3 - 3], shape[p * 3 + 1] - shape[p * 3 - 2]);
+    }
+    let travelled = 0;
+    for (let p = start; p <= end; p++) {
+      if (p > start) {
+        travelled += Math.hypot(
+          shape[p * 3] - shape[p * 3 - 3],
+          shape[p * 3 + 1] - shape[p * 3 - 2],
+        );
+      }
+      const ground = total > 0 ? h0 + (h1 - h0) * (travelled / total) : h0;
+      out[p] = ground + shape[p * 3 + 2];
+    }
+  }
+  return out;
 }
 
 export async function loadRoadNetwork(indexFile: string): Promise<RoadNetwork> {

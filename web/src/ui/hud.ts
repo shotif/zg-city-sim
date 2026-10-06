@@ -6,6 +6,32 @@ export interface HudCallbacks {
   onMode(mode: ViewMode): void;
   onRotateIso(direction: 1 | -1): void;
   onFaceNorth(): void;
+  onPause?(paused: boolean): void;
+  onSpeed?(speed: number): void;
+}
+
+/** What the simulation panel shows. */
+export interface HudSim {
+  /** Simulated time, s since midnight. */
+  time: number;
+  paused: boolean;
+  speed: number;
+  /** Simulated seconds per real second actually achieved. */
+  rate: number;
+  warming: boolean;
+  vehicles: number;
+  /** Mean speed of moving traffic, km/h. */
+  meanSpeed: number;
+}
+
+export const SIM_SPEEDS = [1, 4, 16, 64];
+
+/** "07:05" for a time in seconds since midnight. */
+export function formatClock(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const h = Math.floor(minutes / 60) % 24;
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 export interface HudView {
@@ -50,12 +76,41 @@ export class Hud {
   private readonly credits: HTMLDialogElement;
   private readonly status: HTMLElement;
   private readonly notice: HTMLElement;
+  private readonly sim: HTMLElement;
+  private readonly simClock: HTMLElement;
+  private readonly simInfo: HTMLElement;
+  private readonly pauseButton: HTMLButtonElement;
+  private readonly speedButtons = new Map<number, HTMLButtonElement>();
+  private simState?: HudSim;
 
   constructor(container: HTMLElement, callbacks: HudCallbacks) {
     this.root = el('div', 'hud', container);
 
-    const title = el('div', 'hud-panel hud-title', this.root);
+    const left = el('div', 'hud-left', this.root);
+    const title = el('div', 'hud-panel hud-title', left);
     title.innerHTML = '<strong>ZG City Sim</strong><span>Zagreb · prototype</span>';
+
+    this.sim = el('div', 'hud-panel hud-sim', left);
+    this.sim.hidden = true;
+    const clockRow = el('div', 'hud-sim-row', this.sim);
+    this.simClock = el('span', 'hud-sim-clock', clockRow);
+    this.pauseButton = el('button', 'hud-button hud-icon', clockRow);
+    this.pauseButton.type = 'button';
+    this.pauseButton.addEventListener('click', () => {
+      if (this.simState) callbacks.onPause?.(!this.simState.paused);
+    });
+    const speeds = el('div', 'hud-sim-speeds', clockRow);
+    speeds.setAttribute('role', 'group');
+    speeds.setAttribute('aria-label', 'Simulation speed');
+    for (const speed of SIM_SPEEDS) {
+      const button = el('button', 'hud-button hud-speed', speeds);
+      button.type = 'button';
+      button.textContent = `${speed}×`;
+      button.title = speed === 1 ? 'Real time' : `${speed} times real time`;
+      button.addEventListener('click', () => callbacks.onSpeed?.(speed));
+      this.speedButtons.set(speed, button);
+    }
+    this.simInfo = el('div', 'hud-sim-info', this.sim);
 
     const toolbar = el('div', 'hud-panel hud-toolbar', this.root);
     toolbar.setAttribute('role', 'toolbar');
@@ -119,6 +174,14 @@ export class Hud {
       if (mode) callbacks.onMode(mode);
       else if (event.key === 'q' || event.key === 'Q') callbacks.onRotateIso(-1);
       else if (event.key === 'e' || event.key === 'E') callbacks.onRotateIso(1);
+      else if (event.key === ' ' && this.simState) {
+        event.preventDefault();
+        callbacks.onPause?.(!this.simState.paused);
+      } else if ((event.key === '+' || event.key === '-') && this.simState) {
+        const i = SIM_SPEEDS.indexOf(this.simState.speed) + (event.key === '+' ? 1 : -1);
+        const speed = SIM_SPEEDS[Math.min(SIM_SPEEDS.length - 1, Math.max(0, i))];
+        callbacks.onSpeed?.(speed);
+      }
     });
   }
 
@@ -158,6 +221,32 @@ export class Hud {
       }),
     );
     this.status.textContent = status;
+  }
+
+  /** Show the simulation panel with the current time, speed and traffic. */
+  updateSim(sim: HudSim): void {
+    const changed =
+      !this.simState ||
+      this.simState.paused !== sim.paused ||
+      this.simState.speed !== sim.speed ||
+      this.simState.warming !== sim.warming;
+    this.simState = sim;
+    this.sim.hidden = false;
+    this.simClock.textContent = formatClock(sim.time);
+    if (changed) {
+      this.pauseButton.textContent = sim.paused ? '▶' : '⏸';
+      const label = sim.paused ? 'Resume (space)' : 'Pause (space)';
+      this.pauseButton.title = label;
+      this.pauseButton.setAttribute('aria-label', label);
+      for (const [speed, button] of this.speedButtons) {
+        button.setAttribute('aria-pressed', String(speed === sim.speed));
+      }
+    }
+    const lagging = !sim.paused && !sim.warming && sim.rate < sim.speed * 0.8;
+    this.simInfo.textContent = sim.warming
+      ? 'Filling the streets with traffic…'
+      : `${sim.vehicles.toLocaleString('en')} vehicles · ${Math.round(sim.meanSpeed)} km/h average` +
+        (lagging ? ` · running at ${sim.rate.toFixed(sim.rate < 10 ? 1 : 0)}×` : '');
   }
 
   update(view: HudView): void {

@@ -6,6 +6,7 @@
   "description": "Browser app for ZG City Sim, a traffic and city-building simulator of Zagreb",
   "scripts": {
     "dev": "vite",
+    "wasm": "cargo build --release --target wasm32-unknown-unknown --manifest-path ../sim/Cargo.toml && mkdir -p public/sim && cp ../sim/target/wasm32-unknown-unknown/release/zg_sim.wasm public/sim/",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",

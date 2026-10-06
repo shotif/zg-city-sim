@@ -45,6 +45,15 @@ jobs:
       - name: Build city data
         run: python -m pipeline all
 
+      - name: Lint and test the traffic engine
+        working-directory: sim
+        run: |
+          rustup update stable --no-self-update
+          rustup target add wasm32-unknown-unknown
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -61,6 +70,7 @@ jobs:
           npm run format:check
           npm run typecheck
           npm test
+          npm run wasm
           npm run build
 
       - name: Smoke test in headless Chromium

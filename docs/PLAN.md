@@ -57,6 +57,18 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
 
 **Network.** A lane-level road network built from OpenStreetMap: lanes, turn lanes, turn restrictions, speed limits, signals, tram tracks, bus lanes. The pipeline uses SUMO's `netconvert` to build it, adds hand-made fixes at critical junctions, and exports it to the engine's own compact format. In the browser, the engine's own junction builder handles everything you build or change.
 
+**Status (M2, 2026-10-06).** The engine (`sim/`) runs the whole city in the browser:
+- About 500k car trips per weekday (767k residents × 1.84 trips × 46 % by car ÷ 1.3 per car), timed by an hourly profile, destinations by a gravity model. Placeholder origins and destinations come from the street network until the building-based demand lands.
+- IDM car following; lane changes to reach the next turn plus MOBIL overtaking; SUMO's junction right-of-way (each link yields to its `response` links and never enters while a `foes` link's vehicle is inside); no entering a junction without room behind it; stop signs.
+- Actuated signals from the SUMO programs: a green phase ends after its minimum once nobody is arriving, at its maximum otherwise.
+- A* routing with landmark lower bounds (ALT), on travel times the simulation measures every minute.
+- Vehicles stuck for 3 minutes are removed, as SUMO teleports them (about 1.7 % in a 06:00–10:00 test run, mostly at short artefact edges from the OSM conversion).
+- Native speed: about 33× real time for a 06:00–10:00 morning with up to 12,700 vehicles. The browser runs the WebAssembly build in a worker.
+
+Known gaps:
+- Left turns wait at the stop line rather than inside the junction (SUMO's internal junctions are not exported yet).
+- Routing is half the engine's time; a compact routing graph or contraction hierarchies would help.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.
