@@ -1,0 +1,7 @@
+numpy~=2.5
+pillow~=12.3
+rasterio~=1.5
+scipy~=1.18
+# development
+pytest~=9.1
+ruff~=0.16
