@@ -1,0 +1,28 @@
+{
+  "name": "zg-city-sim-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Browser app for ZG City Sim, a traffic and city-building simulator of Zagreb",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/three": "0.186.0",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}
