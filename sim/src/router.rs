@@ -16,6 +16,10 @@ use crate::network::{NONE, Network};
 const HEURISTIC_SPEED: f32 = 40.0;
 /// Give up after this many settled edges (keeps a bad query from stalling a step).
 const MAX_SETTLED: usize = 400_000;
+/// Weight on the distance estimate (weighted A*): routes may be up to this factor slower
+/// than the fastest, in exchange for searching far fewer roads once traffic is heavy and
+/// travel times exceed the free-flow estimate.
+const HEURISTIC_WEIGHT: f32 = 1.2;
 /// Landmarks for the ALT heuristic.
 pub const LANDMARKS: usize = 12;
 /// Unreachable in landmark tables.
@@ -273,8 +277,8 @@ impl Router {
                     self.epoch[i] = epoch;
                     self.g[i] = cost;
                     self.parent[i] = e;
-                    self.heap
-                        .push((Reverse((cost + h(next)).to_bits()), next, cost.to_bits()));
+                    let f = cost + HEURISTIC_WEIGHT * h(next);
+                    self.heap.push((Reverse(f.to_bits()), next, cost.to_bits()));
                 }
             }
         }

@@ -1,0 +1,59 @@
+name: Live data
+
+# Copies the City of Zagreb's road closures (data.zagreb.hr "prometnice", refreshed every
+# 3 minutes, no CORS headers) to the live-data branch, where the app reads it from
+# raw.githubusercontent.com. The branch holds a single commit, replaced on every run.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-data
+  cancel-in-progress: false
+
+jobs:
+  closures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch road closures
+        run: |
+          mkdir -p out
+          python3 - <<'EOF'
+          import datetime, json, urllib.request
+
+          def get(url):
+              req = urllib.request.Request(url, headers={"User-Agent": "zg-city-sim live data"})
+              with urllib.request.urlopen(req, timeout=60) as response:
+                  return response.read()
+
+          package = json.loads(get("https://data.zagreb.hr/api/3/action/package_show?id=prometnice"))
+          url = next(r["url"] for r in package["result"]["resources"] if r.get("format", "").upper() == "JSON")
+          raw = json.loads(get(url))
+          keep = ("type", "subtype", "street", "polyline", "direction", "expectedStartTime", "expectedEndTime")
+          out = {
+              "source": "Grad Zagreb, Zatvaranje prometnica na području Grada Zagreba (data.zagreb.hr), Otvorena dozvola",
+              "fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+              "closures": [{k: c.get(k) for k in keep} for c in raw if isinstance(c, dict)],
+          }
+          with open("out/closures.json", "w", encoding="utf-8") as f:
+              json.dump(out, f, ensure_ascii=False)
+          print(len(out["closures"]), "closures")
+          EOF
+
+      - name: Publish to the live-data branch
+        working-directory: out
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git init -q -b live-data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add closures.json
+          git commit -q -m "Road closures $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" live-data

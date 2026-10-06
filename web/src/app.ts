@@ -5,12 +5,23 @@ import { type PackedIndex, type TypedArray, loadPacked } from './data/packed';
 import { DATA_URL, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
 import { STAT } from './sim/wasm';
+import { ClosureMarkers } from './ui/closureMarkers';
 import { Hud } from './ui/hud';
+import { NewsPanel } from './ui/newsPanel';
 import { BuildingLayer, loadBuildings } from './world/buildingLayer';
+import {
+  ClosureLayer,
+  type PlacedClosure,
+  activeClosures,
+  loadClosures,
+  placeClosures,
+  zagrebNow,
+} from './world/closures';
 import { WorldFrame } from './world/frame';
 import type { HeightFn } from './world/roadGeometry';
 import { RoadLayer } from './world/roadLayer';
 import { type RoadNetwork, laneShapeHeights, loadRoadNetwork } from './world/roadNetwork';
+import { NewsLayer, loadNews, placeTraffic } from './world/newsLayer';
 import { loadTerrain } from './world/terrain';
 import { TRAFFIC_BANDS, TrafficLayer } from './world/trafficLayer';
 import { VehicleLayer } from './world/vehicleLayer';
@@ -88,6 +99,10 @@ export interface DebugApi {
   sim?: SimClient;
   vehicles?: VehicleLayer;
   traffic?: TrafficLayer;
+  news?: NewsLayer;
+  newsPanel?: NewsPanel;
+  /** Live road closures in force, placed on the network. */
+  closures?: PlacedClosure[];
 }
 
 declare global {
@@ -111,6 +126,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let rig: CameraRig | undefined;
   let sim: SimClient | undefined;
   let traffic: TrafficLayer | undefined;
+  let newsPanel: NewsPanel | undefined;
+  let closureMarkers: ClosureMarkers | undefined;
+  let closureLayer: ClosureLayer | undefined;
+  let closedEdges: Uint32Array | undefined;
   let invalidateView = () => {};
   const hud = new Hud(container, {
     onMode: (mode) => rig?.setMode(mode),
@@ -123,6 +142,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
     },
     onTrafficMap: (enabled) => {
       if (traffic) traffic.enabled = enabled;
+      invalidateView();
+    },
+    onNews: (enabled) => {
+      newsPanel?.setVisible(enabled);
+      invalidateView();
+    },
+    onClosures: (enabled) => {
+      closureMarkers?.setVisible(enabled);
+      if (closureLayer) closureLayer.object.visible = enabled;
       invalidateView();
     },
   });
@@ -203,6 +231,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
     // Roads load after the terrain is on screen, then traffic starts on them.
     let roads: RoadLayer | undefined;
     let vehicles: VehicleLayer | undefined;
+    let news: NewsLayer | undefined;
+    let speeds: Uint8Array | undefined;
     let simChanged = false;
     const networkLayer = manifest.layers.network;
     if (networkLayer) {
@@ -224,6 +254,56 @@ export async function startApp(container: HTMLElement): Promise<void> {
           scene.add(roads.object);
           debug.roads = roads;
           invalidate();
+          const newsInfo = manifest.layers.news;
+          if (newsInfo) {
+            loadNews(newsInfo.index)
+              .then((data) => {
+                const layer = new NewsLayer(net, surface, data);
+                news = layer;
+                scene.add(layer.object);
+                newsPanel = new NewsPanel(hud.element, data, {
+                  onSelect: (hotspot) => {
+                    layer.select(hotspot);
+                    if (hotspot) {
+                      newsPanel?.setTraffic(
+                        speeds ? placeTraffic(net, hotspot.edges, speeds) : sim ? undefined : null,
+                      );
+                    }
+                    invalidate();
+                  },
+                });
+                debug.news = layer;
+                debug.newsPanel = newsPanel;
+                const reports = data.hotspots.reduce((n, h) => n + h.reports.length, 0);
+                hud.enableNews(data.hotspots.length, reports);
+              })
+              .catch((error: unknown) => console.warn('News reports could not be loaded', error));
+          }
+          if (params.get('closures') !== 'off') {
+            loadClosures()
+              .then((feed) => {
+                const placed = placeClosures(
+                  net,
+                  activeClosures(feed.closures, zagrebNow()),
+                  manifest.origin,
+                );
+                debug.closures = placed;
+                if (placed.length === 0) return;
+                closureLayer = new ClosureLayer(net, surface);
+                closureLayer.show(placed);
+                scene.add(closureLayer.object);
+                closureMarkers = new ClosureMarkers(hud.element);
+                closureMarkers.set(placed);
+                hud.enableClosures(placed.length, feed.fetched);
+                // The simulation routes around them.
+                closedEdges = Uint32Array.from(placed.flatMap((p) => p.edges));
+                sim?.setClosures(closedEdges);
+                invalidate();
+              })
+              .catch((error: unknown) =>
+                console.warn('Live road closures could not be loaded', error),
+              );
+          }
           if (params.get('sim') === 'off') return;
           vehicles = new VehicleLayer(surface);
           scene.add(vehicles.object);
@@ -233,11 +313,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
           debug.traffic = traffic;
           sim = startSimulation(net, await travel, surface, Number(params.get('speed')) || 1);
           debug.sim = sim;
+          if (closedEdges) sim.setClosures(closedEdges);
           sim.onFrame = () => {
             simChanged = true;
           };
-          sim.onEdgeSpeeds = (speeds) => {
-            traffic?.setSpeeds(speeds);
+          sim.onEdgeSpeeds = (latest) => {
+            speeds = latest;
+            traffic?.setSpeeds(latest);
+            const place = news?.selected;
+            if (place) newsPanel?.setTraffic(placeTraffic(net, place.edges, latest));
             invalidate();
           };
           sim.onError = (message) => {
@@ -277,6 +361,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     }
 
     const fog = new THREE.Fog(SKY, 1, 2);
+    const marker = new THREE.Vector3();
     let lastHudSim = 0;
     renderer.setAnimationLoop((time: number) => {
       const moving = activeRig.update(time);
@@ -313,6 +398,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
             rate: sim.rate,
             warming: sim.warming,
             vehicles: sim.stats[STAT.running],
+            outside: sim.stats[STAT.outside] ?? 0,
             trams: sim.stats[STAT.trams],
             buses: sim.stats[STAT.buses],
             meanSpeed: sim.stats[STAT.meanSpeed] * 3.6,
@@ -361,6 +447,20 @@ export async function startApp(container: HTMLElement): Promise<void> {
         scene.fog = null;
       }
       renderer.render(scene, camera);
+      const { clientWidth: viewW, clientHeight: viewH } = container;
+      const toScreen = (x: number, y: number, z: number): [number, number] | null => {
+        marker.set(x, y, z).project(camera);
+        if (marker.z > 1 || Math.abs(marker.x) > 1.05 || Math.abs(marker.y) > 1.05) return null;
+        return [((marker.x + 1) / 2) * viewW, ((1 - marker.y) / 2) * viewH];
+      };
+      const closures = closureLayer;
+      if (closures && closureMarkers?.visible) {
+        closureMarkers.place((x, z) => toScreen(x, closures.markerY(x, z), z));
+      }
+      const newsLayer = news;
+      if (newsLayer && newsPanel?.visible) {
+        newsPanel.place((place) => toScreen(place.x, newsLayer.markerY(place), place.z));
+      }
       hud.update({
         mode: activeRig.mode,
         azimuth: view.azimuth,

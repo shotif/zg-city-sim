@@ -92,6 +92,11 @@ export class SimClient {
     this.send({ type: 'demand', scale });
   }
 
+  /** Close these edges to routing (live road closures), replacing earlier closures. */
+  setClosures(edges: Uint32Array): void {
+    this.send({ type: 'closures', edges });
+  }
+
   dispose(): void {
     this.worker.terminate();
   }

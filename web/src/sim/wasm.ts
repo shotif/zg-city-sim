@@ -14,6 +14,7 @@ export interface EngineExports {
   zg_set_time(seconds: number): void;
   zg_set_demand_scale(scale: number): void;
   zg_add_trip(depart: number, from: number, to: number, vtype: number): void;
+  zg_set_closed(edges: number, count: number): void;
   zg_step(steps: number): number;
   zg_dt(): number;
   zg_render_ptr(): number;
@@ -43,6 +44,8 @@ export const STAT = {
   slots: 13,
   trams: 14,
   buses: 15,
+  /** Vehicles coming from or going to places beyond the map. */
+  outside: 16,
 } as const;
 
 /** Words per vehicle slot in the render buffer and what they hold (engine::write_render). */
@@ -130,6 +133,18 @@ export class TrafficEngine {
 
   addTrip(depart: number, fromEdge: number, toEdge: number, vehicleType = 0): void {
     this.exports.zg_add_trip(depart, fromEdge, toEdge, vehicleType);
+  }
+
+  /** Close these edges to routing (live road closures), replacing earlier closures. */
+  setClosed(edges: Uint32Array): void {
+    const ex = this.exports;
+    const bytes = edges.byteLength;
+    const ptr = ex.zg_alloc(bytes);
+    new Uint8Array(this.memory, ptr, bytes).set(
+      new Uint8Array(edges.buffer, edges.byteOffset, bytes),
+    );
+    ex.zg_set_closed(ptr, edges.length);
+    ex.zg_free(ptr, bytes);
   }
 
   /** Advance `steps` steps; returns the simulated time. */

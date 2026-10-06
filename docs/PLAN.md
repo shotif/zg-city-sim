@@ -64,18 +64,32 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
 - IDM car following; lane changes to reach the next turn plus MOBIL overtaking; SUMO's junction right-of-way (each link yields to its `response` links and never enters while a `foes` link's vehicle is inside); stop signs.
 - No entering a junction without room behind it, looking through the sub-metre edges netconvert leaves inside junction clusters.
 - Drivers who have waited 15 s push in where oncoming drivers can still brake, and drivers who could stop let long waiters go first. After a minute, drivers enter a full junction so gridlocks can unwind.
-- Actuated signals from the SUMO programs: a green phase ends after its minimum once nobody is arriving, at most 10 s after its planned length.
+- Actuated signals from the SUMO programs: a green phase ends after its minimum once nobody is arriving, at most 20 s after its planned length.
 - U-turns: a vehicle class plans one only where it has no other way on (buses still turn at terminals).
-- A* routing with landmark lower bounds (ALT), on travel times the simulation measures every minute.
+- A* routing with landmark lower bounds (ALT), on travel times the simulation measures every minute. The bound is weighted by 1.2, so routes are at most 20 % slower than the fastest and searches stay short in heavy traffic.
 - Vehicles stuck for 5 minutes are removed, as SUMO teleports them: about 0.7 % of trips in a 07:00–07:30 peak test, mostly queues spilling back.
 - Native speed about 28× real time in the morning peak (14,000 vehicles). The browser runs the WebAssembly build in a worker.
 - **Traffic map**: every road coloured by its measured mean speed as a share of the limit over the last simulated minute (flowing, slow, congested, jammed), the first analysis view.
 
+**Status (M3, 2026-10-06).**
+- **Census population per district**: each of the City's 17 districts has its 2021 census population spread over the homes inside it (district outlines from the City's register of spatial units).
+- **Traffic beyond the map** (`pipeline/gateways.py`, `sim/src/demand.rs`): the 223 places where roads leave the map are gateways. Where a Hrvatske ceste station counts the road (the six motorways and the D1 north), the gateway carries the counted traffic, less what leaves at interchanges before the edge; other roads get typical volumes for their class. About 287,000 vehicles a day cross the map's edge:
+  - commuters coming in to work in the morning and going home in the afternoon;
+  - residents commuting out, the other way round;
+  - errands both ways;
+  - through traffic between gateways at least 10 km apart, mostly on the A3 bypass, a quarter of it trucks.
+  Vehicles from beyond the map drive in at the road's start at speed and leave off its far end.
+- **Validation** against the Hrvatske ceste counts: a full simulated weekday compared station by station in [VALIDATION.md](VALIDATION.md).
+- **News hotspots**: 107 news reports (2020-2026) of jams, roadworks, closures and crashes at 39 places, placed on the network (`pipeline/news.py`). In the app they are markers (key `N`) with the reports and how the simulation sees the place right now.
+- **Live road closures**: the City's closures feed, copied every 15 minutes to the `live-data` branch by a GitHub Action. The app draws them in red (key `C`) and the simulation routes around them.
+- Drivers are a little more assertive than in M2: a 1.0 s time gap instead of 1.2 s and 2.2 m/s² acceleration. That gives about 1,800 vehicles per lane per hour at signals instead of 1,600.
+
 Known gaps:
 - Left turns wait at the stop line rather than inside the junction (SUMO's internal junctions are not exported yet).
-- Guessed signal programs at big junctions have up to 7 green phases; real timings would help a lot (M3).
-- Routing is half the engine's time; a compact routing graph or contraction hierarchies would help.
-- Commuters from outside the map and through traffic are not modelled yet (M3).
+- Guessed signal programs at big junctions have up to 7 green phases; real timings would help a lot.
+- The morning peak is heavier than the real one: queues on the main corridors grow through 8:00 and 1-2 % of trips are removed from gridlocks (see VALIDATION.md).
+- Count stations are placed by hand from their names: the published tables have no coordinates.
+- Routing is a third of the engine's time in the peak; a compact routing graph or contraction hierarchies would help.
 - Buses stop in whatever lane they are in, not at the kerb; one bus terminal (Črnomerec) is unreachable in the converted network, so its stop is skipped.
 - Trams and cars do not share lanes yet: tram tracks are separate edges (joining them into street lanes broke tram connectivity), so cars only meet trams at junctions.
 

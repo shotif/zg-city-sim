@@ -1,9 +1,14 @@
 //! Synthetic travel demand: car and truck trips between road edges weighted by where people
 //! live and work, timed by a typical weekday profile, with destinations chosen by a gravity
 //! model (nearer places are likelier).
+//!
+//! Traffic to, from and through places beyond the map enters and leaves at gateways, where
+//! roads cross the map's edge: commuters coming in to work in the morning and going home in
+//! the afternoon, residents doing the opposite, errands both ways, and through traffic
+//! between two gateways (mostly on the motorway ring).
 
-use crate::engine::Trip;
-use crate::network::{Network, vclass};
+use crate::engine::{Trip, trip};
+use crate::network::{NONE, Network, vclass};
 use crate::rng::Rng;
 use crate::vtype;
 
@@ -14,8 +19,81 @@ pub const HOURLY: [f32; 24] = [
     4.8, 3.4, 2.6, 1.9, 1.2,
 ];
 
+/// Shares of an hour's trips going from home to work and from work to home; the rest are
+/// other errands.
+fn purposes(hour: usize) -> (f32, f32) {
+    match hour {
+        5..=9 => (0.55, 0.05),
+        10..=13 => (0.15, 0.15),
+        14..=18 => (0.08, 0.5),
+        _ => (0.05, 0.25),
+    }
+}
+
 /// Candidate destinations the gravity model chooses between.
 const CANDIDATES: usize = 8;
+/// Share of trips across the map's edge that are commutes (the rest are errands, business
+/// and visits), and the share of those commuters who live beyond the map (the rest live
+/// inside it and work beyond it).
+const COMMUTE_SHARE: f32 = 0.55;
+const COMMUTERS_FROM_OUTSIDE: f32 = 0.75;
+/// Distance (m) over which places lose attractiveness by a factor e for trips across the
+/// map's edge: people who come from far away mind the last few kilometres less.
+const GATEWAY_DECAY: f32 = 12_000.0;
+/// Through traffic leaves at a gateway at least this far (m) from where it came in.
+const THROUGH_MIN_DISTANCE: f32 = 10_000.0;
+/// Share of through traffic that drives at the hours of city traffic; the rest is spread
+/// evenly over the day (long-distance and freight traffic).
+const THROUGH_PEAKED: f32 = 0.7;
+/// Truck shares by day (6-20 h) and by night.
+const TRUCKS: (f32, f32) = (0.06, 0.12);
+const THROUGH_TRUCKS: (f32, f32) = (0.25, 0.5);
+
+/// Where a road crosses the map's edge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gateway {
+    /// Edge leading into the map (`NONE` if the road only leads out).
+    pub entry: u32,
+    /// Edge leading out of the map (`NONE` if the road only leads in).
+    pub exit: u32,
+    /// Vehicles crossing per day, both directions together.
+    pub daily: f32,
+    /// Share of them passing through: in here, out at another gateway.
+    pub through: f32,
+}
+
+/// One kind of trip across the map's edge.
+#[derive(Default)]
+struct Flow {
+    /// Cumulative weight of each gateway.
+    cum: Vec<f64>,
+    /// Trips per day.
+    daily: f64,
+    /// Share of the day's trips per hour, by purpose: commuting to work, going home, other.
+    profile: [[f32; 3]; 24],
+    acc: f64,
+}
+
+impl Flow {
+    /// The profile at time `t`, interpolated between the middles of the hours.
+    fn at(&self, t: f64) -> [f32; 3] {
+        let x = (t / 3600.0 - 0.5).rem_euclid(24.0) as f32;
+        let h0 = x.floor() as usize % 24;
+        let f = x - x.floor();
+        let (a, b) = (self.profile[h0], self.profile[(h0 + 1) % 24]);
+        [0, 1, 2].map(|i| a[i] * (1.0 - f) + b[i] * f)
+    }
+
+    /// Number of trips starting in [t, t + dt), and the purpose shares at `t`.
+    fn due(&mut self, t: f64, dt: f64, scale: f64) -> (u32, [f32; 3]) {
+        let mix = self.at(t);
+        let share: f32 = mix.iter().sum();
+        self.acc += self.daily * share as f64 / 3600.0 * dt * scale;
+        let n = self.acc.floor();
+        self.acc -= n;
+        (n as u32, mix)
+    }
+}
 
 pub struct Demand {
     edges: Vec<u32>,
@@ -24,12 +102,21 @@ pub struct Demand {
     home_cum: Vec<f64>,
     work_cum: Vec<f64>,
     any_cum: Vec<f64>,
-    /// Trips per day at scale 1.
+    /// Trips per day within the map at scale 1.
     pub daily_trips: f64,
     /// Distance (m) over which destination attractiveness falls by a factor e.
     pub decay: f32,
     hourly_sum: f32,
     acc: f64,
+    gateways: Vec<Gateway>,
+    gateway_pos: Vec<(f32, f32)>,
+    entry_truck_ok: Vec<bool>,
+    exit_truck_ok: Vec<bool>,
+    inbound: Flow,
+    outbound: Flow,
+    through: Flow,
+    /// Through traffic leaving at each gateway (vehicles per day).
+    through_exit: Vec<f32>,
 }
 
 fn cumulative(w: &[f32]) -> Vec<f64> {
@@ -49,6 +136,27 @@ fn sample(cum: &[f64], rng: &mut Rng) -> Option<usize> {
     }
     let x = rng.f64() * total;
     Some(cum.partition_point(|&c| c <= x).min(cum.len() - 1))
+}
+
+/// Index drawn in proportion to `weights`.
+fn pick(weights: [f32; 3], rng: &mut Rng) -> usize {
+    let mut x = rng.f32() * weights.iter().sum::<f32>();
+    for (i, &w) in weights.iter().enumerate() {
+        x -= w;
+        if x < 0.0 {
+            return i;
+        }
+    }
+    2
+}
+
+fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
+    ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
+}
+
+fn allows(net: &Network, edge: u32, class: u16) -> bool {
+    net.edge_lanes(edge)
+        .any(|l| net.d.lane_allow[l as usize] & class != 0)
 }
 
 impl Demand {
@@ -72,10 +180,7 @@ impl Demand {
         let pos = edges.iter().map(|&e| net.edge_mid[e as usize]).collect();
         let truck_ok = edges
             .iter()
-            .map(|&e| {
-                net.edge_lanes(e)
-                    .any(|l| net.d.lane_allow[l as usize] & vclass::TRUCK != 0)
-            })
+            .map(|&e| allows(net, e, vclass::TRUCK))
             .collect();
         let home_total: f32 = home.iter().sum();
         let work_total: f32 = work.iter().sum();
@@ -95,6 +200,14 @@ impl Demand {
             decay: 4000.0,
             hourly_sum: HOURLY.iter().sum(),
             acc: 0.0,
+            gateways: Vec::new(),
+            gateway_pos: Vec::new(),
+            entry_truck_ok: Vec::new(),
+            exit_truck_ok: Vec::new(),
+            inbound: Flow::default(),
+            outbound: Flow::default(),
+            through: Flow::default(),
+            through_exit: Vec::new(),
         }
     }
 
@@ -105,14 +218,7 @@ impl Demand {
         let mut home = Vec::new();
         let mut work = Vec::new();
         for e in 0..net.edge_count() as u32 {
-            if net.is_internal_edge(e) {
-                continue;
-            }
-            let lanes = net.edge_lanes(e);
-            if !lanes
-                .clone()
-                .any(|l| net.d.lane_allow[l as usize] & vclass::PASSENGER != 0)
-            {
+            if net.is_internal_edge(e) || !allows(net, e, vclass::PASSENGER) {
                 continue;
             }
             let speed = net.edge_speed[e as usize];
@@ -127,6 +233,121 @@ impl Demand {
         Demand::new(net, edges, &home, &work, daily_trips)
     }
 
+    /// Add traffic to, from and through places beyond the map. Gateways whose edges the
+    /// network does not have, or that cars may not use, are ignored.
+    pub fn set_gateways(&mut self, net: &Network, gateways: &[Gateway]) {
+        let n = net.edge_count() as u32;
+        let usable = |e: u32| {
+            e != NONE && e < n && !net.is_internal_edge(e) && allows(net, e, vclass::PASSENGER)
+        };
+        self.gateways = gateways
+            .iter()
+            .map(|g| Gateway {
+                entry: if usable(g.entry) { g.entry } else { NONE },
+                exit: if usable(g.exit) { g.exit } else { NONE },
+                daily: g.daily.max(0.0),
+                through: g.through.clamp(0.0, 1.0),
+            })
+            .filter(|g| (g.entry != NONE || g.exit != NONE) && g.daily > 0.0)
+            .collect();
+        let gs = &self.gateways;
+        self.gateway_pos = gs
+            .iter()
+            .map(|g| net.edge_mid[if g.entry != NONE { g.entry } else { g.exit } as usize])
+            .collect();
+        self.entry_truck_ok = gs
+            .iter()
+            .map(|g| g.entry != NONE && allows(net, g.entry, vclass::TRUCK))
+            .collect();
+        self.exit_truck_ok = gs
+            .iter()
+            .map(|g| g.exit != NONE && allows(net, g.exit, vclass::TRUCK))
+            .collect();
+
+        // Local traffic (not passing through) splits evenly between the two directions of
+        // a two-way road; a one-way road carries it all one way.
+        let share_in = |g: &Gateway| match (g.entry != NONE, g.exit != NONE) {
+            (true, true) => 0.5,
+            (true, false) => 1.0,
+            _ => 0.0,
+        };
+        let inbound: Vec<f32> = gs
+            .iter()
+            .map(|g| g.daily * (1.0 - g.through) * share_in(g))
+            .collect();
+        let outbound: Vec<f32> = gs
+            .iter()
+            .map(|g| g.daily * (1.0 - g.through) * (1.0 - share_in(g)))
+            .collect();
+        let through_in: Vec<f32> = gs
+            .iter()
+            .map(|g| g.daily * g.through * share_in(g))
+            .collect();
+        let through_out: Vec<f32> = gs
+            .iter()
+            .map(|g| g.daily * g.through * (1.0 - share_in(g)))
+            .collect();
+
+        // Hourly profiles by purpose, from the city's own: commuters from beyond the map
+        // come in for work in the morning and go home in the afternoon; residents who work
+        // beyond the map do the opposite.
+        let mut hw = [0f32; 24];
+        let mut wh = [0f32; 24];
+        let mut other = [0f32; 24];
+        for h in 0..24 {
+            let (to_work, to_home) = purposes(h);
+            hw[h] = HOURLY[h] * to_work;
+            wh[h] = HOURLY[h] * to_home;
+            other[h] = HOURLY[h] * (1.0 - to_work - to_home);
+        }
+        let (hw_sum, wh_sum, other_sum): (f32, f32, f32) =
+            (hw.iter().sum(), wh.iter().sum(), other.iter().sum());
+        let (c, a) = (COMMUTE_SHARE, COMMUTERS_FROM_OUTSIDE);
+        let mut profile_in = [[0f32; 3]; 24];
+        let mut profile_out = [[0f32; 3]; 24];
+        let mut profile_through = [[0f32; 3]; 24];
+        for h in 0..24 {
+            let other = (1.0 - c) * other[h] / other_sum;
+            profile_in[h] = [
+                c * a * hw[h] / hw_sum,
+                c * (1.0 - a) * wh[h] / wh_sum,
+                other,
+            ];
+            profile_out[h] = [
+                c * (1.0 - a) * hw[h] / hw_sum,
+                c * a * wh[h] / wh_sum,
+                other,
+            ];
+            profile_through[h][2] =
+                THROUGH_PEAKED * HOURLY[h] / self.hourly_sum + (1.0 - THROUGH_PEAKED) / 24.0;
+        }
+        let total = |w: &[f32]| w.iter().map(|&x| x as f64).sum::<f64>();
+        self.inbound = Flow {
+            daily: total(&inbound),
+            cum: cumulative(&inbound),
+            profile: profile_in,
+            acc: 0.0,
+        };
+        self.outbound = Flow {
+            daily: total(&outbound),
+            cum: cumulative(&outbound),
+            profile: profile_out,
+            acc: 0.0,
+        };
+        self.through = Flow {
+            daily: total(&through_in),
+            cum: cumulative(&through_in),
+            profile: profile_through,
+            acc: 0.0,
+        };
+        self.through_exit = through_out;
+    }
+
+    /// Trips per day into, out of and through the map at scale 1.
+    pub fn gateway_trips(&self) -> (f64, f64, f64) {
+        (self.inbound.daily, self.outbound.daily, self.through.daily)
+    }
+
     /// Share of the day's trips per hour at time `t` (s since midnight), interpolated.
     fn hourly_share(&self, t: f64) -> f32 {
         let x = (t / 3600.0 - 0.5).rem_euclid(24.0) as f32;
@@ -135,7 +356,7 @@ impl Demand {
         (HOURLY[h0] * (1.0 - f) + HOURLY[(h0 + 1) % 24] * f) / self.hourly_sum
     }
 
-    /// Trips per second at time `t`.
+    /// Trips per second within the map at time `t`.
     pub fn rate(&self, t: f64) -> f64 {
         self.daily_trips * self.hourly_share(t) as f64 / 3600.0
     }
@@ -149,19 +370,29 @@ impl Demand {
         rng: &mut Rng,
         emit: &mut dyn FnMut(Trip),
     ) {
+        self.generate_local(t, dt, scale, rng, emit);
+        self.generate_gateways(t, dt, scale, rng, emit);
+    }
+
+    fn generate_local(
+        &mut self,
+        t: f64,
+        dt: f64,
+        scale: f64,
+        rng: &mut Rng,
+        emit: &mut dyn FnMut(Trip),
+    ) {
         if self.edges.is_empty() {
             return;
         }
         self.acc += self.rate(t) * dt * scale;
-        let hour = ((t / 3600.0).rem_euclid(24.0)) as u32;
-        // Shares of home->work and work->home trips; the rest are other errands.
-        let (to_work, to_home) = match hour {
-            5..=9 => (0.55, 0.05),
-            10..=13 => (0.15, 0.15),
-            14..=18 => (0.08, 0.5),
-            _ => (0.05, 0.25),
+        let hour = ((t / 3600.0).rem_euclid(24.0)) as usize;
+        let (to_work, to_home) = purposes(hour);
+        let truck_share = if (6..20).contains(&hour) {
+            TRUCKS.0
+        } else {
+            TRUCKS.1
         };
-        let truck_share = if (6..20).contains(&hour) { 0.06 } else { 0.12 };
         while self.acc >= 1.0 {
             self.acc -= 1.0;
             let r = rng.f32();
@@ -175,7 +406,7 @@ impl Demand {
             let Some(o) = sample(from_cum, rng) else {
                 return;
             };
-            let Some(d) = self.destination(o, to_cum, rng) else {
+            let Some(d) = self.near(self.pos[o], o, to_cum, self.decay, rng) else {
                 continue;
             };
             let truck = rng.f32() < truck_share && self.truck_ok[o] && self.truck_ok[d];
@@ -184,13 +415,131 @@ impl Demand {
                 from: self.edges[o],
                 to: self.edges[d],
                 vtype: if truck { vtype::TRUCK } else { vtype::CAR },
+                flags: 0,
             });
         }
     }
 
-    /// Gravity model: draw candidates by attractiveness, keep one weighted by distance decay.
-    fn destination(&self, origin: usize, cum: &[f64], rng: &mut Rng) -> Option<usize> {
-        let (ox, oz) = self.pos[origin];
+    fn generate_gateways(
+        &mut self,
+        t: f64,
+        dt: f64,
+        scale: f64,
+        rng: &mut Rng,
+        emit: &mut dyn FnMut(Trip),
+    ) {
+        if self.gateways.is_empty() || self.edges.is_empty() {
+            return;
+        }
+        let day = (6..20).contains(&((t / 3600.0).rem_euclid(24.0) as u32));
+        let (trucks, through_trucks) = if day {
+            (TRUCKS.0, THROUGH_TRUCKS.0)
+        } else {
+            (TRUCKS.1, THROUGH_TRUCKS.1)
+        };
+        let vtype = |truck: bool| if truck { vtype::TRUCK } else { vtype::CAR };
+
+        // Into the map: commuters to work, residents coming home, everyone else.
+        let (n, mix) = self.inbound.due(t, dt, scale);
+        for _ in 0..n {
+            let Some(g) = sample(&self.inbound.cum, rng) else {
+                break;
+            };
+            let cum = [&self.work_cum, &self.home_cum, &self.any_cum][pick(mix, rng)];
+            let Some(d) = self.near(self.gateway_pos[g], usize::MAX, cum, GATEWAY_DECAY, rng)
+            else {
+                continue;
+            };
+            let truck = rng.f32() < trucks && self.entry_truck_ok[g] && self.truck_ok[d];
+            emit(Trip {
+                depart: t + rng.f64() * dt,
+                from: self.gateways[g].entry,
+                to: self.edges[d],
+                vtype: vtype(truck),
+                flags: trip::ENTER,
+            });
+        }
+
+        // Out of the map: residents to work, commuters going home, everyone else.
+        let (n, mix) = self.outbound.due(t, dt, scale);
+        for _ in 0..n {
+            let Some(g) = sample(&self.outbound.cum, rng) else {
+                break;
+            };
+            let cum = [&self.home_cum, &self.work_cum, &self.any_cum][pick(mix, rng)];
+            let Some(o) = self.near(self.gateway_pos[g], usize::MAX, cum, GATEWAY_DECAY, rng)
+            else {
+                continue;
+            };
+            let truck = rng.f32() < trucks && self.exit_truck_ok[g] && self.truck_ok[o];
+            emit(Trip {
+                depart: t + rng.f64() * dt,
+                from: self.edges[o],
+                to: self.gateways[g].exit,
+                vtype: vtype(truck),
+                flags: trip::EXIT,
+            });
+        }
+
+        // Through the map, between gateways far enough apart.
+        let (n, _) = self.through.due(t, dt, scale);
+        for _ in 0..n {
+            let Some(g) = sample(&self.through.cum, rng) else {
+                break;
+            };
+            let Some(h) = self.far_exit(g, rng) else {
+                continue;
+            };
+            let truck =
+                rng.f32() < through_trucks && self.entry_truck_ok[g] && self.exit_truck_ok[h];
+            emit(Trip {
+                depart: t + rng.f64() * dt,
+                from: self.gateways[g].entry,
+                to: self.gateways[h].exit,
+                vtype: vtype(truck),
+                flags: trip::ENTER | trip::EXIT,
+            });
+        }
+    }
+
+    /// A gateway for through traffic from gateway `g` to leave by, drawn in proportion to
+    /// the through traffic leaving there, among those at least `THROUGH_MIN_DISTANCE` away.
+    fn far_exit(&self, g: usize, rng: &mut Rng) -> Option<usize> {
+        let from = self.gateway_pos[g];
+        let far = |h: &usize| distance(from, self.gateway_pos[*h]) >= THROUGH_MIN_DISTANCE;
+        let n = self.gateways.len();
+        let total: f64 = (0..n)
+            .filter(far)
+            .map(|h| self.through_exit[h] as f64)
+            .sum();
+        if total <= 0.0 {
+            return None;
+        }
+        let mut x = rng.f64() * total;
+        let mut last = None;
+        for h in (0..n).filter(far) {
+            if self.through_exit[h] <= 0.0 {
+                continue;
+            }
+            x -= self.through_exit[h] as f64;
+            last = Some(h);
+            if x < 0.0 {
+                break;
+            }
+        }
+        last
+    }
+
+    /// Gravity model: draw candidates by attractiveness (`cum`), keep one weighted by its
+    /// distance from `from`. `exclude` (an index into the demand edges) is never chosen.
+    fn near(
+        &self,
+        from: (f32, f32),
+        exclude: usize,
+        cum: &[f64],
+        decay: f32,
+        rng: &mut Rng,
+    ) -> Option<usize> {
         let mut cand = [0usize; CANDIDATES];
         let mut weight = [0f32; CANDIDATES];
         let mut total = 0.0;
@@ -200,12 +549,10 @@ impl Demand {
                 break;
             }
             let c = sample(cum, rng)?;
-            if c == origin {
+            if c == exclude {
                 continue;
             }
-            let (x, z) = self.pos[c];
-            let dist = ((x - ox).powi(2) + (z - oz).powi(2)).sqrt();
-            let w = (-dist / self.decay).exp() + 1e-9;
+            let w = (-distance(from, self.pos[c]) / decay).exp() + 1e-9;
             cand[n] = c;
             weight[n] = w;
             total += w;

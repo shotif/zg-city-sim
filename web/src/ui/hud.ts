@@ -9,6 +9,8 @@ export interface HudCallbacks {
   onPause?(paused: boolean): void;
   onSpeed?(speed: number): void;
   onTrafficMap?(enabled: boolean): void;
+  onNews?(enabled: boolean): void;
+  onClosures?(enabled: boolean): void;
 }
 
 /** A colour and its meaning, for the traffic map legend. */
@@ -27,6 +29,8 @@ export interface HudSim {
   rate: number;
   warming: boolean;
   vehicles: number;
+  /** Vehicles coming from or going to places beyond the map. */
+  outside: number;
   trams: number;
   buses: number;
   /** Mean speed of all traffic, km/h. */
@@ -92,8 +96,13 @@ export class Hud {
   private readonly speedButtons = new Map<number, HTMLButtonElement>();
   private readonly trafficButton: HTMLButtonElement;
   private readonly legend: HTMLElement;
+  private readonly layers: HTMLElement;
+  private readonly newsButton: HTMLButtonElement;
+  private readonly closuresButton: HTMLButtonElement;
   private simState?: HudSim;
   private trafficMap = false;
+  private news = false;
+  private closures = true;
 
   constructor(container: HTMLElement, callbacks: HudCallbacks) {
     this.root = el('div', 'hud', container);
@@ -132,6 +141,21 @@ export class Hud {
     this.trafficButton.addEventListener('click', () => this.toggleTrafficMap(callbacks));
     this.legend = el('div', 'hud-legend', mapRow);
     this.legend.hidden = true;
+
+    this.layers = el('div', 'hud-panel hud-layers', left);
+    this.layers.hidden = true;
+    this.newsButton = el('button', 'hud-button hud-speed', this.layers);
+    this.newsButton.type = 'button';
+    this.newsButton.textContent = 'News reports';
+    this.newsButton.setAttribute('aria-pressed', 'false');
+    this.newsButton.hidden = true;
+    this.newsButton.addEventListener('click', () => this.toggleNews(callbacks));
+    this.closuresButton = el('button', 'hud-button hud-speed', this.layers);
+    this.closuresButton.type = 'button';
+    this.closuresButton.textContent = 'Closures';
+    this.closuresButton.hidden = true;
+    this.closuresButton.setAttribute('aria-pressed', 'true');
+    this.closuresButton.addEventListener('click', () => this.toggleClosures(callbacks));
 
     const toolbar = el('div', 'hud-panel hud-toolbar', this.root);
     toolbar.setAttribute('role', 'toolbar');
@@ -200,6 +224,10 @@ export class Hud {
         callbacks.onPause?.(!this.simState.paused);
       } else if ((event.key === 't' || event.key === 'T') && this.simState) {
         this.toggleTrafficMap(callbacks);
+      } else if ((event.key === 'n' || event.key === 'N') && !this.newsButton.hidden) {
+        this.toggleNews(callbacks);
+      } else if ((event.key === 'c' || event.key === 'C') && !this.closuresButton.hidden) {
+        this.toggleClosures(callbacks);
       } else if ((event.key === '+' || event.key === '-') && this.simState) {
         const i = SIM_SPEEDS.indexOf(this.simState.speed) + (event.key === '+' ? 1 : -1);
         const speed = SIM_SPEEDS[Math.min(SIM_SPEEDS.length - 1, Math.max(0, i))];
@@ -246,6 +274,42 @@ export class Hud {
     this.status.textContent = status;
   }
 
+  /** The element overlays such as map markers go in. */
+  get element(): HTMLElement {
+    return this.root;
+  }
+
+  /** Offer the news layer: `places` places with `reports` reports. */
+  enableNews(places: number, reports: number): void {
+    this.layers.hidden = false;
+    this.newsButton.hidden = false;
+    this.newsButton.title = `Traffic news: ${reports} reports at ${places} places (N)`;
+  }
+
+  /** Offer the live closures layer (on by default). */
+  enableClosures(count: number, fetched: string): void {
+    this.layers.hidden = false;
+    this.closuresButton.hidden = false;
+    this.closuresButton.textContent = `Closures (${count})`;
+    const when = new Date(fetched);
+    const age = Number.isNaN(when.getTime())
+      ? ''
+      : `, as of ${when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+    this.closuresButton.title = `Road closures from the City of Zagreb${age} (C)`;
+  }
+
+  private toggleClosures(callbacks: HudCallbacks): void {
+    this.closures = !this.closures;
+    this.closuresButton.setAttribute('aria-pressed', String(this.closures));
+    callbacks.onClosures?.(this.closures);
+  }
+
+  private toggleNews(callbacks: HudCallbacks): void {
+    this.news = !this.news;
+    this.newsButton.setAttribute('aria-pressed', String(this.news));
+    callbacks.onNews?.(this.news);
+  }
+
   private toggleTrafficMap(callbacks: HudCallbacks): void {
     this.trafficMap = !this.trafficMap;
     this.trafficButton.setAttribute('aria-pressed', String(this.trafficMap));
@@ -288,7 +352,9 @@ export class Hud {
     const lagging = !sim.paused && !sim.warming && sim.rate < sim.speed * 0.8;
     this.simInfo.textContent = sim.warming
       ? 'Filling the streets with traffic…'
-      : `${sim.vehicles.toLocaleString('en')} vehicles · ${sim.trams} trams · ${sim.buses} buses · ` +
+      : `${sim.vehicles.toLocaleString('en')} vehicles ` +
+        `(${sim.outside.toLocaleString('en')} crossing the map's edge) · ` +
+        `${sim.trams} trams · ${sim.buses} buses · ` +
         `${Math.round(sim.meanSpeed)} km/h` +
         (lagging ? ` · running at ${sim.rate.toFixed(sim.rate < 10 ? 1 : 0)}×` : '');
   }

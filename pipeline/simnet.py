@@ -343,6 +343,7 @@ def response_words(row: str, n: int) -> list[int]:
 def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
     """Arrays and string tables for the app and the engine."""
     names: dict[str, int] = {}
+    refs: dict[str, int] = {}
     types: dict[str, int] = {}
     junction_types: dict[str, int] = {}
 
@@ -353,7 +354,7 @@ def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
     edge_ids = {e.id for e in net.edges if not e.internal}
 
     # Edges.
-    edge_from, edge_to, edge_type, edge_flags, edge_name = [], [], [], [], []
+    edge_from, edge_to, edge_type, edge_flags, edge_name, edge_ref = [], [], [], [], [], []
     edge_lane_start, edge_lane_count = [], []
     lane_order: list[int] = []  # lanes grouped by edge, edges in file order
     for e in net.edges:
@@ -373,6 +374,8 @@ def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
         edge_type.append(intern(types, e.type))
         edge_flags.append(flags)
         edge_name.append(intern(names, e.name) if e.name else NONE)
+        ref = e.params.get("ref", "").strip()
+        edge_ref.append(intern(refs, ref) if ref else NONE)
         edge_lane_start.append(len(lane_order))
         edge_lane_count.append(len(e.lanes))
         lane_order.extend(sorted(e.lanes, key=lambda li: net.lanes[li].index))
@@ -499,6 +502,7 @@ def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
         "edgeType": np.asarray(edge_type, np.uint16),
         "edgeFlags": np.asarray(edge_flags, np.uint8),
         "edgeName": np.asarray(edge_name, np.uint32),
+        "edgeRef": np.asarray(edge_ref, np.uint32),
         "edgeLaneStart": np.asarray(edge_lane_start, np.uint32),
         "edgeLaneCount": np.asarray(edge_lane_count, np.uint8),
         # lanes
@@ -537,6 +541,7 @@ def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
         "types": list(types),
         "junctionTypes": list(junction_types),
         "names": list(names),
+        "refs": list(refs),
         "tlsTypes": list(tls_types),
         "linkDirs": LINK_DIRS,
         "linkStates": LINK_STATES,

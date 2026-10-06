@@ -3,7 +3,8 @@
 A realistic traffic and city-building simulator of Zagreb, Croatia, running entirely in the browser.
 
 - Whole City of Zagreb in 3D, built from open data (terrain, land cover, roads, the City's official 3D buildings).
-- Live traffic simulation: cars and trucks from where people live and work, ZET trams and buses on their timetable.
+- Live traffic simulation: cars and trucks from where people live and work, commuters and through traffic from beyond the map, ZET trams and buses on their timetable.
+- Analysis: a traffic map of measured speeds, news reports of jams at 39 places, the City's live road closures, and a [validation report](docs/VALIDATION.md) against traffic counts.
 - Build roads and bridges, change lanes and signals, zone new neighbourhoods, and watch traffic adapt.
 
 See [docs/PLAN.md](docs/PLAN.md) for the vision, architecture and roadmap.
@@ -26,8 +27,10 @@ Requirements: Node.js 22+, Python 3.12+, Rust (stable) with the WebAssembly targ
 # 1. Build the data (downloads ~400 MB on first run, cached in pipeline/.cache):
 #    terrain + ground (elevation, land cover), network (OpenStreetMap -> SUMO road network),
 #    buildings (City of Zagreb ZG3D model inside the City, OpenStreetMap outside),
-#    demand (residents and jobs per street from buildings, census and land use),
-#    transit (ZET's weekday tram and bus timetable, stops placed on the network)
+#    demand (residents and jobs per street from buildings, census and land use; traffic
+#    crossing the map's edge from Hrvatske ceste counts),
+#    transit (ZET's weekday tram and bus timetable, stops placed on the network),
+#    news (news reports of traffic trouble, placed on the network)
 python -m venv .venv && . .venv/bin/activate
 pip install -r pipeline/requirements.txt
 python -m pipeline all
@@ -52,6 +55,13 @@ cargo test
 cargo run --release --example run -- ../web/public/data/network 7 30   # 07:00, 30 minutes
 ```
 
+To check the simulation against traffic counts (a full weekday takes about an hour):
+
+```bash
+cargo run --release --example day -- ../web/public/data /tmp/day
+cd .. && python -m pipeline.validate /tmp/day   # writes docs/VALIDATION.md
+```
+
 ## Controls
 
 | Action | Mouse | Touch | Keys |
@@ -64,6 +74,8 @@ cargo run --release --example run -- ../web/public/data/network 7 30   # 07:00, 
 | Pause / resume traffic | ⏸ button | | `Space` |
 | Traffic speed | 1× 4× 16× 64× buttons | | `+` / `-` |
 | Traffic map (roads coloured by speed) | Traffic map button | | `T` |
+| News reports of jams, roadworks and closures | News reports button, then a marker | | `N`, `Esc` closes |
+| Live road closures (on by default) | Closures button | | `C` |
 
 ## Data and attribution
 

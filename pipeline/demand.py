@@ -23,6 +23,8 @@ from pyproj import Transformer
 
 from .buildings import city_boundary, city_districts
 from .config import CRS, ORIGIN_E, ORIGIN_N, OUTPUT_DIR
+from .counts import ATTRIBUTION as COUNTS_ATTRIBUTION
+from .gateways import build_gateways
 from .osm import fetch_osm
 from .packed import read_packed, write_packed
 
@@ -34,6 +36,12 @@ ATTRIBUTION = {
     "zavod za statistiku), Census of Population, Households and Dwellings 2021; travel "
     "rates from the City of Zagreb Transport Master Plan survey.",
     "url": "https://dzs.gov.hr/",
+}
+DISTRICTS_ATTRIBUTION = {
+    "name": "Grad Zagreb, gradske četvrti",
+    "text": "City district outlines from the register of spatial units (DGU), published by the "
+    "City of Zagreb on data.zagreb.hr, 2025-02-03. Otvorena dozvola.",
+    "url": "https://data.zagreb.hr/dataset/gradske-cetvrti-prostorna-jedinica-mjesne-samouprave-za-podrucje-grada-zagreba",
 }
 
 # Census 2021 population of the City's districts (gradske četvrti), named as in the City's
@@ -103,6 +111,8 @@ LOCAL_SPEED = 16.7
 LOCAL_DISTANCE = 300.0
 # Buildings further than this from any street get no trips (forest huts and the like).
 MAX_DISTANCE = 1_500.0
+# Edges shorter than this (m) are pieces of junctions, not streets to start a trip on.
+MIN_STREET_LENGTH = 20.0
 PASSENGER = 1
 
 
@@ -300,6 +310,7 @@ def street_lines(
         & ~no_access[net["edgeType"]]
         & (net["edgeLaneCount"] > 0)
         & ((net["laneAllow"][lane0] & PASSENGER) != 0)
+        & (net["laneLength"][lane0] >= MIN_STREET_LENGTH)
     )
     edges = np.flatnonzero(ok)
     offsets = net["laneShapeOffsets"].astype(np.int64)
@@ -370,6 +381,7 @@ def build_demand() -> dict:
     home = np.bincount(edge_of[attached], residents[attached], n_edges)
     work = np.bincount(edge_of[attached], jobs[attached], n_edges)
     used = np.flatnonzero((home > 0) | (work > 0))
+    gateway_arrays, gateways = build_gateways(net, n_index)
 
     out_dir = OUTPUT_DIR / "demand"
     packed = write_packed(
@@ -378,6 +390,7 @@ def build_demand() -> dict:
             "demandEdge": used.astype(np.uint32),
             "demandHome": home[used].astype(np.float32),
             "demandWork": work[used].astype(np.float32),
+            **gateway_arrays,
         },
     )
     total_residents = float(home.sum())
@@ -389,6 +402,8 @@ def build_demand() -> dict:
         "buildingsAttached": int(attached.sum()),
         "buildingsUnattached": int((~attached).sum()),
         "dailyCarTrips": round(total_residents * CAR_TRIPS_PER_RESIDENT),
+        "gateways": len(gateways),
+        "gatewayDaily": round(sum(g["daily"] for g in gateways)),
     }
     # Residents and jobs the simulation has per district (buildings far from any street
     # have none).
@@ -402,7 +417,14 @@ def build_demand() -> dict:
         for i, name in enumerate(names)
     ]
     (out_dir / "demand.json").write_text(
-        json.dumps({**packed, **stats, "districts": per_district}, ensure_ascii=False)
+        json.dumps(
+            {**packed, **stats, "districts": per_district, "gatewayList": gateways},
+            ensure_ascii=False,
+        )
     )
     log.info("demand: %s (%.0fs)", stats, time.monotonic() - started)
-    return {"index": "demand/demand.json", **stats, "attribution": ATTRIBUTION}
+    return {
+        "index": "demand/demand.json",
+        **stats,
+        "attribution": [ATTRIBUTION, DISTRICTS_ATTRIBUTION, COUNTS_ATTRIBUTION],
+    }

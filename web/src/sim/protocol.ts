@@ -21,7 +21,9 @@ export type ToWorker =
   | InitMessage
   | { type: 'speed'; speed: number }
   | { type: 'pause'; paused: boolean }
-  | { type: 'demand'; scale: number };
+  | { type: 'demand'; scale: number }
+  /** Close these edges to routing (live road closures), replacing earlier ones. */
+  | { type: 'closures'; edges: Uint32Array };
 
 export interface FrameMessage {
   type: 'frame';

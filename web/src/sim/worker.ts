@@ -25,6 +25,8 @@ let last = 0;
 let msPerStep = 2;
 let rate = 0;
 let lastEdgeSpeeds = -Infinity;
+/** Closed edges, kept until the engine is built. */
+let closed: Uint32Array | undefined;
 
 const post = (message: FromWorker, transfer: Transferable[] = []) =>
   self.postMessage(message, transfer);
@@ -37,6 +39,7 @@ async function init(message: InitMessage): Promise<void> {
   for (const [name, data] of Object.entries(message.arrays)) engine.setArray(name, data);
   engine.build(message.seed, message.dailyTrips);
   engine.setTime(message.startTime);
+  if (closed) engine.setClosed(closed);
   speed = message.speed;
   warmUntil = message.warmUntil;
   post({ type: 'ready', buildMs: performance.now() - t0 });
@@ -99,6 +102,10 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
       break;
     case 'demand':
       engine?.setDemandScale(message.scale);
+      break;
+    case 'closures':
+      closed = message.edges;
+      engine?.setClosed(closed);
       break;
   }
 };

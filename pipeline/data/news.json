@@ -1,0 +1,1832 @@
+{
+ "about": "Traffic congestion, roadworks, closures and incidents in and around Zagreb reported in Croatian online news, 2020-2026, grouped by place. Collected from search-engine results (headlines and snippets as indexed); summaries are written for this project and link to the original articles. Dates come from the articles' URLs or text and are null where unknown.",
+ "hotspots": [
+  {
+   "id": "jadranski-most",
+   "name": "Jadranski most",
+   "where": [
+    {
+     "street": "Jadranski most"
+    }
+   ]
+  },
+  {
+   "id": "slavonska-savska",
+   "name": "Slavonska avenija × Savska cesta (Vjesnik)",
+   "where": [
+    {
+     "junction": [
+      "Slavonska avenija",
+      "Savska cesta"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "a3-bypass",
+   "name": "Zagreb bypass (A3)",
+   "where": [
+    {
+     "road": "A3",
+     "along": [
+      [
+       15.848,
+       45.79
+      ],
+      [
+       15.892,
+       45.766
+      ],
+      [
+       16.001,
+       45.752
+      ],
+      [
+       16.089,
+       45.763
+      ],
+      [
+       16.129,
+       45.793
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "maksimir-stadium",
+   "name": "Stadion Maksimir",
+   "where": [
+    {
+     "point": [
+      16.0185,
+      45.8188
+     ],
+     "radius": 350
+    }
+   ]
+  },
+  {
+   "id": "selska-cesta",
+   "name": "Selska cesta",
+   "where": [
+    {
+     "street": "Selska cesta"
+    }
+   ]
+  },
+  {
+   "id": "a1-lucko",
+   "name": "Lučko toll plaza (A1)",
+   "where": [
+    {
+     "road": "A1",
+     "near": [
+      15.885,
+      45.75
+     ],
+     "radius": 1500
+    }
+   ]
+  },
+  {
+   "id": "a4-entry",
+   "name": "A4 into Zagreb, Sveta Helena – Zagreb istok",
+   "where": [
+    {
+     "road": "A4",
+     "along": [
+      [
+       16.274,
+       45.92
+      ],
+      [
+       16.271,
+       45.904
+      ],
+      [
+       16.191,
+       45.869
+      ],
+      [
+       16.149,
+       45.851
+      ],
+      [
+       16.138,
+       45.825
+      ],
+      [
+       16.13,
+       45.797
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "savska-vukovarska",
+   "name": "Savska cesta × Ulica grada Vukovara",
+   "where": [
+    {
+     "junction": [
+      "Savska cesta",
+      "Ulica grada Vukovara"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "a3-buzin-lucko",
+   "name": "A3 between Buzin and Lučko",
+   "where": [
+    {
+     "road": "A3",
+     "along": [
+      [
+       16.001,
+       45.752
+      ],
+      [
+       15.892,
+       45.766
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "ilica",
+   "name": "Ilica",
+   "where": [
+    {
+     "street": "Ilica"
+    }
+   ]
+  },
+  {
+   "id": "zagrebacka-selska",
+   "name": "Zagrebačka avenija × Selska cesta overpass",
+   "where": [
+    {
+     "junction": [
+      "Zagrebačka avenija",
+      "Selska cesta"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "slavonska-avenija",
+   "name": "Slavonska avenija",
+   "where": [
+    {
+     "street": "Slavonska avenija"
+    }
+   ]
+  },
+  {
+   "id": "a3-kosnica-istok",
+   "name": "A3 between Kosnica and Zagreb istok",
+   "where": [
+    {
+     "road": "A3",
+     "along": [
+      [
+       16.089,
+       45.763
+      ],
+      [
+       16.129,
+       45.793
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "ribnjak",
+   "name": "Ribnjak",
+   "where": [
+    {
+     "street": "Ribnjak"
+    }
+   ]
+  },
+  {
+   "id": "zvonimirova-subiceva",
+   "name": "Zvonimirova × Šubićeva",
+   "where": [
+    {
+     "junction": [
+      "Ulica kralja Zvonimira",
+      "Ulica Pavla Šubića"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "vukovarska",
+   "name": "Ulica grada Vukovara",
+   "where": [
+    {
+     "street": "Ulica grada Vukovara"
+    }
+   ]
+  },
+  {
+   "id": "remetinec-rotor",
+   "name": "Remetinečki rotor",
+   "where": [
+    {
+     "junction": [
+      "Avenija Dubrovnik",
+      "Remetinečka cesta"
+     ],
+     "gap": 120
+    }
+   ]
+  },
+  {
+   "id": "sava-bridges",
+   "name": "Most slobode and the Sava bridges",
+   "where": [
+    {
+     "street": "Avenija Većeslava Holjevca",
+     "near": [
+      15.9795,
+      45.79
+     ],
+     "radius": 600
+    }
+   ]
+  },
+  {
+   "id": "zagrebacka-avenija",
+   "name": "Zagrebačka avenija",
+   "where": [
+    {
+     "street": "Zagrebačka avenija"
+    }
+   ]
+  },
+  {
+   "id": "a3-zapad-lucko",
+   "name": "A3 between Zagreb zapad and Lučko",
+   "where": [
+    {
+     "road": "A3",
+     "along": [
+      [
+       15.848,
+       45.79
+      ],
+      [
+       15.892,
+       45.766
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "selska-underpass",
+   "name": "Selska cesta underpass at Prilaz baruna Filipovića",
+   "where": [
+    {
+     "junction": [
+      "Selska cesta",
+      "Prilaz baruna Filipovića"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "savska-cesta",
+   "name": "Savska cesta",
+   "where": [
+    {
+     "street": "Savska cesta"
+    }
+   ]
+  },
+  {
+   "id": "prilaz-filipovica",
+   "name": "Prilaz baruna Filipovića",
+   "where": [
+    {
+     "street": "Prilaz baruna Filipovića"
+    }
+   ]
+  },
+  {
+   "id": "gojka-suska",
+   "name": "Avenija Gojka Šuška",
+   "where": [
+    {
+     "street": "Avenija Gojka Šuška"
+    }
+   ]
+  },
+  {
+   "id": "slavonska-drziceva",
+   "name": "Slavonska avenija × Avenija Marina Držića",
+   "where": [
+    {
+     "junction": [
+      "Slavonska avenija",
+      "Avenija Marina Držića"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "zagrebacka-cesta",
+   "name": "Zagrebačka cesta, Vrapče – Črnomerec",
+   "where": [
+    {
+     "street": "Zagrebačka cesta",
+     "near": [
+      15.912,
+      45.817
+     ],
+     "radius": 3500
+    }
+   ]
+  },
+  {
+   "id": "sarajevska",
+   "name": "Sarajevska cesta",
+   "where": [
+    {
+     "street": "Sarajevska cesta"
+    }
+   ]
+  },
+  {
+   "id": "selska-horvacanska",
+   "name": "Selska cesta × Horvaćanska cesta",
+   "where": [
+    {
+     "junction": [
+      "Selska cesta",
+      "Horvaćanska cesta"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "skorpikova",
+   "name": "Škorpikova underpass",
+   "where": [
+    {
+     "street": "Ulica Velimira Škorpika"
+    }
+   ]
+  },
+  {
+   "id": "bukovacka",
+   "name": "Bukovačka cesta",
+   "where": [
+    {
+     "street": "Bukovačka cesta"
+    }
+   ]
+  },
+  {
+   "id": "drziceva-vukovarska",
+   "name": "Avenija Marina Držića × Ulica grada Vukovara",
+   "where": [
+    {
+     "junction": [
+      "Avenija Marina Držića",
+      "Ulica grada Vukovara"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "a2-zapresic",
+   "name": "Zaprešić toll plaza (A2)",
+   "where": [
+    {
+     "road": "A2",
+     "near": [
+      15.83,
+      45.875
+     ],
+     "radius": 1500
+    }
+   ]
+  },
+  {
+   "id": "tresnjevacki-trg",
+   "name": "Trešnjevački trg",
+   "where": [
+    {
+     "junction": [
+      "Ozaljska ulica",
+      "Trakošćanska ulica"
+     ]
+    },
+    {
+     "point": [
+      15.9585,
+      45.8035
+     ],
+     "radius": 250
+    }
+   ]
+  },
+  {
+   "id": "aleja-bologne",
+   "name": "Aleja grada Bolonje underpass",
+   "where": [
+    {
+     "street": "Aleja grada Bolonje"
+    }
+   ]
+  },
+  {
+   "id": "holjevac-dubrovnik",
+   "name": "Avenija Većeslava Holjevca × Avenija Dubrovnik",
+   "where": [
+    {
+     "junction": [
+      "Avenija Većeslava Holjevca",
+      "Avenija Dubrovnik"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "a1-zdencina",
+   "name": "A1 at Donja Zdenčina",
+   "where": [
+    {
+     "road": "A1",
+     "near": [
+      15.753,
+      45.676
+     ],
+     "radius": 2000
+    }
+   ]
+  },
+  {
+   "id": "savska-tratinska",
+   "name": "Savska cesta × Tratinska ulica",
+   "where": [
+    {
+     "junction": [
+      "Savska cesta",
+      "Tratinska ulica"
+     ],
+     "gap": 130
+    }
+   ]
+  },
+  {
+   "id": "jagiceva-austrije",
+   "name": "Jagićeva × Ulica Republike Austrije",
+   "where": [
+    {
+     "junction": [
+      "Ulica Vatroslava Jagića",
+      "Ulica Republike Austrije"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "posavskog-overpass",
+   "name": "Ulica Ljudevita Posavskog overpass, Sesvete",
+   "where": [
+    {
+     "street": "Ulica Ljudevita Posavskog",
+     "near": [
+      16.11,
+      45.83
+     ],
+     "radius": 4000
+    }
+   ]
+  }
+ ],
+ "reports": [
+  {
+   "hotspot": "a1-lucko",
+   "date": "2023-07-08",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/guzve-na-vecini-cesta-u-smjeru-mora-kod-luckog-velika-kolona-20230708",
+   "headline": "Gužve na većini cesta u smjeru mora, kod Lučkog velika kolona",
+   "summary": "On a peak summer-travel weekend most roads toward the coast were congested, with a large queue at the Lučko toll plaza.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "a1-lucko",
+   "date": "2023-08-01",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/kolona-kod-luckog-sedam-kilometara-vozilo-u-kvaru-izmedu-tunela-ledenik-i-bristovac-foto-20230801",
+   "headline": "Kolona kod Lučkog sedam kilometara, vozilo u kvaru između tunela Ledenik i Bristovac",
+   "summary": "Dense traffic built a 7 km queue at the Lučko toll plaza on Zagreb's south-western edge.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "a1-lucko",
+   "date": "2025-07-04",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/krenule-guzve-na-luckom-zasad-veca-kolona-prema-moru-na-vecer-krecu-ogranicenja-foto-20250704",
+   "headline": "Krenule gužve na Lučkom, zasad veća kolona prema moru, navečer kreću ograničenja",
+   "summary": "Weekend getaway jams started at Lučko, with the larger queue heading towards the coast, and traffic restrictions were due to begin in the evening.",
+   "type": "event",
+   "severity": 2,
+   "timeOfDay": null,
+   "direction": "prema moru"
+  },
+  {
+   "hotspot": "a1-lucko",
+   "date": "2025-07-05",
+   "outlet": "dnevnik.hr",
+   "url": "https://dnevnik.hr/vijesti/hrvatska/stanje-na-cestama-uoci-thompsonova-koncerta---922639.html",
+   "headline": "Stanje na cestama uoči Thompsonova koncerta",
+   "summary": "On Thompson's concert day the A1 queue at the Lučko toll plaza was about 2 km towards the coast (from the Buzin direction), with especially heavy congestion expected on the Zagreb bypass.",
+   "type": "event",
+   "severity": 2,
+   "timeOfDay": null,
+   "direction": "prema moru"
+  },
+  {
+   "hotspot": "a1-lucko",
+   "date": "2026-08-01",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/guzve-na-cestama-kolona-ispred-luckog-duga-12-kilometara-20260801",
+   "headline": "Gužve na cestama: Kolona ispred Lučkog duga 10 kilometara, a ispred Svetog Roka 5 km",
+   "summary": "Summer traffic produced a queue of about 10–12 km in front of the Lučko toll plaza on the A1.",
+   "type": "event",
+   "severity": 3,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "a1-zdencina",
+   "date": "2026-09-09",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/kaos-na-cestama-zbog-prometne-nesrece-na-a1-kolona-duga-10-kilometara-20260909",
+   "headline": "Kaos na cestama: Zbog prometne nesreće na A1 kolona duga 10 kilometara",
+   "summary": "After a crash at the Donja Zdenčina interchange on the A1 towards Zagreb, traffic ran in a single lane with a queue of about 10 km.",
+   "type": "crash",
+   "severity": 3,
+   "timeOfDay": null,
+   "direction": "prema Zagrebu"
+  },
+  {
+   "hotspot": "a2-zapresic",
+   "date": null,
+   "outlet": "dnevnik.hr",
+   "url": "https://dnevnik.hr/vijesti/hrvatska/hak-guzve-i-zastoji-na-gradskim-obilaznicama---982059.html",
+   "headline": "HAK: Gužve i zastoji na gradskim obilaznicama",
+   "summary": "HAK reported a queue of about 1 km on the A2 in the works zone near the Zaprešić toll plaza towards Zagreb.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema Zagrebu"
+  },
+  {
+   "hotspot": "a3-buzin-lucko",
+   "date": null,
+   "outlet": "dnevnik.hr",
+   "url": "https://dnevnik.hr/vijesti/hrvatska/hak-guzve-i-zastoji-na-gradskim-obilaznicama---982059.html",
+   "headline": "HAK: Gužve i zastoji na gradskim obilaznicama",
+   "summary": "HAK reported a queue of about 4 km after an accident on the Zagreb bypass between the Buzin and Lučko interchanges towards Bregana.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema Bregani"
+  },
+  {
+   "hotspot": "a3-buzin-lucko",
+   "date": "2023-06-22",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pocelo-je-kolona-od-buzina-do-luckog-duga-je-10-km-foto-20230622",
+   "headline": "Počelo je: kolona od Buzina do Lučkog duga je 10 km",
+   "summary": "Heavy traffic produced a 10 km queue on the Zagreb bypass (A3) from the Buzin interchange to the Lučko toll plaza.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null,
+   "direction": "od Buzina prema Lučkom"
+  },
+  {
+   "hotspot": "a3-buzin-lucko",
+   "date": "2023-07-17",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/guzva-na-zagrebackoj-obilaznici-iz-smjera-cvora-buzin-duga-je-oko-12-km-foto-20230717",
+   "headline": "Gužva na zagrebačkoj obilaznici iz smjera čvora Buzin duga je oko 12 km",
+   "summary": "A queue of about 12–13 km stretched along the Zagreb bypass from the Buzin interchange towards the Lučko toll plaza, and drivers were urged to avoid the route.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null,
+   "direction": "prema naplatnoj postaji Lučko"
+  },
+  {
+   "hotspot": "a3-buzin-lucko",
+   "date": "2026-09-07",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/skolarci-se-vratili-kolone-u-zagrebu-na-sve-strane-evo-gdje-je-najgore-20260907",
+   "headline": "Školarci se vratili, kolone u Zagrebu na sve strane, evo gdje je najgore",
+   "summary": "One of the morning's critical points was the Zagreb bypass between the Lučko and Buzin interchanges towards Lipovac, where an accident around 7 a.m. limited speed to 60 km/h.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema Lipovcu"
+  },
+  {
+   "hotspot": "a3-bypass",
+   "date": null,
+   "outlet": "n1info.hr",
+   "url": "https://n1info.hr/vijesti/prometni-kolaps-je-zagrebacki-brend-strucnjak-glavni-razlog-je-prevelik-broj-automobila-ali-nije-jedini/",
+   "headline": "Prometni kolaps je zagrebački brend. Stručnjak: \"Glavni razlog je prevelik broj automobila, ali nije jedini\"",
+   "summary": "The Zagreb bypass has exceeded its design capacity of 75,000 vehicles a day, so even a small accident spills its traffic into the city.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "a3-bypass",
+   "date": null,
+   "outlet": "n1info.hr",
+   "url": "https://n1info.hr/vijesti/najavljeni-radovi-na-zagrebackoj-obilaznici-strucnjak-ovo-je-najopterecenija-prometnica-u-drzavi-bit-ce-katastroficno/",
+   "headline": "Najavljeni radovi na zagrebačkoj obilaznici. Stručnjak: \"Ovo je najopterećenija prometnica u državi. Bit će katastrofično\"",
+   "summary": "An expert calls the Zagreb bypass the most heavily loaded road in the country and warns that the announced works will be catastrophic.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "a3-bypass",
+   "date": "2023-04-12",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/nastavlja-se-prometni-kolaps-na-zagrebackoj-obilaznici-naoruzajte-se-strpljenjem-foto-20230412",
+   "headline": "Nastavlja se prometni kolaps na zagrebačkoj obilaznici, naoružajte se strpljenjem",
+   "summary": "The traffic collapse on the Zagreb bypass continued, and drivers were told to be patient.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null,
+   "recurring": false
+  },
+  {
+   "hotspot": "a3-bypass",
+   "date": "2024-07-01",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pogledajte-guzvu-na-zg-obilaznici-hak-objavio-gdje-su-tocno-guzve-i-zatvorene-ceste-foto-20240701",
+   "headline": "Pogledajte gužvu na ZG obilaznici, HAK objavio gdje su točno gužve i zatvorene ceste",
+   "summary": "Photo report of a jam on the Zagreb bypass (A3), with HAK listing where the jams and road closures were.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "a3-bypass",
+   "date": "2024-08-23",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/kamion-probio-zastitnu-ogradu-na-zagrebackoj-obilaznici-stvorile-se-kilometarske-kolone-20240823",
+   "headline": "Kamion probio zaštitnu ogradu na zagrebačkoj obilaznici: Stvorile se kilometarske kolone",
+   "summary": "A truck broke through the safety barrier on the Zagreb bypass, causing kilometres-long queues.",
+   "type": "crash",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "a3-bypass",
+   "date": "2026-02-13",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/kilometarske-kolone-prema-zagrebu-dogodila-se-prometna-nesreca-na-a3-20260213",
+   "headline": "Kilometarske kolone prema Zagrebu: Dogodila se prometna nesreća na A3",
+   "summary": "A crash on the A3 caused kilometres-long queues towards Zagreb.",
+   "type": "crash",
+   "severity": 2,
+   "timeOfDay": null,
+   "direction": "prema Zagrebu"
+  },
+  {
+   "hotspot": "a3-bypass",
+   "date": "2026-06-10",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/velike-kolone-i-zastoji-na-zagrebackoj-obilaznici-dogodile-su-se-dvije-prometne-nesrece-20260610",
+   "headline": "Velike kolone i zastoji na zagrebačkoj obilaznici: Dogodile su se dvije prometne nesreće",
+   "summary": "Two crashes on the Zagreb bypass caused big queues and stoppages.",
+   "type": "crash",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "a3-kosnica-istok",
+   "date": null,
+   "outlet": "dnevnik.hr",
+   "url": "https://dnevnik.hr/vijesti/hrvatska/hak-guzve-i-zastoji-na-gradskim-obilaznicama---982059.html",
+   "headline": "HAK: Gužve i zastoji na gradskim obilaznicama",
+   "summary": "HAK reported heavier Monday-morning traffic on the Zagreb bypass between the Zagreb istok and Kosnica interchanges towards Bregana.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema Bregani"
+  },
+  {
+   "hotspot": "a3-kosnica-istok",
+   "date": "2023-10-16",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/hak-zbog-nesreca-kolone-na-zagrebackoj-obilaznici-i-na-a4-od-sesveta-prema-zagrebu-20231016",
+   "headline": "HAK: Zbog nesreća kolone na zagrebačkoj obilaznici i na A4 od Sesveta prema Zagrebu",
+   "summary": "Because of crashes, HAK reported a queue of about 2 km on the A3 Zagreb bypass between the Zagreb istok and Kosnica interchanges towards Bregana.",
+   "type": "crash",
+   "severity": 2,
+   "timeOfDay": null,
+   "direction": "prema Bregani"
+  },
+  {
+   "hotspot": "a3-kosnica-istok",
+   "date": "2026-09-16",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/teska-nesreca-na-zagrebackoj-obilaznici-automobil-potpuno-smrskan-kolona-duga-dva-kilometra-20260916",
+   "headline": "Teška nesreća na zagrebačkoj obilaznici: Automobili potpuno smrskani, jedna osoba poginula, promet u prekidu",
+   "summary": "A crash on Wednesday on the A3 Zagreb bypass between Most Sava and the Zagreb istok interchange towards Lipovac killed one person, interrupted traffic and built a queue of about 2 km.",
+   "type": "crash",
+   "severity": 2,
+   "timeOfDay": null,
+   "direction": "prema Lipovcu"
+  },
+  {
+   "hotspot": "a3-zapad-lucko",
+   "date": null,
+   "outlet": "dnevnik.hr",
+   "url": "https://dnevnik.hr/vijesti/hrvatska/hak-guzve-i-zastoji-na-gradskim-obilaznicama---982059.html",
+   "headline": "HAK: Gužve i zastoji na gradskim obilaznicama",
+   "summary": "HAK reported heavier Monday-morning traffic on the Zagreb bypass between the Zagreb zapad and Lučko interchanges towards Lipovac.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema Lipovcu"
+  },
+  {
+   "hotspot": "a3-zapad-lucko",
+   "date": "2026-07-31",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/od-ranog-jutra-kolone-na-cestama-kod-zagreba-se-skupilo-cetiri-kilometra-guzve-20260731",
+   "headline": "Od ranog jutra kolone na cestama: Kod Zagreba se skupilo četiri kilometra gužve",
+   "summary": "From early morning a queue of about 4 km built up near Zagreb at the Zagreb zapad interchange.",
+   "type": "event",
+   "severity": 2,
+   "timeOfDay": "morning"
+  },
+  {
+   "hotspot": "a4-entry",
+   "date": null,
+   "outlet": "dnevnik.hr",
+   "url": "https://dnevnik.hr/vijesti/hrvatska/hak-guzve-i-zastoji-na-gradskim-obilaznicama---982059.html",
+   "headline": "HAK: Gužve i zastoji na gradskim obilaznicama",
+   "summary": "HAK reported slow traffic with periodic stops and a queue of about 3 km on the A4 between the Sesvete and Zagreb istok interchanges towards Zagreb.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema Zagrebu"
+  },
+  {
+   "hotspot": "a4-entry",
+   "date": "2023-10-16",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/hak-zbog-nesreca-kolone-na-zagrebackoj-obilaznici-i-na-a4-od-sesveta-prema-zagrebu-20231016",
+   "headline": "HAK: Zbog nesreća kolone na zagrebačkoj obilaznici i na A4 od Sesveta prema Zagrebu",
+   "summary": "Because of a crash, HAK reported a queue of about 3 km on the A4 from the Sesvete interchange towards the Zagreb istok interchange.",
+   "type": "crash",
+   "severity": 2,
+   "timeOfDay": null,
+   "direction": "prema Zagrebu"
+  },
+  {
+   "hotspot": "a4-entry",
+   "date": "2025-06-09",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ogromne-kolone-na-ulazu-u-zagreb-vozim-se-vec-sat-vremena-a-jos-ni-do-sesveta-nisam-stigla-20250609",
+   "headline": "Ogromne kolone na ulazu u Zagreb: 'Vozim se već sat vremena, a još ni do Sesveta nisam stigla'",
+   "summary": "The longest queue was on the A4 at the entrance to Zagreb, where works had been causing huge jams for days, with queues from the Sv. Helena toll plaza all the way to Slavonska avenija and Most Ivanja Reka.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null,
+   "recurring": false,
+   "direction": "prema Zagrebu"
+  },
+  {
+   "hotspot": "a4-entry",
+   "date": "2026-07-01",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/kolaps-na-a4-kolona-prema-zagrebu-cak-15-kilometara-20260701",
+   "headline": "Kolaps na A4: Kolona prema Zagrebu čak 15 kilometara!",
+   "summary": "A truck–car collision on the A4 between the Sveta Helena and Zagreb istok interchanges built a queue of about 15 km towards Zagreb.",
+   "type": "crash",
+   "severity": 3,
+   "timeOfDay": null,
+   "direction": "prema Zagrebu"
+  },
+  {
+   "hotspot": "a4-entry",
+   "date": "2026-07-01",
+   "outlet": "zagreb.info",
+   "url": "https://www.zagreb.info/vijesti/zg/kolona-duga-8-kilometara-na-a4-kod-zagreba-zbog-prometne-nesrece/853676/",
+   "headline": "Kolona duga 8 kilometara na A4 kod Zagreba zbog prometne nesreće",
+   "summary": "A crash on the A4 Goričan–Zagreb between the Sveta Helena and Zagreb istok interchanges caused a queue of about 8 km.",
+   "type": "crash",
+   "severity": 3,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "aleja-bologne",
+   "date": "2025-08-30",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pljusak-napravio-kaos-u-zagrebu-potopljen-podvoznjak-vatrogasci-na-svim-stranama-foto-20250830",
+   "headline": "Pljusak napravio kaos u Zagrebu: Potopljen podvožnjak, vatrogasci na svim stranama",
+   "summary": "A downpour flooded the Aleja Bologne underpass between Gajnica and Podsused, trapping cars (one driver escaped unhurt), and Aleja Bologne was closed between Ulica Prigradnica and Ulica Velimira Škorpika.",
+   "type": "weather",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "bukovacka",
+   "date": null,
+   "outlet": "telegram.hr",
+   "url": "https://www.telegram.hr/vijesti/radikalne-promjene-na-kriznim-tockama-u-zagrebu-bukovacka-dobiva-zutu-traku-za-autobus-i-barijere-na-ribnjaku-se-uvodi-dinamicka-traka/",
+   "headline": "Bukovačka dobiva žutu traku za autobus i fizičke barijere, na Ribnjaku se uvodi dinamička traka",
+   "summary": "Bukovačka is one of the city's 'crisis points': it gets a 300 m bus lane protected by physical barriers to speed public transport to KBC Rebro.",
+   "type": "critical_point",
+   "severity": null,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "drziceva-vukovarska",
+   "date": null,
+   "outlet": "telegram.hr",
+   "url": "https://www.telegram.hr/vijesti/potpuni-prometni-kolaps-u-zagrebu-semafori-prestali-raditi-na-krizanju-drziceve-i-vukovarske-stvorila-se-ogromna-guzva/",
+   "headline": "Prometni kaos u Zagrebu. Na jednom od najprometnijih raskrižja ne rade semafori, ogromne su gužve",
+   "summary": "The traffic lights failed at the Držićeva–Vukovarska junction, described as one of the busiest in Zagreb, and huge jams formed.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null,
+   "recurring": false
+  },
+  {
+   "hotspot": "gojka-suska",
+   "date": "2023-09-20",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/u-zagrebu-na-dvije-lokacije-zbog-radova-zatvara-promet-20230918",
+   "headline": "U Zagrebu se na dvije lokacije zbog radova zatvara promet",
+   "summary": "For road resurfacing, the eastern lane/carriageway of Avenija Gojka Šuška was closed from the ZET terminal entrance to Ulica Rudolfa Kolaka, from Wednesday 20 September 09:00 to Wednesday 4 October 04:00.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2023-09-20",
+    "to": "2023-10-04"
+   }
+  },
+  {
+   "hotspot": "holjevac-dubrovnik",
+   "date": "2026-01-16",
+   "outlet": "zagreb.info",
+   "url": "https://www.zagreb.info/vijesti/kaos-ujutro-u-zagrebackom-prometu-kolone-vozila-prema-centru/805691/",
+   "headline": "Kaos ujutro u zagrebačkom prometu: Kolone vozila prema centru",
+   "summary": "On Friday morning queues towards the centre formed from the Avenija Dubrovnik junction because urgent repairs to snow-and-ice road damage on Avenija Većeslava Holjevca left one lane open towards the centre (works until 4 a.m. on Saturday 17 January).",
+   "type": "roadworks",
+   "severity": 2,
+   "timeOfDay": "morning",
+   "direction": "prema centru"
+  },
+  {
+   "hotspot": "ilica",
+   "date": "2025-06-16",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/foto-zagreb-postaje-veliko-gradiliste-u-ilici-danas-prometni-kaos-foto-20250616",
+   "headline": "FOTO Zagreb postaje veliko gradilište, u Ilici danas prometni kaos",
+   "summary": "Water-main reconstruction began on Ilica, closed to general traffic between Mandaličina and Sveti Duh until 31 August 2025 (trams kept running), causing traffic chaos.",
+   "type": "roadworks",
+   "severity": 3,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "ilica",
+   "date": "2025-07-11",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/tri-zet-ove-linije-zbog-radova-na-ilici-i-selskoj-cesti-voze-skraceno-ovi-su-detalji-20250711",
+   "headline": "Tri ZET-ove linije zbog radova na Ilici i Selskoj cesti voze skraćeno: Ovi su detalji",
+   "summary": "Water-supply reconstruction works on Ilica (together with pipeline works on Selska cesta) forced three ZET lines onto shortened routes.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "ilica",
+   "date": "2026-09-07",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/skolarci-se-vratili-kolone-u-zagrebu-na-sve-strane-evo-gdje-je-najgore-20260907",
+   "headline": "Školarci se vratili, kolone u Zagrebu na sve strane, evo gdje je najgore",
+   "summary": "On the first school-day morning, queues stretched along Ilica from Vrapče towards the Črnomerec tram terminal.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema Črnomercu"
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": null,
+   "outlet": "n1info.hr",
+   "url": "https://n1info.hr/vijesti/strucnjak-o-pet-velikih-prometnih-projekata-u-zagrebu-dobri-su-ali-ce-automobile-uciniti-jos-privlacnijima/",
+   "headline": "Stručnjak o pet velikih prometnih projekata u Zagrebu: \"Dobri su, ali će automobile učiniti još privlačnijima\"",
+   "summary": "Jadranski most is named among the roads the planned Jarunski most (west of Jarun) is meant to relieve.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2021-04-29",
+   "outlet": "blog.mireo.com",
+   "url": "https://blog.mireo.com/the-fastest-bridge-in-zagreb",
+   "headline": "The fastest bridge in Zagreb",
+   "summary": "GPS analysis of workday traffic found almost two-hour afternoon jams on Jadranski most (15:15–17:15), up to 50% slower; morning jams on the central bridges run about 7:15–8:00, with northbound traffic heavier in the morning and southbound in the afternoon.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": "afternoon",
+   "recurring": true,
+   "direction": "prema jugu"
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2021-10-12",
+   "outlet": "blog.mireo.com",
+   "url": "https://blog.mireo.com/the-fastest-bridge-in-zagreb-fall-2021",
+   "headline": "The fastest bridge in Zagreb - Traffic jams surge as schools reopen",
+   "summary": "A follow-up GPS analysis of the three central bridges found that traffic slowed down dramatically from September 2021 as schools reopened, with northbound flows heavier in the morning and southbound in the afternoon.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": true,
+   "direction": "ujutro prema sjeveru, poslijepodne prema jugu"
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2022-09-23",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/krecu-radovi-na-jednom-od-najprometnijih-zagrebackih-mostova-a-trajat-ce-do-lipnja-sljedece-godine-evo-obilaznih-pravaca-foto-20220923",
+   "headline": "Kreću radovi na jednom od najprometnijih zagrebačkih mostova, a trajat će do lipnja sljedeće godine, evo obilaznih pravaca",
+   "summary": "Announcement that reconstruction of Jadranski most, one of Zagreb's busiest bridges, was starting and would last until June 2023, with detour routes published.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": null,
+    "to": "2023-06-24"
+   }
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2022-09-26",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/kolone-automobila-pred-jadranskim-mostom-promet-se-preusmjerava-na-savski-20220926",
+   "headline": "Kolone automobila pred Jadranskim mostom, promet se preusmjerava na Savski",
+   "summary": "On Monday morning, after reconstruction of Jadranski most began over the weekend, huge queues formed on both sides of the bridge and traffic was diverted to Savski most.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": "morning",
+   "direction": "both approaches"
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2022-09-26",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/prometni-strucnjak-objasnio-zasto-je-doslo-do-kolapsa-prometa-oko-jadranskog-mosta-ovo-je-cisti-fuseraj-20220926",
+   "headline": "Prometni stručnjak objasnio zašto je došlo do kolapsa prometa oko Jadranskog mosta: 'Ovo je čisti fušeraj'",
+   "summary": "A traffic expert explained why traffic collapsed around Jadranski most on the first working day of the bridge works and called the traffic organisation 'pure botch-work'.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2022-09-26",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/tomasevic-se-ispricao-zagrepcanima-zbog-teskoca-u-prometu-na-jadranskom-mostu-foto-20220926",
+   "headline": "Tomašević se ispričao Zagrepčanima zbog teškoća u prometu na Jadranskom mostu",
+   "summary": "Mayor Tomislav Tomašević apologised to citizens for the traffic problems at Jadranski most on the first day of the bridge reconstruction.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2022-09-27",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/uskoro-uzivo-tomasevic-drzi-redovnu-press-konferenciju-20220927",
+   "headline": "Tomašević o krkljancu kod Jadranskog mosta: 'Nije se moglo raditi preko ljeta jer se tada radio Most slobode'",
+   "summary": "At his press conference the mayor addressed the traffic jam at Jadranski most, saying the works could not be done in summer because Most slobode was being renovated then.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2023-01-14",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ponovno-krecu-radovi-na-jadranskom-mostu-a-promet-ce-biti-zatvoren-i-u-nekim-ulicama-u-samom-centru-zagreba-foto-20230114",
+   "headline": "Ponovno kreću radovi na Jadranskom mostu, a promet će biti zatvoren i u nekim ulicama u samom centru Zagreba",
+   "summary": "Works on Jadranski most resumed on Saturday 14 January, restricting traffic over the bridge again; some streets in central Zagreb (not named in the snippet) were also to be closed.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2023-01-14",
+    "to": "2023-04-01"
+   }
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2023-01-16",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/opet-prometni-krkljanac-na-jadranskom-mostu-stvaraju-se-cepovi-na-prometnicama-foto-20230116",
+   "headline": "Opet prometni krkljanac na Jadranskom mostu; stvaraju se čepovi na prometnicama",
+   "summary": "Jams returned at Jadranski most, with bottlenecks on surrounding roads, on the first working day of repairs to the southern viaduct's expansion joints and extraordinary maintenance, which were due to run until 1 April.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "period": {
+    "from": "2023-01-14",
+    "to": "2023-04-01"
+   }
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2024-02-08",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/kaos-u-zagrebu-zbog-radova-na-jadranskom-mostu-koristite-alternativne-ceste-foto-20240208",
+   "headline": "Kaos u Zagrebu zbog radova na Jadranskom mostu: 'Koristite alternativne ceste'",
+   "summary": "Works to connect a temporary road on the Jadranski most approach/exit section (8–14 February) caused traffic chaos in south-west Zagreb, and drivers were told to use alternative roads.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null,
+   "period": {
+    "from": "2024-02-08",
+    "to": "2024-02-14"
+   }
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2024-02-08",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pogledajte-kako-izgleda-guzva-oko-jadranskog-mosta-iz-zraka-foto-20240208",
+   "headline": "Pogledajte kako izgleda gužva oko Jadranskog mosta iz zraka",
+   "summary": "Aerial photos showed large jams in south-west Zagreb around Jadranski most, caused by works until 14 February to connect a temporary road on the bridge's descent/entry section.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "period": {
+    "from": "2024-02-08",
+    "to": "2024-02-14"
+   }
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2024-02-08",
+   "outlet": "index.hr",
+   "url": "https://www.index.hr/vijesti/clanak/prometni-kolaps-u-zagrebu-horvacanska-zakrcena-zbog-radova-na-jadranskom-mostu/2536707.aspx",
+   "headline": "Prometni kolaps u Zagrebu: Horvaćanska zakrčena zbog radova na Jadranskom mostu",
+   "summary": "Works on a temporary road connection at the Jadranski most ramps (8–14 February, 08:00–14:00, part of the carriageway closed) gridlocked Horvaćanska and Selska leading to the bridge, with traffic backing up along Selska; citizens were urged to use alternative routes.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": "morning",
+   "period": {
+    "from": "2024-02-08",
+    "to": "2024-02-14"
+   },
+   "direction": "towards Jadranski most"
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2024-02-12",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/hoce-li-biti-kaos-na-jadranskom-mostu-iz-grada-uvjeravaju-bit-ce-manjih-poteskoca-u-prometu-foto-20240212",
+   "headline": "Hoće li biti kaos na Jadranskom mostu? Iz Grada uvjeravaju: Bit će manjih poteškoća u prometu",
+   "summary": "Before the next phase of the Jadranski most reconstruction, the City said traffic would see only minor difficulties.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "jadranski-most",
+   "date": "2024-07-16",
+   "outlet": "zagreb.info",
+   "url": "https://www.zagreb.info/vijesti/nova-regulacija-prometa-na-jadranskom-mostu-potpuno-novo-stanje-stupa-na-snagu-u-utorak/644835/",
+   "headline": "Nova regulacija prometa na Jadranskom mostu: Potpuno novo stanje stupa na snagu u utorak",
+   "summary": "Expansion-joint and extraordinary-maintenance works began in March; from Tuesday 16 July, Jadranski most traffic moved to the renovated eastern carriageway, two-way with two lanes per direction, until the end of the year.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2024-07-16",
+    "to": "2024-12-31"
+   }
+  },
+  {
+   "hotspot": "jagiceva-austrije",
+   "date": "2024-02-21",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/prometna-guzva-stvorila-se-u-jagicevoj-evo-kako-se-jutros-islo-na-posao-foto-20240221",
+   "headline": "Prometna gužva stvorila se u Jagićevoj, evo kako se jutros išlo na posao",
+   "summary": "Works that began at the Ulica Republike Austrije–Jagićeva intersection caused a large morning-commute jam in Jagićeva.",
+   "type": "roadworks",
+   "severity": 2,
+   "timeOfDay": "morning"
+  },
+  {
+   "hotspot": "maksimir-stadium",
+   "date": "2022-09-06",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/foto-video-chelsea-stize-u-zagreb-policija-objavila-sva-pravila-kojih-se-treba-pridrzavati-prije-tijekom-i-nakon-utakmice-foto-20220906",
+   "headline": "[FOTO/VIDEO] Chelsea stiže u Zagreb! Policija objavila sva pravila kojih se treba pridržavati prije, tijekom i nakon utakmice",
+   "summary": "Before the Dinamo–Chelsea Champions League match at Maksimir, police published the rules to follow before, during and after the game.",
+   "type": "event",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "maksimir-stadium",
+   "date": "2022-09-21",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/sport/clanak/detaljne-upute-navijacima-uoci-susreta-s-dankom-evo-koje-ce-ulice-i-parkiralista-biti-zatvoreni-i-kojih-ce-mjere-biti-na-snazi-foto-20220921",
+   "headline": "Detaljne upute navijačima uoči susreta s Dankom. Evo koje će ulice i parkirališta biti zatvoreni i koje će mjere biti na snazi",
+   "summary": "Ahead of Croatia's match against Denmark, police published which streets and car parks around the stadium would be closed and which measures would apply.",
+   "type": "event",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "maksimir-stadium",
+   "date": "2023-02-26",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/foto-do-ponoci-posebna-regulacija-prometa-zbog-derbija-policija-na-luckom-docekuje-pripadnike-torcide-foto-20230226",
+   "headline": "[FOTO] Do ponoći posebna regulacija prometa zbog derbija, policija na Lučkom dočekuje pripadnike Torcide",
+   "summary": "Special traffic regulation was in force in Zagreb until midnight for the Dinamo–Hajduk derby at Maksimir.",
+   "type": "event",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "maksimir-stadium",
+   "date": "2023-08-15",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/zagreb-zbog-utakmice-do-ponoci-posebna-regulacija-prometa-20230815",
+   "headline": "Zagreb: Zbog utakmice do ponoći posebna regulacija prometa",
+   "summary": "Special traffic regulation was in force in Zagreb until midnight because of a football match at Maksimir.",
+   "type": "event",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "maksimir-stadium",
+   "date": "2023-08-15",
+   "outlet": "index.hr",
+   "url": "https://www.index.hr/clanak.aspx?id=2487642",
+   "headline": "Zbog utakmice s Grcima posebna regulacija prometa u Zagrebu, donosimo detalje",
+   "summary": "For the high-risk Dinamo–AEK match, police closed to all traffic from 6 a.m. the car parks around Maksimir stadium, the service road from Budakova and the former Borongaj market to the Svetice pools, and Hitrecova with its car park.",
+   "type": "event",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "maksimir-stadium",
+   "date": "2024-09-13",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/policija-izdala-detaljne-upute-za-gledatelje-i-navijace-utakmice-na-maksimiru-20240913",
+   "headline": "Posebna regulacija prometa zbog utakmice Dinamo-Hajduk: Policija ima važnu poruku",
+   "summary": "For the Dinamo–Hajduk match police closed Ulica Divka Budaka (Borongaj market to Svetice pool), Hitrecova with its car park and the western Faculty of Economics car park at Trg J. F. Kennedyja from 6 a.m., and away fans arriving by road were escorted in convoy from checkpoints such as Lučko.",
+   "type": "event",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "maksimir-stadium",
+   "date": "2025-03-02",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/sport/clanak/policija-uoci-derbija-dinama-i-hajduka-objavila-vazno-priopcenje-za-navijace-i-gradane-foto-20250302",
+   "headline": "Policija uoči derbija Dinama i Hajduka objavila važno priopćenje za navijače i građane",
+   "summary": "Before the Dinamo–Hajduk derby at Maksimir, police issued an important notice to fans and residents.",
+   "type": "event",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "posavskog-overpass",
+   "date": "2026-06-15",
+   "outlet": "dnevnik.hr",
+   "url": "https://dnevnik.hr/vijesti/hrvatska/zatvorena-ulica-ljudevita-posavskog-sve-do-kraja-kolovoza-zet-skratio-i-ukinuo-linije-automobilima-ponudjena-tri-obilazna-pravca---985823.html",
+   "headline": "Zatvorena Ulica Ljudevita Posavskog sve do kraja kolovoza, ZET skratio i ukinuo linije, automobilima ponuđena tri obilazna pravca",
+   "summary": "Repairs closed the overpass on Ulica Ljudevita Posavskog in Sesvete until the end of August, and on Monday morning 15 June the first jams appeared on the detour routes around it.",
+   "type": "closure",
+   "severity": 2,
+   "timeOfDay": "morning"
+  },
+  {
+   "hotspot": "prilaz-filipovica",
+   "date": "2024-02-20",
+   "outlet": "index.hr",
+   "url": "https://www.index.hr/vijesti/clanak/video-nesnosne-guzve-u-zagrebu-ogromne-kolone-od-ranog-jutra/2540122.aspx",
+   "headline": "VIDEO Tramvaj iskočio iz tračnica, nesnosne gužve. Zakrčen ogroman dio grada",
+   "summary": "A tram derailment caused unbearable jams from early morning that clogged a large part of the city, with big queues on Prilaz baruna Filipovića.",
+   "type": "other",
+   "severity": 3,
+   "timeOfDay": "morning"
+  },
+  {
+   "hotspot": "remetinec-rotor",
+   "date": null,
+   "outlet": "dnevnik.hr",
+   "url": "https://dnevnik.hr/vijesti/hrvatska/na-rotoru-u-remetincu-se-mijenja-semaforski-program-kako-bi-se-smanjile-guzve---591792.html",
+   "headline": "Na rotoru u Remetincu se mijenja semaforski program kako bi se smanjile gužve",
+   "summary": "After the rebuilt Remetinec rotor reopened, drivers complained of big jams on the first working day, and the City reprogrammed the signals to add capacity in the morning and afternoon peaks.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "remetinec-rotor",
+   "date": "2020-02-13",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/strucnjak-nabrojao-gomilu-gresaka-pri-obnovi-zagrebackog-rotora-nisu-nas-slusali-prije-11-godina-ulupali-su-hrpu-novca-nek-spase-barem-ovo-foto-20200213",
+   "headline": "Stručnjak nabrojao gomilu grešaka pri obnovi zagrebačkog rotora: 'Nisu nas slušali prije 11 godina, ulupali su hrpu novca, nek' spase barem ovo'",
+   "summary": "After the rebuild, an expert critic said the large number of traffic lights killed much of the rotor's natural flow and turned it into just another big junction, while the new underpass lets Karlovac traffic pass without stopping.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "ribnjak",
+   "date": null,
+   "outlet": "telegram.hr",
+   "url": "https://www.telegram.hr/vijesti/radikalne-promjene-na-kriznim-tockama-u-zagrebu-bukovacka-dobiva-zutu-traku-za-autobus-i-barijere-na-ribnjaku-se-uvodi-dinamicka-traka/",
+   "headline": "Bukovačka dobiva žutu traku za autobus i fizičke barijere, na Ribnjaku se uvodi dinamička traka",
+   "summary": "Ribnjak is one of the city's 'crisis points': its middle lane becomes a reversible lane, southbound in the morning and northbound in the afternoon.",
+   "type": "critical_point",
+   "severity": null,
+   "timeOfDay": null,
+   "recurring": true,
+   "direction": "ujutro prema jugu, poslijepodne prema sjeveru"
+  },
+  {
+   "hotspot": "ribnjak",
+   "date": "2025-06-16",
+   "outlet": "hrt.hr (Radio Sljeme)",
+   "url": "https://radio.hrt.hr/radio-sljeme/vijesti/od-ponedjeljka-obnova-pruge-na-ribnjaku-12201959",
+   "headline": "Obustavlja se tramvajski promet preko Ribnjaka do Gračanskog Dolja",
+   "summary": "From Monday 16 June, trams over Ribnjak to Gračansko Dolje were suspended for reconstruction of about 1.5 km of tram track on Ribnjak between Vlaška and Grškovićeva, with replacement buses; completion was expected in early September.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2025-06-16",
+    "to": null
+   }
+  },
+  {
+   "hotspot": "sarajevska",
+   "date": "2026-09-07",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pocinje-skola-a-zagreb-je-raskopan-ovo-su-kriticne-tocke-i-alternativni-pravci-20260907",
+   "headline": "Počinje škola, a Zagreb je raskopan: Ovo su kritične točke i alternativni pravci",
+   "summary": "Listed as a critical point at the start of school: Sarajevska cesta, where works were to last until the end of September and the most pronounced congestion was expected.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": false
+  },
+  {
+   "hotspot": "sava-bridges",
+   "date": "2021-04-29",
+   "outlet": "blog.mireo.com",
+   "url": "https://blog.mireo.com/the-fastest-bridge-in-zagreb",
+   "headline": "The fastest bridge in Zagreb",
+   "summary": "GPS analysis of workday traffic found Most slobode up to 35% slower at its afternoon worst (jams about 15:15–17:00), with northbound traffic heavier in the morning and southbound in the afternoon.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": "afternoon",
+   "recurring": true,
+   "direction": "prema jugu"
+  },
+  {
+   "hotspot": "sava-bridges",
+   "date": "2024-10-09",
+   "outlet": "net.hr",
+   "url": "https://net.hr/danas/rtl-direkt/kriticne-tocke-u-zagrebu-strucnjak-objasnio-u-cemu-je-problem-6958754a-8675-11ef-94c7-e644f1e1ce4c",
+   "headline": "Obišli smo kritične točke u Zagrebu. Stručnjak objasnio u čemu je problem",
+   "summary": "The bridges from Novi Zagreb are named among the most critical points, with endless queues flowing towards the city centre in the morning rush.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": "morning",
+   "recurring": true,
+   "direction": "prema centru"
+  },
+  {
+   "hotspot": "savska-cesta",
+   "date": null,
+   "outlet": "n1info.hr",
+   "url": "https://n1info.hr/vijesti/strucnjak-o-pet-velikih-prometnih-projekata-u-zagrebu-dobri-su-ali-ce-automobile-uciniti-jos-privlacnijima/",
+   "headline": "Stručnjak o pet velikih prometnih projekata u Zagrebu: \"Dobri su, ali će automobile učiniti još privlačnijima\"",
+   "summary": "The planned four-lane Šarengradska, running parallel from Vukovarska to Jadranski most, is meant to relieve Savska cesta.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "savska-vukovarska",
+   "date": "2026-06-23",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/djelomicno-zatvorena-savska-cesta-u-zagrebu-tramvaji-i-automobili-voze-obilazno-foto-20260623",
+   "headline": "Djelomično zatvorena Savska cesta u Zagrebu: Tramvaji i automobili voze obilazno",
+   "summary": "Savska cesta was closed between Ozaljska and Vukovarska while ZET crews repaired tram overhead line damaged by a freight vehicle; cars were diverted via Ozaljska and Vukovarska, and trams ran diversions with replacement buses.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "savska-tratinska",
+   "date": "2023-08-29",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/velike-guzve-na-savskoj-cesti-u-zagrebu-dok-traju-radovi-foto-20230829",
+   "headline": "Velike gužve na Savskoj cesti u Zagrebu dok traju radovi",
+   "summary": "Big jams formed on Savska cesta while it was closed near the Tratinska intersection for tram-track replacement and welding under a temporary traffic regime.",
+   "type": "roadworks",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "savska-vukovarska",
+   "date": "2024-10-07",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pocela-sanacija-tramvajske-pruge-u-vukovarskoj-ulici-u-zagrebu-foto-20241007",
+   "headline": "Počela sanacija tramvajske pruge u Vukovarskoj ulici u Zagrebu",
+   "summary": "Tram-track rehabilitation began at the Ulica grada Vukovara–Savska cesta intersection (traffic restricted 7–21 Oct 2024, no west-to-north turn), and tportal reported congestion.",
+   "type": "roadworks",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "savska-vukovarska",
+   "date": "2024-10-08",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pogledajte-prometni-kolaps-zbog-sanacije-na-krizanju-vukovarske-i-savske-foto-20241008",
+   "headline": "Pogledajte prometni kolaps zbog sanacije na križanju Vukovarske i Savske",
+   "summary": "Repair works at the Vukovarska–Savska junction caused a traffic collapse.",
+   "type": "jam",
+   "severity": 3,
+   "timeOfDay": null,
+   "recurring": false
+  },
+  {
+   "hotspot": "savska-vukovarska",
+   "date": "2026-07-04",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pocinju-radovi-na-kljucnom-raskrizju-u-zagrebu-ocekuju-se-velike-guzve-20260703",
+   "headline": "Počinju radovi na ključnom raskrižju u Zagrebu: Očekuju se velike gužve",
+   "summary": "Reconstruction of the main water-supply pipeline (~€3.8m) and the tram switch (~€1.2m) at the Savska cesta / Ulica grada Vukovara junction was to obstruct traffic and close parts of the junction from Saturday 4 July 06:00 to Monday 31 August 04:00, with no trams on Vukovarska until 17 August; large jams were expected.",
+   "type": "roadworks",
+   "severity": 2,
+   "timeOfDay": null,
+   "period": {
+    "from": "2026-07-04",
+    "to": "2026-08-31"
+   }
+  },
+  {
+   "hotspot": "savska-vukovarska",
+   "date": "2026-07-04",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/foto-poceli-radovi-na-jednom-od-najprometnijih-raskrizja-u-zagrebu-evo-kako-ce-se-voziti-foto-20260704",
+   "headline": "FOTO Počeli radovi na jednom od najprometnijih raskrižja u Zagrebu, evo kako će se voziti",
+   "summary": "Works began at the Savska / Vukovarska junction: left turns were banned and through traffic kept north–south and west–east (with a short U-turn detour in Savska north of the junction); trams between Savska and Držićeva were suspended until 17 August and the works were to finish by 31 August.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2026-07-04",
+    "to": "2026-08-31"
+   }
+  },
+  {
+   "hotspot": "selska-cesta",
+   "date": null,
+   "outlet": "n1info.hr",
+   "url": "https://n1info.hr/vijesti/strucnjak-o-pet-velikih-prometnih-projekata-u-zagrebu-dobri-su-ali-ce-automobile-uciniti-jos-privlacnijima/",
+   "headline": "Stručnjak o pet velikih prometnih projekata u Zagrebu: \"Dobri su, ali će automobile učiniti još privlačnijima\"",
+   "summary": "Selska cesta is named among the roads the planned Jarunski most (west of Jarun) is meant to relieve.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "selska-cesta",
+   "date": "2023-07-03",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ogromne-guzve-na-zapadnom-dijelu-zagreba-zbog-radova-na-selskoj-foto-20230703",
+   "headline": "Ogromne gužve na zapadnom dijelu Zagreba zbog radova na Selskoj",
+   "summary": "Roadworks on Selska cesta caused huge traffic jams in western Zagreb.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "selska-cesta",
+   "date": "2023-09-15",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/krenuli-radovi-na-selskoj-cesti-zatvorena-jedna-prometna-traka-foto-20230915",
+   "headline": "Krenuli radovi na Selskoj cesti, zatvorena jedna prometna traka",
+   "summary": "Roadworks started on Selska cesta, and one traffic lane was closed.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "selska-cesta",
+   "date": "2024-02-20",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/poceli-radovi-na-selskoj-cesti-evo-do-kada-ce-trajati-20240220",
+   "headline": "Pripremite se na gužve: Počeli radovi na Selskoj cesti, zna se do kada će trajati",
+   "summary": "Roadworks started on Selska cesta, and drivers were warned to prepare for congestion.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "selska-cesta",
+   "date": "2024-07-06",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/krecu-radovi-u-centru-zagreba-trajat-ce-cijelo-ljeto-dio-ilice-bit-ce-zatvoren-20240703",
+   "headline": "Kreću radovi u centru Zagreba, trajat će cijelo ljeto: Dio Ilice bit će zatvoren",
+   "summary": "For water-supply pipeline works, traffic was banned on Ilica between Selska cesta and Ulica Črnomerec from Saturday 6 July until the end of August, with altered traffic in the surrounding area.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2024-07-06",
+    "to": "2024-08-31"
+   }
+  },
+  {
+   "hotspot": "selska-cesta",
+   "date": "2025-07-11",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/tri-zet-ove-linije-zbog-radova-na-ilici-i-selskoj-cesti-voze-skraceno-ovi-su-detalji-20250711",
+   "headline": "Tri ZET-ove linije zbog radova na Ilici i Selskoj cesti voze skraćeno: Ovi su detalji",
+   "summary": "Pipeline works on Selska cesta (together with water-supply works on Ilica) forced three ZET lines onto shortened routes.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "selska-horvacanska",
+   "date": "2026-08-27",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ukida-se-pola-traka-na-najproblematicnijem-krizanju-u-zagrebu-ovo-su-detalji-20260827",
+   "headline": "Ukida se pola traka na najproblematičnijem križanju u Zagrebu: Ovo su detalji",
+   "summary": "The headline calls the Selska–Horvaćanska junction the most problematic in Zagreb; a €1.5m rebuild narrows the northern Horvaćanska carriageway from 13.2 m to 6.5 m and turns one Selska lane into a public-transport lane.",
+   "type": "critical_point",
+   "severity": null,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "selska-underpass",
+   "date": "2023-07-03",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ogromne-guzve-na-zapadnom-dijelu-zagreba-zbog-radova-na-selskoj-foto-20230703",
+   "headline": "Ogromne gužve na zapadnom dijelu Zagreba zbog radova na Selskoj",
+   "summary": "Huge jams hit western Zagreb after Selska cesta was closed between Prilaz baruna Filipovića and Zagorska (1–27 July 2023) for railway-underpass works.",
+   "type": "roadworks",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "selska-underpass",
+   "date": "2023-07-04",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ponovno-guzve-na-zapadnom-dijelu-zagreba-zbog-radova-na-selskoj-foto-20230704",
+   "headline": "Ponovno gužve na zapadnom dijelu Zagreba zbog radova na Selskoj",
+   "summary": "Western Zagreb was jammed again the following day because of the Selska cesta closure for underpass works.",
+   "type": "roadworks",
+   "severity": 2,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "skorpikova",
+   "date": null,
+   "outlet": "n1info.hr",
+   "url": "https://n1info.hr/vijesti/strucnjak-o-pet-velikih-prometnih-projekata-u-zagrebu-dobri-su-ali-ce-automobile-uciniti-jos-privlacnijima/",
+   "headline": "Stručnjak o pet velikih prometnih projekata u Zagrebu: \"Dobri su, ali će automobile učiniti još privlačnijima\"",
+   "summary": "Expert Marko Ševrović says the north–south underpass at Škorpikova is insufficient and creates enormous traffic pressure in western Zagreb, so any works or accident there means a blockade.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "slavonska-avenija",
+   "date": "2021-03-20",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/klisovic-u-sesvetama-najavio-rjesavanje-prometne-zagusenost-obecao-produljiti-branimirovu-ulicu-i-prenamjeniti-bivsu-tvornicu-sljeme-20210320",
+   "headline": "Klisović u Sesvetama najavio rješavanje prometne zagušenosti, obećao produljiti Branimirovu ulicu i prenamijeniti bivšu tvornicu Sljeme",
+   "summary": "Klisović promised to rebuild the eastern entrance to Zagreb to reduce congestion and traffic load there.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "slavonska-avenija",
+   "date": "2025-06-09",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ogromne-kolone-na-ulazu-u-zagreb-vozim-se-vec-sat-vremena-a-jos-ni-do-sesveta-nisam-stigla-20250609",
+   "headline": "Ogromne kolone na ulazu u Zagreb: 'Vozim se već sat vremena, a još ni do Sesveta nisam stigla'",
+   "summary": "Slavonska avenija was named with the A4 entrance as the worst-hit road, the roadworks queue reaching it during the morning rush.",
+   "type": "roadworks",
+   "severity": 3,
+   "timeOfDay": "morning"
+  },
+  {
+   "hotspot": "slavonska-avenija",
+   "date": "2026-03-16",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ovo-je-najopasnija-ulica-u-zagrebu-policija-ovdje-ima-posla-skoro-svaki-dan-foto-20260316",
+   "headline": "Ovo je najopasnija ulica u Zagrebu: policija ovdje ima posla skoro svaki dan",
+   "summary": "Police data showed Slavonska avenija had the most traffic crashes of any Zagreb street in 2025 (243).",
+   "type": "other",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "slavonska-drziceva",
+   "date": "2025-06-11",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/velika-obnova-dio-zagrebacke-petlje-bit-ce-zatvoren-godinu-dana-20250611",
+   "headline": "Velika obnova: Dio zagrebačke petlje bit će zatvoren godinu dana",
+   "summary": "The overpass linking Slavonska avenija and Avenija Marina Držića was to close for at least a year for a thorough renovation (pillars, steel cladding, bearings, abutments), with completion expected in summer 2026; tportal reported on 30 May 2026 that it had reopened.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": null,
+    "to": "2026-05-30"
+   }
+  },
+  {
+   "hotspot": "slavonska-savska",
+   "date": "2025-11-18",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/zagrepcani-pripremite-se-na-kaos-zbog-pozara-vjesnika-nova-regulacija-prometa-grad-zagreb-izdao-gradanima-upute-20251118",
+   "headline": "Zagrepčani, pripremite se na kaos! Zbog požara Vjesnika nova regulacija prometa. Grad Zagreb izdao građanima upute",
+   "summary": "After the fire that gutted the Vjesnik skyscraper, the City brought in temporary regulation from Tuesday 18 November at 19:00: the Slavonska avenija underpass beneath Savska cesta closed in both directions, eastbound Slavonska avenija closed from Selska cesta to Marohnićeva ulica, and westbound traffic sent over the northern surface carriageway through the Savska junction; chaos was expected.",
+   "type": "closure",
+   "severity": 2,
+   "timeOfDay": null,
+   "period": {
+    "from": "2025-11-18",
+    "to": null
+   },
+   "direction": "underpass both directions; eastbound closed Selska cesta – Marohnićeva ulica"
+  },
+  {
+   "hotspot": "slavonska-savska",
+   "date": "2025-11-18",
+   "outlet": "index.hr",
+   "url": "https://www.index.hr/vijesti/clanak/video-i-foto-ovako-izgleda-vjesnik-jutros-vec-sad-se-stvara-guzva/2731937.aspx",
+   "headline": "VIDEO I FOTO Ovako izgleda Vjesnik jutros, već sad se stvara gužva",
+   "summary": "The morning after the 17 Nov 2025 fire in the Vjesnik tower, with the Slavonska avenija underpass under Savska cesta closed, a jam was already forming around the building.",
+   "type": "closure",
+   "severity": 2,
+   "timeOfDay": "morning"
+  },
+  {
+   "hotspot": "slavonska-savska",
+   "date": "2025-11-19",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/tportal-uzivo-ispred-vjesnika-pogledajte-kakva-je-situacija-policija-usmjerava-promet-20251119",
+   "headline": "Tportal uživo ispred Vjesnika: Pogledajte kakva je situacija, policija usmjerava promet",
+   "summary": "Live from the burnt Vjesnik building: police secured the surrounding roads and directed traffic at the junction while Slavonska avenija stayed closed from Kazalište Trešnja towards KD Vatroslav Lisinski, with a detour via Savska cesta, Prisavlje and Marohnićeva.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null,
+   "direction": "eastbound (Kazalište Trešnja towards KD Vatroslav Lisinski)"
+  },
+  {
+   "hotspot": "slavonska-savska",
+   "date": "2025-11-19",
+   "outlet": "net.hr",
+   "url": "https://net.hr/danas/vijesti/andro-pavuna-o-prometu-u-zagrebu-nakon-pozara-u-vjesniku-33f49e3c-c490-11f0-8a26-9600040c8f8e",
+   "headline": "Andro Pavuna o prometu u Zagrebu nakon požara u Vjesniku - Slavonska avenija u srijedu 19. studenog bit će zatvorena za promet",
+   "summary": "Andro Pavuna commented on Zagreb traffic after the Vjesnik fire, and Slavonska avenija was to be closed to traffic on Wednesday 19 November.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "slavonska-savska",
+   "date": "2025-11-21",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/nova-regulacija-prometa-u-zagrebu-nakon-pozara-na-vjesnikovu-neboderu-20251121",
+   "headline": "Nova regulacija prometa u Zagrebu nakon požara na Vjesnikovu neboderu",
+   "summary": "A new temporary traffic regime was announced around the closed Slavonska avenija underpass at Savska cesta after the Vjesnik fire: a bypass east of the underpass, left turns removed and a longer east–west green phase.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "slavonska-savska",
+   "date": "2026-06-04",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/grizemo-do-nedjelje-navecer-vjesnik-se-rusi-gradani-ne-znaju-da-je-cesta-potpuno-zatvorena-20260604",
+   "headline": "'Grizemo do nedjelje navečer': Vjesnik se ruši, građani ne znaju da je cesta potpuno zatvorena",
+   "summary": "Slavonska avenija by the Vjesnik building was fully closed from Thursday 4 June until Sunday evening for demolition of the skyscraper; many drivers did not know the road was shut, and congestion built up in that part of the city.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2026-06-04",
+    "to": "2026-06-07"
+   }
+  },
+  {
+   "hotspot": "slavonska-savska",
+   "date": "2026-06-08",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/slavonska-avenija-ostaje-zatvorena-najmanje-do-kraja-tjedna-20260608",
+   "headline": "Slavonska avenija ostaje zatvorena najmanje do kraja tjedna",
+   "summary": "The excavator demolishing Vjesnik broke down, so the planned reopening was postponed and Slavonska avenija stayed closed at least until the end of the week.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2026-06-04",
+    "to": null
+   }
+  },
+  {
+   "hotspot": "tresnjevacki-trg",
+   "date": null,
+   "outlet": "zagreb.hr",
+   "url": "https://www.zagreb.hr/userdocsimages/arhiva/strategijsko_planiranje/Tresnjevacki_trg_promet.pdf",
+   "headline": "Trešnjevački trg – promet",
+   "summary": "A City of Zagreb planning paper says Trešnjevački trg carries over 60,000 vehicles a day plus tram lines on one level, giving unsustainable conditions at weekday peaks and Saturday mornings; its critical western point is the Ozaljska–Vukovarska–Trakošćanska–Krapinska junction.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "vukovarska",
+   "date": "2026-03-16",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ovo-je-najopasnija-ulica-u-zagrebu-policija-ovdje-ima-posla-skoro-svaki-dan-foto-20260316",
+   "headline": "Ovo je najopasnija ulica u Zagrebu: policija ovdje ima posla skoro svaki dan",
+   "summary": "Police data showed 143 traffic crashes on Ulica grada Vukovara in 2025, among the highest of any Zagreb street.",
+   "type": "other",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "vukovarska",
+   "date": "2026-09-07",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pocinje-skola-a-zagreb-je-raskopan-ovo-su-kriticne-tocke-i-alternativni-pravci-20260907",
+   "headline": "Počinje škola, a Zagreb je raskopan: Ovo su kritične točke i alternativni pravci",
+   "summary": "Listed as a critical point at the start of school: Ulica grada Vukovara, whose section from Ozaljska to Ulica Florijana Andrašeca stayed closed to all traffic until 15 September, with the most pronounced congestion expected there.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": false
+  },
+  {
+   "hotspot": "zagrebacka-avenija",
+   "date": null,
+   "outlet": "n1info.hr",
+   "url": "https://n1info.hr/vijesti/strucnjak-o-pet-velikih-prometnih-projekata-u-zagrebu-dobri-su-ali-ce-automobile-uciniti-jos-privlacnijima/",
+   "headline": "Stručnjak o pet velikih prometnih projekata u Zagrebu: \"Dobri su, ali će automobile učiniti još privlačnijima\"",
+   "summary": "Zagrebačka avenija is named among the roads the planned Jarunski most (west of Jarun) is meant to relieve.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "zagrebacka-avenija",
+   "date": "2026-03-16",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/ovo-je-najopasnija-ulica-u-zagrebu-policija-ovdje-ima-posla-skoro-svaki-dan-foto-20260316",
+   "headline": "Ovo je najopasnija ulica u Zagrebu: policija ovdje ima posla skoro svaki dan",
+   "summary": "Police data showed 106 traffic crashes on Zagrebačka avenija in 2025, among the highest of any Zagreb street.",
+   "type": "other",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "zagrebacka-cesta",
+   "date": "2026-09-07",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/skolarci-se-vratili-kolone-u-zagrebu-na-sve-strane-evo-gdje-je-najgore-20260907",
+   "headline": "Školarci se vratili, kolone u Zagrebu na sve strane, evo gdje je najgore",
+   "summary": "On the first morning of the school year, heavier congestion was recorded around 7 a.m. on Zagrebačka cesta heading towards Črnomerec.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema Črnomercu"
+  },
+  {
+   "hotspot": "zagrebacka-selska",
+   "date": "2026-06-20",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/grad-zgreb-ima-vaznu-obavijet-oko-radova-na-nadvoznjaku-na-selska-zagrebacka-20260620",
+   "headline": "Grad Zgreb ima važnu obavijet oko radova na nadvožnjaku na Selska - Zagrebačka",
+   "summary": "City update on the overpass works at the Selska cesta – Zagrebačka avenija interchange, under way since early May, where the whole overpass had recently been closed for bearing replacement.",
+   "type": "closure",
+   "severity": 1,
+   "timeOfDay": null
+  },
+  {
+   "hotspot": "zagrebacka-selska",
+   "date": "2026-09-07",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/skolarci-se-vratili-kolone-u-zagrebu-na-sve-strane-evo-gdje-je-najgore-20260907",
+   "headline": "Školarci se vratili, kolone u Zagrebu na sve strane, evo gdje je najgore",
+   "summary": "Traffic was heavier on Zagrebačka avenija towards the city centre, especially from Ulica Hrvatskog sokola to Savska cesta, made worse by works on the overpass at the Selska cesta junction.",
+   "type": "jam",
+   "severity": 1,
+   "timeOfDay": "morning",
+   "recurring": false,
+   "direction": "prema središtu grada"
+  },
+  {
+   "hotspot": "zagrebacka-selska",
+   "date": "2026-09-07",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/pocinje-skola-a-zagreb-je-raskopan-ovo-su-kriticne-tocke-i-alternativni-pravci-20260907",
+   "headline": "Počinje škola, a Zagreb je raskopan: Ovo su kritične točke i alternativni pravci",
+   "summary": "The Zagrebačka avenija overpass above Selska cesta, still under works, is described as one of the most heavily loaded traffic points in the western part of the city.",
+   "type": "jam",
+   "severity": 2,
+   "timeOfDay": null,
+   "recurring": true
+  },
+  {
+   "hotspot": "zvonimirova-subiceva",
+   "date": "2026-07-13",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/zagreb-ceka-mjesec-dana-prometnog-kaosa-zatvara-se-jedno-od-najvaznijih-raskrizja-20260713",
+   "headline": "Zagreb čeka mjesec dana prometnog kaosa: Zatvara se jedno od najvažnijih raskrižja",
+   "summary": "The Zvonimirova / Šubićeva junction, one of Zagreb's most important tram junctions, was to close for about a month from 14 July for complete reconstruction of its tram infrastructure, with a month of traffic chaos expected.",
+   "type": "closure",
+   "severity": 2,
+   "timeOfDay": null,
+   "period": {
+    "from": "2026-07-14",
+    "to": null
+   }
+  },
+  {
+   "hotspot": "zvonimirova-subiceva",
+   "date": "2026-07-14",
+   "outlet": "tportal.hr",
+   "url": "https://www.tportal.hr/vijesti/clanak/foto-pripremite-zivce-poceli-radovi-na-jednom-od-najprometnijih-raskrizja-u-zagrebu-foto-20260714",
+   "headline": "FOTO Pripremite živce: Počeli radovi na jednom od najprometnijih raskrižja u Zagrebu",
+   "summary": "Works began at the Zvonimirova / Šubićeva junction, obstructing north–south traffic through it.",
+   "type": "roadworks",
+   "severity": 1,
+   "timeOfDay": null,
+   "period": {
+    "from": "2026-07-14",
+    "to": null
+   },
+   "direction": "north–south"
+  }
+ ]
+}

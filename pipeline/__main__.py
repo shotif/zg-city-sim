@@ -6,7 +6,7 @@ import argparse
 import logging
 import time
 
-from . import buildings, demand, landcover, manifest, network, terrain, transit
+from . import buildings, demand, landcover, manifest, network, news, terrain, transit
 
 STEPS = {
     "terrain": terrain.build_terrain,
@@ -16,6 +16,7 @@ STEPS = {
     # These need the network (and buildings) built first.
     "demand": demand.build_demand,
     "transit": transit.build_transit,
+    "news": news.build_news,
 }
 
 log = logging.getLogger("pipeline")

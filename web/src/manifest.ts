@@ -55,7 +55,10 @@ export interface DemandLayer {
   edges: number;
   /** Car trips per weekday the residents make. */
   dailyCarTrips: number;
-  attribution?: Attribution;
+  /** Places where roads leave the map, and vehicles crossing there per day. */
+  gateways?: number;
+  gatewayDaily?: number;
+  attribution?: Attribution | Attribution[];
 }
 
 /** ZET trams and buses, a weekday's timetable placed on the network (pipeline/transit.py). */
@@ -65,6 +68,14 @@ export interface TransitLayer {
   trips: number;
   tramTrips: number;
   busTrips: number;
+  attribution?: Attribution;
+}
+
+/** Places the news reported traffic trouble at (pipeline/news.py). */
+export interface NewsLayerInfo {
+  index: string;
+  hotspots: number;
+  reports: number;
   attribution?: Attribution;
 }
 
@@ -83,6 +94,7 @@ export interface WorldManifest {
     buildings?: BuildingsLayer;
     demand?: DemandLayer;
     transit?: TransitLayer;
+    news?: NewsLayerInfo;
   };
 }
 

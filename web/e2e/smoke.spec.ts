@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
 
+// Live road closures come from the repository's live-data branch; tests use a fixed copy.
+test.beforeEach(async ({ page }) => {
+  await page.route('**/live-data/closures.json', (route) =>
+    route.fulfill({ path: 'e2e/fixtures/closures.json', contentType: 'application/json' }),
+  );
+});
+
 test('renders Zagreb terrain, roads and buildings in the map, isometric and 3D views', async ({
   page,
 }, testInfo) => {
@@ -101,6 +108,43 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
   const paused = await page.locator('.hud-sim-clock').textContent();
   await page.waitForTimeout(1500);
   await expect(page.locator('.hud-sim-clock')).toHaveText(paused!);
+
+  expect(errors).toEqual([]);
+});
+
+test('shows news hotspots and live road closures', async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.goto('./?sim=off');
+  await page.waitForFunction(
+    () => window.__ZG__?.newsPanel !== undefined && window.__ZG__?.closures !== undefined,
+    null,
+    { timeout: 150_000 },
+  );
+  // Every closure in the test feed lies on the network.
+  const closed = await page.evaluate(() => window.__ZG__!.closures!.map((c) => c.edges.length));
+  expect(closed.length).toBe(4);
+  expect(Math.min(...closed)).toBeGreaterThan(0);
+  await expect(page.locator('.closure-marker')).toHaveCount(4);
+
+  // News markers appear with N; Jadranski most has the most reports.
+  await page.keyboard.press('n');
+  await page.evaluate(() => window.__ZG__?.lookAt(-1964, 3285, 4000));
+  const marker = page.locator('.news-marker[aria-label^="Jadranski most:"]');
+  await expect(marker).toBeVisible();
+  await marker.click();
+  await expect(page.locator('.news-panel')).toBeVisible();
+  await expect(page.locator('.news-title')).toHaveText('Jadranski most');
+  expect(await page.locator('.news-list li').count()).toBeGreaterThan(5);
+  await expect(page.locator('.news-traffic')).toHaveText(/not running/);
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: testInfo.outputPath('news.png') });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.news-panel')).toBeHidden();
 
   expect(errors).toEqual([]);
 });

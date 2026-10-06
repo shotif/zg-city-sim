@@ -8,7 +8,7 @@
 
 use std::sync::Mutex;
 
-use crate::demand::Demand;
+use crate::demand::{Demand, Gateway};
 use crate::engine::{DT, Engine, RENDER_STRIDE, Trip, stat};
 use crate::network::{Network, NetworkData};
 use crate::transit::{Transit, TransitData};
@@ -19,6 +19,10 @@ struct State {
     demand_edges: Vec<u32>,
     demand_home: Vec<f32>,
     demand_work: Vec<f32>,
+    gateway_entry: Vec<u32>,
+    gateway_exit: Vec<u32>,
+    gateway_daily: Vec<f32>,
+    gateway_through: Vec<f32>,
     transit: TransitData,
     engine: Option<Engine>,
     stats: [f64; stat::LEN],
@@ -37,13 +41,18 @@ fn alloc<T: Copy + Default>(v: &mut Vec<T>, count: usize) -> *mut u8 {
     v.as_mut_ptr() as *mut u8
 }
 
-/// Allocate one of the demand (per-edge home and work weights) or timetable arrays.
+/// Allocate one of the demand (per-edge home and work weights, gateways) or timetable
+/// arrays.
 fn alloc_extra_array(s: &mut State, name: &str, count: usize, elem_size: usize) -> Option<*mut u8> {
     let t = &mut s.transit;
     let (ptr, size) = match name {
         "demandEdge" => (alloc(&mut s.demand_edges, count), 4),
         "demandHome" => (alloc(&mut s.demand_home, count), 4),
         "demandWork" => (alloc(&mut s.demand_work, count), 4),
+        "gatewayEntry" => (alloc(&mut s.gateway_entry, count), 4),
+        "gatewayExit" => (alloc(&mut s.gateway_exit, count), 4),
+        "gatewayDaily" => (alloc(&mut s.gateway_daily, count), 4),
+        "gatewayThrough" => (alloc(&mut s.gateway_through, count), 4),
         "transitTripType" => (alloc(&mut t.trip_type, count), 1),
         "transitTripRoute" => (alloc(&mut t.trip_route, count), 2),
         "transitTripStops" => (alloc(&mut t.trip_stops, count), 4),
@@ -97,7 +106,8 @@ pub unsafe extern "C" fn zg_array(
 
 /// Build the network and a fresh engine from the loaded arrays. Returns 0 on success,
 /// -1 if the arrays are inconsistent. Demand comes from the `demand*` arrays if loaded,
-/// else from the network (placeholder), with `daily_trips` trips per day.
+/// else from the network (placeholder), with `daily_trips` trips per day within the map,
+/// plus traffic across the map's edge from the `gateway*` arrays if loaded.
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
     with_state(|s| {
@@ -106,7 +116,7 @@ pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
             Ok(net) => net,
             Err(_) => return -1,
         };
-        let demand = if !s.demand_edges.is_empty()
+        let mut demand = if !s.demand_edges.is_empty()
             && s.demand_home.len() == s.demand_edges.len()
             && s.demand_work.len() == s.demand_edges.len()
         {
@@ -115,6 +125,22 @@ pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
         } else {
             Demand::from_network(&net, daily_trips)
         };
+        let n = s.gateway_entry.len();
+        if n > 0
+            && s.gateway_exit.len() == n
+            && s.gateway_daily.len() == n
+            && s.gateway_through.len() == n
+        {
+            let gateways: Vec<Gateway> = (0..n)
+                .map(|i| Gateway {
+                    entry: s.gateway_entry[i],
+                    exit: s.gateway_exit[i],
+                    daily: s.gateway_daily[i],
+                    through: s.gateway_through[i],
+                })
+                .collect();
+            demand.set_gateways(&net, &gateways);
+        }
         let transit = std::mem::take(&mut s.transit);
         let has_transit = transit.trips() > 0 && transit.consistent(net.edge_count());
         let mut engine = Engine::new(net, seed as u64);
@@ -157,7 +183,26 @@ pub extern "C" fn zg_add_trip(depart: f64, from: u32, to: u32, vtype: u32) {
                 from,
                 to,
                 vtype: vtype.min(3) as u8,
+                flags: 0,
             })
+        }
+    })
+}
+
+/// Close roads (live closures): `n` edge ids at `edges`, replacing earlier closures.
+///
+/// # Safety
+/// `edges` must point to `n` u32 values (or `n` be 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_set_closed(edges: *const u32, n: usize) {
+    let list: &[u32] = if n == 0 || edges.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(edges, n) }
+    };
+    with_state(|s| {
+        if let Some(e) = s.engine.as_mut() {
+            e.set_closed(list)
         }
     })
 }

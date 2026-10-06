@@ -38,6 +38,8 @@ const MIN_DWELL: [f64; 4] = [0.0, 0.0, 15.0, 20.0];
 const MAX_TRANSIT_DELAY: f64 = 300.0;
 /// Trips that cannot be inserted within this time are dropped.
 const MAX_INSERT_DELAY: f64 = 120.0;
+/// Trips from beyond the map wait longer: their queue reaches past the map's edge.
+const MAX_ENTRY_DELAY: f64 = 600.0;
 /// Safety margin (s) a yielding vehicle wants before a priority vehicle arrives.
 const YIELD_MARGIN: f32 = 1.5;
 /// After waiting this long at a junction (s), a driver pushes in where oncoming drivers can
@@ -49,7 +51,7 @@ const BLOCK_BOX_WAIT: f32 = 60.0;
 /// Actuated signals keep a green phase while a vehicle arrives within this time (s).
 const MAX_GAP: f32 = 3.0;
 /// Longest an actuated green phase runs past its planned duration (s).
-const MAX_EXTENSION: f32 = 10.0;
+const MAX_EXTENSION: f32 = 20.0;
 /// MOBIL lane changes: weight of the new follower's disadvantage and the gain needed.
 const POLITENESS: f32 = 0.3;
 const CHANGE_THRESHOLD: f32 = 0.3;
@@ -57,6 +59,12 @@ const CHANGE_THRESHOLD: f32 = 0.3;
 const LATERAL_SPEED: f32 = 1.1;
 /// Seconds between statistics updates of edge travel times and speeds.
 const EDGE_STATS_INTERVAL: u32 = 120;
+/// Edges at most this long (m) are too short to change lanes on: lane choice looks past them.
+const LANE_CHANGE_ROOM: f32 = 150.0;
+/// How many short edges ahead lane choice looks through.
+const SHORT_EDGE_LOOKAHEAD: u32 = 4;
+/// Routing cost of a closed road (s): routes avoid it wherever there is another way.
+const CLOSED_TIME: f32 = 3_600.0;
 
 /// Flags in the render buffer's info word (bits 0-7: vehicle type, 16-31: colour seed).
 pub mod info {
@@ -84,7 +92,17 @@ pub mod stat {
     pub const SLOTS: usize = 13;
     pub const TRAMS: usize = 14;
     pub const BUSES: usize = 15;
-    pub const LEN: usize = 16;
+    /// Vehicles coming from or going to places beyond the map.
+    pub const OUTSIDE: usize = 16;
+    pub const LEN: usize = 17;
+}
+
+/// Trip flags.
+pub mod trip {
+    /// Comes from beyond the map: drives in at the start of its first edge, at speed.
+    pub const ENTER: u8 = 1;
+    /// Goes beyond the map: drives off the end of its last edge.
+    pub const EXIT: u8 = 2;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -94,6 +112,8 @@ pub struct Trip {
     pub from: u32,
     pub to: u32,
     pub vtype: u8,
+    /// `trip::*` flags.
+    pub flags: u8,
 }
 
 /// Min-heap entry by departure time.
@@ -167,6 +187,8 @@ pub struct Vehicle {
     pub blink: i8,
     pub depart: f64,
     pub distance: f32,
+    /// `trip::*` flags of the trip.
+    pub trip_flags: u8,
     /// Timetabled trip of a bus or tram.
     pub transit: Option<Box<TransitRun>>,
 }
@@ -199,6 +221,7 @@ impl Vehicle {
             blink: 0,
             depart: 0.0,
             distance: 0.0,
+            trip_flags: 0,
             transit: None,
         }
     }
@@ -222,9 +245,10 @@ pub struct Stats {
     pub insert_failed: u64,
     pub mean_speed: f32,
     pub stopped: u32,
-    trip_time_sum: f64,
-    trip_km_sum: f64,
-    trip_count: u64,
+    /// Sums over finished trips (time in s, distance in km) and their number.
+    pub trip_time_sum: f64,
+    pub trip_km_sum: f64,
+    pub trip_count: u64,
     pub mean_trip_time: f32,
     pub mean_trip_km: f32,
     /// Routes computed and edges the searches settled (routing cost).
@@ -236,6 +260,8 @@ pub struct Stats {
     pub teleport_log: Vec<String>,
     pub trams: u32,
     pub buses: u32,
+    /// Running vehicles coming from or going beyond the map.
+    pub outside: u32,
 }
 
 enum Finish {
@@ -326,6 +352,11 @@ pub struct Engine {
     edge_speed_n: Vec<u16>,
     /// Mean speed / speed limit per edge over the last interval (0-254; 255 = no vehicles).
     pub edge_speed_ratio: Vec<u8>,
+    /// Vehicles that have driven onto each edge (from a junction, or from beyond the map),
+    /// for comparison with traffic counts.
+    pub edge_entered: Vec<u32>,
+    /// Closed roads (sorted): routes avoid them.
+    closed: Vec<u32>,
     router: Router,
     pending: BinaryHeap<Pending>,
     waiting: VecDeque<Waiting>,
@@ -415,6 +446,8 @@ impl Engine {
             edge_speed_sum: vec![0.0; n_edges],
             edge_speed_n: vec![0; n_edges],
             edge_speed_ratio: vec![255; n_edges],
+            edge_entered: vec![0; n_edges],
+            closed: Vec::new(),
             lane_vehs: vec![Vec::new(); n_lanes],
             lane_reserved: vec![0.0; n_lanes],
             lane_active: vec![false; n_lanes],
@@ -1140,8 +1173,8 @@ impl Engine {
     }
 
     /// How well `lane` (on route edge `i`) suits the route: 0 it cannot reach the next edge,
-    /// 1 it can, 2 it can and continues on a lane that reaches the edge after (when the next
-    /// edge is too short to change lanes on). Lanes that do not allow the class score -1.
+    /// 1 it can, 2 it can and carries on along the route past the short edges ahead (too
+    /// short to change lanes on). Lanes that do not allow the class score -1.
     fn lane_score(&self, lane: u32, route: &[u32], i: usize, vclass: u16) -> i32 {
         let d = &self.net.d;
         if d.lane_allow[lane as usize] & vclass == 0 {
@@ -1156,21 +1189,32 @@ impl Engine {
             if self.net.link_allow[l as usize] & vclass == 0 || d.lane_edge[to as usize] != next {
                 continue;
             }
-            let s = match route.get(i + 2) {
-                None => 2,
-                Some(&after) => {
-                    if self.net.edge_length[next as usize] > 150.0
-                        || self.lane_reaches(to, after, vclass)
-                    {
-                        2
-                    } else {
-                        1
-                    }
-                }
+            let s = if self.lane_continues(to, route, i + 1, vclass, SHORT_EDGE_LOOKAHEAD) {
+                2
+            } else {
+                1
             };
             best = best.max(s);
         }
         best
+    }
+
+    /// Whether a vehicle on `lane` (on route edge `i`) can follow the route past the short
+    /// edges ahead without changing lanes, looking at most `depth` edges on.
+    fn lane_continues(&self, lane: u32, route: &[u32], i: usize, vclass: u16, depth: u32) -> bool {
+        let d = &self.net.d;
+        let Some(&next) = route.get(i + 1) else {
+            return true;
+        };
+        if depth == 0 || self.net.edge_length[route[i] as usize] > LANE_CHANGE_ROOM {
+            return true;
+        }
+        self.net.lane_links(lane).any(|l| {
+            let to = d.link_to[l as usize];
+            self.net.link_allow[l as usize] & vclass != 0
+                && d.lane_edge[to as usize] == next
+                && self.lane_continues(to, route, i + 1, vclass, depth - 1)
+        })
     }
 
     /// Link to take from `lane` (on route edge `i`) toward the next route edge.
@@ -1190,7 +1234,11 @@ impl Engine {
                 continue;
             }
             let mut score = -(self.net.lane_index[to as usize] as i32 - from_index).abs();
-            if after.is_some_and(|after| self.lane_reaches(to, after, vclass)) {
+            // Prefer lanes that lead on to the edge after, past any short edges in between.
+            if after.is_some_and(|after| {
+                self.lane_reaches(to, after, vclass)
+                    && self.lane_continues(to, route, i + 1, vclass, SHORT_EDGE_LOOKAHEAD)
+            }) {
                 score += 100;
             }
             if score > best_score {
@@ -1544,6 +1592,7 @@ impl Engine {
             }
             if !self.net.lane_internal[next as usize] {
                 // Through the junction, onto the next road.
+                self.edge_entered[self.net.d.lane_edge[next as usize] as usize] += 1;
                 let veh = &self.vehs[v as usize];
                 let p = veh.params();
                 let reserved = &mut self.lane_reserved[next as usize];
@@ -1683,9 +1732,18 @@ impl Engine {
             let step: i32 = if target_k > i { 1 } else { -1 };
             let changes = (target_k as i32 - i as i32).unsigned_abs() as f32;
             let urgent = dist < 30.0 + 40.0 * changes || dist < veh.speed * 4.0 * changes;
-            let t = (i as i32 + step) as u32;
+            let mut t = (i as i32 + step) as u32;
             if scores[t as usize] < 0 {
-                return None;
+                // A lane closed to us (tram tracks, a bus lane) lies in between: cross it
+                // when it is clear.
+                let beyond = i as i32 + 2 * step;
+                if beyond < 0 || beyond >= n as i32 || scores[beyond as usize] < 0 {
+                    return None;
+                }
+                if self.change_safe(v, start + t, urgent).is_err() {
+                    return None;
+                }
+                t = beyond as u32;
             }
             let target = start + t;
             return match self.change_safe(v, target, urgent) {
@@ -1904,7 +1962,12 @@ impl Engine {
             if self.try_insert(&w.trip, &mut w.route) {
                 continue;
             }
-            if self.time - w.trip.depart > MAX_INSERT_DELAY {
+            let max_delay = if w.trip.flags & trip::ENTER != 0 {
+                MAX_ENTRY_DELAY
+            } else {
+                MAX_INSERT_DELAY
+            };
+            if self.time - w.trip.depart > max_delay {
                 self.stats.insert_failed += 1;
             } else {
                 self.waiting.push_back(w);
@@ -1959,20 +2022,37 @@ impl Engine {
             return false;
         }
         let len = self.net.d.lane_length[lane as usize];
-        let frac = if route.len() == 1 {
-            self.rng.range(0.05, 0.5)
+        let enter = trip.flags & trip::ENTER != 0;
+        let pos = if enter {
+            p.length.min(len)
         } else {
-            self.rng.range(0.1, 0.9)
+            let frac = if route.len() == 1 {
+                self.rng.range(0.05, 0.5)
+            } else {
+                self.rng.range(0.1, 0.9)
+            };
+            (frac * len).max(p.length.min(len)).min(len)
         };
-        let pos = (frac * len).max(p.length.min(len)).min(len);
+        let speed_factor = (1.04 + 0.1 * self.rng.normal()).clamp(0.8, 1.3);
+        // Vehicles from beyond the map arrive at their driving speed, or at a speed from
+        // which they can still stop behind the vehicle ahead (Krauss safe speed).
+        let mut speed = if enter {
+            (self.net.d.lane_speed[lane as usize] * speed_factor).min(p.max_speed)
+        } else {
+            0.0
+        };
 
         let list = &self.lane_vehs[lane as usize];
         let idx = list.partition_point(|&u| self.vehs[u as usize].pos < pos);
         if let Some(&l) = list.get(idx) {
             let lv = &self.vehs[l as usize];
-            if lv.pos - lv.params().length - pos < p.min_gap {
+            let gap = lv.pos - lv.params().length - pos;
+            if gap < p.min_gap {
                 return false;
             }
+            let bt = p.decel * p.tau;
+            let safe = (bt * bt + lv.speed * lv.speed + 2.0 * p.decel * (gap - p.min_gap)).sqrt();
+            speed = speed.min((safe - bt).max(0.0));
         }
         if idx > 0 {
             let fv = &self.vehs[list[idx - 1] as usize];
@@ -1985,12 +2065,13 @@ impl Engine {
 
         let last = *route.last().unwrap();
         let last_len = self.net.edge_length[last as usize];
-        let arrival_pos = if route.len() == 1 {
+        let arrival_pos = if trip.flags & trip::EXIT != 0 {
+            (last_len - 0.5).max(0.0)
+        } else if route.len() == 1 {
             (pos + (len - pos) * self.rng.range(0.3, 0.9)).min(len - 0.1)
         } else {
             self.rng.range(0.15, 0.95) * last_len
         };
-        let speed_factor = (1.04 + 0.1 * self.rng.normal()).clamp(0.8, 1.3);
         let look = (self.rng.next_u32() & 0xffff) as u16;
         let next_link = self.choose_link(lane, route, 0, p.vclass);
 
@@ -2000,7 +2081,9 @@ impl Engine {
         veh.look = look;
         veh.lane = lane;
         veh.pos = pos;
+        veh.speed = speed;
         veh.speed_factor = speed_factor;
+        veh.trip_flags = trip.flags;
         veh.route.clear();
         veh.route.append(route);
         veh.next_link = next_link;
@@ -2011,6 +2094,9 @@ impl Engine {
         if !self.lane_active[lane as usize] {
             self.lane_active[lane as usize] = true;
             self.active_lanes.push(lane);
+        }
+        if enter {
+            self.edge_entered[edge as usize] += 1;
         }
         self.stats.departed += 1;
         true
@@ -2299,7 +2385,7 @@ impl Engine {
         let mut sum = 0.0f64;
         let mut running = 0u32;
         let mut stopped = 0u32;
-        let (mut trams, mut buses) = (0u32, 0u32);
+        let (mut trams, mut buses, mut outside) = (0u32, 0u32, 0u32);
         let mut stuck = std::mem::take(&mut self.scratch);
         stuck.clear();
         let d = &self.net.d;
@@ -2314,6 +2400,9 @@ impl Engine {
                     vtype::TRAM => trams += 1,
                     vtype::BUS => buses += 1,
                     _ => {}
+                }
+                if veh.trip_flags != 0 {
+                    outside += 1;
                 }
                 if veh.speed < 0.1 {
                     stopped += 1;
@@ -2368,6 +2457,7 @@ impl Engine {
         s.stopped = stopped;
         s.trams = trams;
         s.buses = buses;
+        s.outside = outside;
         s.mean_speed = if running > 0 {
             (sum / running as f64) as f32
         } else {
@@ -2400,6 +2490,48 @@ impl Engine {
             self.edge_speed_sum[e] = 0.0;
             self.edge_speed_n[e] = 0;
         }
+        for &e in &self.closed {
+            self.travel_time[e as usize] = CLOSED_TIME;
+        }
+    }
+
+    /// Close these roads (replacing earlier closures): new routes avoid them where they can,
+    /// and vehicles whose way on uses one look for another. Buses and trams keep their routes.
+    pub fn set_closed(&mut self, edges: &[u32]) {
+        for &e in &self.closed {
+            self.travel_time[e as usize] = self.free_time[e as usize];
+        }
+        let n = self.net.edge_count() as u32;
+        let mut closed: Vec<u32> = edges
+            .iter()
+            .copied()
+            .filter(|&e| e < n && !self.net.is_internal_edge(e))
+            .collect();
+        closed.sort_unstable();
+        closed.dedup();
+        for &e in &closed {
+            self.travel_time[e as usize] = CLOSED_TIME;
+        }
+        self.closed = closed;
+        if self.closed.is_empty() {
+            return;
+        }
+        let live: Vec<u32> = self.live_vehicles().collect();
+        for v in live {
+            let veh = &self.vehs[v as usize];
+            if veh.transit.is_some() || self.net.lane_internal[veh.lane as usize] {
+                continue;
+            }
+            let ahead = &veh.route[(veh.route_idx as usize + 1).min(veh.route.len())..];
+            if ahead.iter().any(|e| self.closed.binary_search(e).is_ok()) {
+                self.reroute_from_lane(v);
+            }
+        }
+    }
+
+    /// Roads closed with `set_closed`.
+    pub fn closed(&self) -> &[u32] {
+        &self.closed
     }
 
     pub fn stats_array(&self) -> [f64; stat::LEN] {
@@ -2421,6 +2553,7 @@ impl Engine {
         out[stat::SLOTS] = self.vehs.len() as f64;
         out[stat::TRAMS] = s.trams as f64;
         out[stat::BUSES] = s.buses as f64;
+        out[stat::OUTSIDE] = s.outside as f64;
         out
     }
 

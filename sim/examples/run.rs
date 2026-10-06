@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use zg_sim::demand::Demand;
+use zg_sim::demand::{Demand, Gateway};
 use zg_sim::engine::{DT, Engine, Holdup};
 use zg_sim::network::{Network, NetworkData};
 use zg_sim::transit::{Transit, TransitData};
@@ -126,28 +126,83 @@ pub fn load_transit(dir: &str) -> Option<TransitData> {
 }
 
 /// Building-based demand from `dir/demand.*`: edges, residents and jobs per edge.
-fn load_demand(dir: &str) -> Option<(Vec<u32>, Vec<f32>, Vec<f32>)> {
+struct DemandData {
+    edges: Vec<u32>,
+    home: Vec<f32>,
+    work: Vec<f32>,
+    gateways: Vec<Gateway>,
+}
+
+fn load_demand(dir: &str) -> Option<DemandData> {
     let (arrays, blob) = read_packed(dir, "demand")?;
     let words = |name: &str| -> Vec<[u8; 4]> {
-        let (_, offset, length) = &arrays[name];
+        let Some((_, offset, length)) = arrays.get(name) else {
+            return Vec::new();
+        };
         blob[*offset..*offset + length * 4]
             .as_chunks::<4>()
             .0
             .to_vec()
     };
-    let edges = words("demandEdge")
-        .into_iter()
-        .map(u32::from_le_bytes)
+    let u32s =
+        |name: &str| -> Vec<u32> { words(name).into_iter().map(u32::from_le_bytes).collect() };
+    let f32s =
+        |name: &str| -> Vec<f32> { words(name).into_iter().map(f32::from_le_bytes).collect() };
+    let (entry, exit) = (u32s("gatewayEntry"), u32s("gatewayExit"));
+    let (daily, through) = (f32s("gatewayDaily"), f32s("gatewayThrough"));
+    let gateways = (0..entry
+        .len()
+        .min(exit.len())
+        .min(daily.len())
+        .min(through.len()))
+        .map(|i| Gateway {
+            entry: entry[i],
+            exit: exit[i],
+            daily: daily[i],
+            through: through[i],
+        })
         .collect();
-    let home = words("demandHome")
-        .into_iter()
-        .map(f32::from_le_bytes)
-        .collect();
-    let work = words("demandWork")
-        .into_iter()
-        .map(f32::from_le_bytes)
-        .collect();
-    Some((edges, home, work))
+    Some(DemandData {
+        edges: u32s("demandEdge"),
+        home: f32s("demandHome"),
+        work: f32s("demandWork"),
+        gateways,
+    })
+}
+
+/// Demand from `demand_dir` (with traffic across the map's edge unless NO_GATEWAYS is
+/// set), or a placeholder from the network. `trips`: car trips a day within the map (0 =
+/// from the residents).
+pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
+    match load_demand(demand_dir) {
+        Some(d) => {
+            let residents: f32 = d.home.iter().sum();
+            // Car trips per resident: 1.84 trips per person, 46 % by car, 1.3 per car.
+            let daily = if trips > 0.0 {
+                trips
+            } else {
+                residents as f64 * 1.84 * 0.46 / 1.3
+            };
+            println!(
+                "demand: {} edges, {residents:.0} residents, {daily:.0} car trips a day",
+                d.edges.len()
+            );
+            let mut demand = Demand::new(net, d.edges, &d.home, &d.work, daily);
+            if std::env::var("NO_GATEWAYS").is_err() {
+                demand.set_gateways(net, &d.gateways);
+            }
+            let (inbound, outbound, through) = demand.gateway_trips();
+            println!(
+                "beyond the map: {} gateways, {inbound:.0} trips in, {outbound:.0} out, {through:.0} through a day",
+                d.gateways.len()
+            );
+            demand
+        }
+        None => {
+            println!("demand: placeholder from the network (no {demand_dir}/demand.bin)");
+            Demand::from_network(net, if trips > 0.0 { trips } else { 500_000.0 })
+        }
+    }
 }
 
 fn main() {
@@ -169,27 +224,7 @@ fn main() {
         net.d.link_from.len(),
         t0.elapsed().as_secs_f64() * 1e3
     );
-    let demand_dir = format!("{dir}/../demand");
-    let demand = match load_demand(&demand_dir) {
-        Some((edges, home, work)) => {
-            let residents: f32 = home.iter().sum();
-            // Car trips per resident: 1.84 trips per person, 46 % by car, 1.3 per car.
-            let daily = if trips > 0.0 {
-                trips
-            } else {
-                residents as f64 * 1.84 * 0.46 / 1.3
-            };
-            println!(
-                "demand: {} edges, {residents:.0} residents, {daily:.0} car trips a day",
-                edges.len()
-            );
-            Demand::new(&net, edges, &home, &work, daily)
-        }
-        None => {
-            println!("demand: placeholder from the network (no {demand_dir}/demand.bin)");
-            Demand::from_network(&net, if trips > 0.0 { trips } else { 500_000.0 })
-        }
-    };
+    let demand = demand_for(&net, &format!("{dir}/../demand"), trips);
     let t0 = Instant::now();
     let mut engine = Engine::new(net, 1);
     engine.debug = std::env::var("DEBUG_TELEPORT").is_ok();
@@ -220,14 +255,17 @@ fn main() {
             let s = &engine.stats;
             let h = engine.time / 3600.0;
             println!(
-                "{:02}:{:02} running {:6} departed {:7} arrived {:7} removed {:5} no-route {:4} mean {:5.1} km/h stopped {:5} trip {:4.1} min {:4.1} km | {:.2} ms/step",
+                "{:02}:{:02} running {:6} (outside {:5}) departed {:7} arrived {:7} removed {:5} no-route {:4} late {:5} backlog {:5} mean {:5.1} km/h stopped {:5} trip {:4.1} min {:4.1} km | {:.2} ms/step",
                 h as u32 % 24,
                 (engine.time / 60.0) as u32 % 60,
                 s.running,
+                s.outside,
                 s.departed,
                 s.arrived,
                 s.teleported,
                 s.no_route,
+                s.insert_failed,
+                engine.stats_array()[zg_sim::engine::stat::BACKLOG],
                 s.mean_speed * 3.6,
                 s.stopped,
                 s.mean_trip_time / 60.0,
@@ -295,6 +333,26 @@ fn main() {
         s.route_settled as f64 / s.routes.max(1) as f64
     );
     println!("removed vehicles were: {:?}", s.teleport_reasons);
+    // Where vehicles stand in queues: vehicles stopped over 30 s per edge (DUMP_QUEUES=file).
+    if let Ok(path) = std::env::var("DUMP_QUEUES") {
+        let mut stopped = vec![0u32; engine.net.edge_count()];
+        let mut waiting = vec![0f32; engine.net.edge_count()];
+        for v in engine.live_vehicles() {
+            let veh = &engine.vehs[v as usize];
+            if veh.wait > 30.0 {
+                let e = engine.net.d.lane_edge[veh.lane as usize] as usize;
+                stopped[e] += 1;
+                waiting[e] += veh.wait;
+            }
+        }
+        let mut out = String::from("edge,stopped,mean_wait\n");
+        for (e, &n) in stopped.iter().enumerate() {
+            if n > 0 {
+                out += &format!("{e},{n},{:.0}\n", waiting[e] / n as f32);
+            }
+        }
+        std::fs::write(&path, out).expect("write queue dump");
+    }
     if let Some(tr) = &engine.transit {
         println!(
             "transit: {} runs started, {} could not be routed, {} stops skipped, {} waiting; now {} trams, {} buses",

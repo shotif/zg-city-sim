@@ -74,7 +74,8 @@ NETCONVERT_OPTIONS = [
     # Bridges and overpasses rise 6 m per OSM layer, with ramps graded smoothly.
     "--osm.layer-elevation", "6",
     "--osm.all-attributes", "true",
-    "--osm.extra-attributes", "bridge,tunnel,layer",
+    # Road numbers (A1, D1, Ž1035): where roads leave the map and where traffic is counted.
+    "--osm.extra-attributes", "bridge,tunnel,layer,ref",
     # Tram tracks stay edges of their own: joining them into street lanes
     # (--edges.join-tram-dist) loses tram connections wherever the tracks leave the street.
     # Repair track topology: some OSM tracks are mapped against their direction, leaving

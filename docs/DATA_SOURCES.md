@@ -13,9 +13,10 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | ZET GTFS static | Tram and bus routes, stops, timetables | Otvorena dozvola | ✅ in use: weekday timetable on the network |
 | ZET GTFS-RT | Live tram and bus positions | Otvorena dozvola, "test purpose only" | M6 (needs a proxy) |
 | DZS Census 2021 | Population by district and settlement, commuters | attribution requested | ✅ population of each of the 17 districts in use for demand |
-| Hrvatske ceste counts 2025 | Calibration (AADT at counting stations) | page says Otvorena dozvola, PDF says all rights reserved | M3 |
+| Hrvatske ceste counts 2025 | Calibration (AADT at counting stations) | page says Otvorena dozvola, PDF says all rights reserved | ✅ 11 stations around Zagreb (`pipeline/counts.py`): traffic across the map's edge and [validation](VALIDATION.md) |
 | Transport Master Plan (2020) | Calibration targets: trip rates, modal split | reports, no licence | M3 |
-| City road closures feed | Live closures | Otvorena dozvola | M3/M6 (needs a proxy or scheduled job) |
+| City road closures feed | Live closures | Otvorena dozvola | ✅ copied every 15 min to the `live-data` branch (`.github/workflows/live-data.yml`); drawn in the app, routed around |
+| Croatian online news | Congestion hotspots | headlines and links only | ✅ 107 reports at 39 places (`pipeline/data/news.json`) |
 | DHMZ weather XML | Live weather | Otvorena dozvola, DHMZ citation mandatory | M6 |
 
 ## Licences and attribution

@@ -1,8 +1,10 @@
 //! Engine tests on small hand-built networks.
 
-use crate::engine::{DT, Engine, Trip, stat, travel_time};
+use crate::demand::{Demand, Gateway};
+use crate::engine::{DT, Engine, Trip, stat, travel_time, trip};
 use crate::idm;
 use crate::network::{LINK_STATE_CHARS, NONE, Network, NetworkData, dir, edge_flag};
+use crate::rng::Rng;
 use crate::router::Router;
 use crate::vtype::{self, TYPES};
 
@@ -266,6 +268,7 @@ fn single_car_drives_and_arrives() {
         from: e0,
         to: e1,
         vtype: vtype::CAR,
+        flags: 0,
     });
     let mut top = 0.0f32;
     run_until(&mut engine, 150.0, |e| {
@@ -290,6 +293,7 @@ fn queue_of_cars_never_collides_and_all_arrive() {
             from: e0,
             to: e1,
             vtype: vtype::CAR,
+            flags: 0,
         });
     }
     run_until(&mut engine, 600.0, assert_no_overlaps);
@@ -320,6 +324,7 @@ fn red_light_holds_traffic_until_green() {
             from: e0,
             to: e1,
             vtype: vtype::CAR,
+            flags: 0,
         });
     }
     run_until(&mut engine, 199.0, |e| {
@@ -534,6 +539,7 @@ fn same_seed_gives_the_same_run() {
                 from: e0,
                 to: e1,
                 vtype: (k % 2) as u8,
+                flags: 0,
             });
         }
         run_until(&mut engine, 90.0, |_| {});
@@ -644,4 +650,161 @@ fn trips_under_way_start_from_their_current_stop() {
         .find(|v| v.alive())
         .expect("the tram is on the road");
     assert_eq!((tram.vtype, tram.lane), (vtype::TRAM, lane1));
+}
+
+#[test]
+fn traffic_from_beyond_the_map_drives_in_at_speed_and_off_the_far_end() {
+    let (b, e0, e1) = straight_road(500.0, 1);
+    let mut engine = Engine::new(b.build(), 5);
+    engine.add_trip(Trip {
+        depart: 0.0,
+        from: e0,
+        to: e1,
+        vtype: vtype::CAR,
+        flags: trip::ENTER | trip::EXIT,
+    });
+    engine.step();
+    let v = engine.vehs.iter().find(|v| v.alive()).expect("inserted");
+    assert!(
+        v.pos < 10.0,
+        "enters at the start of the road, not at {}",
+        v.pos
+    );
+    assert!(v.speed > 10.0, "enters at speed, not {}", v.speed);
+    assert_eq!(engine.edge_entered[e0 as usize], 1);
+    let last_lane = engine.net.edge_lanes(e1).start;
+    let mut furthest = 0.0f32;
+    run_until(&mut engine, 120.0, |e| {
+        for v in e.vehs.iter().filter(|v| v.alive() && v.lane == last_lane) {
+            furthest = furthest.max(v.pos);
+        }
+    });
+    assert_eq!(engine.stats.arrived, 1);
+    assert_eq!(engine.edge_entered[e1 as usize], 1);
+    let end = engine.net.d.lane_length[last_lane as usize];
+    assert!(furthest > end - 15.0, "left at {furthest} of {end} m");
+}
+
+#[test]
+fn gateway_traffic_matches_daily_counts_and_commuter_peaks() {
+    // Two two-way roads leaving the map 30 km apart.
+    let mut b = Builder::default();
+    let j = [
+        b.junction(0.0, 0.0),
+        b.junction(15_000.0, 0.0),
+        b.junction(30_000.0, 0.0),
+    ];
+    let (west_in, west_out) = (b.road(j[0], j[1], 1, 25.0), b.road(j[1], j[0], 1, 25.0));
+    let (east_in, east_out) = (b.road(j[2], j[1], 1, 25.0), b.road(j[1], j[2], 1, 25.0));
+    let net = b.build();
+    let mut demand = Demand::new(&net, vec![west_out, east_out], &[1.0; 2], &[1.0; 2], 0.0);
+    demand.set_gateways(
+        &net,
+        &[
+            Gateway {
+                entry: west_in,
+                exit: west_out,
+                daily: 10_000.0,
+                through: 0.2,
+            },
+            Gateway {
+                entry: east_in,
+                exit: east_out,
+                daily: 6_000.0,
+                through: 0.2,
+            },
+            // Unknown edges: ignored.
+            Gateway {
+                entry: 99,
+                exit: NONE,
+                daily: 5_000.0,
+                through: 0.0,
+            },
+        ],
+    );
+    let (inbound, outbound, through) = demand.gateway_trips();
+    assert!((inbound - 6_400.0).abs() < 0.1 && (outbound - 6_400.0).abs() < 0.1);
+    assert!((through - 1_600.0).abs() < 0.1);
+
+    let mut rng = Rng::new(3);
+    // Trips into, out of and through the map: all day, 6-10 h, 14-19 h.
+    let mut day = [0u32; 3];
+    let mut morning = [0u32; 3];
+    let mut afternoon = [0u32; 3];
+    let mut t = 0.0;
+    while t < 86_400.0 {
+        let hour = t / 3600.0;
+        demand.generate(t, 0.5, 1.0, &mut rng, &mut |trip| {
+            let kind = match trip.flags {
+                trip::ENTER => 0,
+                trip::EXIT => 1,
+                _ => 2,
+            };
+            if kind == 2 {
+                // Through traffic leaves by the other road.
+                assert!(
+                    (trip.from, trip.to) == (west_in, east_out)
+                        || (trip.from, trip.to) == (east_in, west_out)
+                );
+            }
+            day[kind] += 1;
+            if (6.0..10.0).contains(&hour) {
+                morning[kind] += 1;
+            }
+            if (14.0..19.0).contains(&hour) {
+                afternoon[kind] += 1;
+            }
+        });
+        t += 0.5;
+    }
+    for (count, expected) in day.iter().zip([6_400.0, 6_400.0, 1_600.0]) {
+        assert!((*count as f64 - expected).abs() < 2.0, "{day:?}");
+    }
+    // Commuters come in in the morning and leave in the afternoon.
+    assert!(morning[0] as f32 > 1.5 * morning[1] as f32, "{morning:?}");
+    assert!(
+        afternoon[1] as f32 > 1.3 * afternoon[0] as f32,
+        "{afternoon:?}"
+    );
+}
+
+#[test]
+fn closed_roads_are_avoided_where_there_is_another_way() {
+    // Two ways from A to B: straight (1 km), or a 1.4 km detour through C.
+    let mut b = Builder::default();
+    let a = b.junction(0.0, 0.0);
+    let m = b.junction(1000.0, 0.0);
+    let c = b.junction(500.0, 500.0);
+    let z = b.junction(1500.0, 0.0);
+    let direct = b.road(a, m, 1, 13.9);
+    let up = b.road(a, c, 1, 13.9);
+    let down = b.road(c, m, 1, 13.9);
+    let last = b.road(m, z, 1, 13.9);
+    let (l_direct, l_up, l_down, l_last) = (
+        b.lane(direct, 0),
+        b.lane(up, 0),
+        b.lane(down, 0),
+        b.lane(last, 0),
+    );
+    b.connect(l_up, l_down, c, dir::STRAIGHT, b'M');
+    b.connect(l_direct, l_last, m, dir::STRAIGHT, b'M');
+    b.connect(l_down, l_last, m, dir::STRAIGHT, b'M');
+    let mut engine = Engine::new(b.build(), 9);
+    let route = |e: &mut Engine, from: u32| {
+        let mut router = Router::new(e.net.edge_count());
+        router
+            .route(&e.net, &e.travel_time, from, last, vtype::TYPES[0].vclass)
+            .unwrap()
+    };
+    // From the start of the network: the direct road, unless it is closed.
+    let start = direct;
+    assert_eq!(route(&mut engine, start), vec![direct, last]);
+    engine.set_closed(&[up]);
+    assert_eq!(route(&mut engine, up), vec![up, down, last]);
+    engine.set_closed(&[direct]);
+    assert_eq!(engine.closed(), &[direct]);
+    // The closed road is still the only way from its own start.
+    assert_eq!(route(&mut engine, direct), vec![direct, last]);
+    engine.set_closed(&[]);
+    assert!(engine.closed().is_empty());
 }
