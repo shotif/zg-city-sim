@@ -185,6 +185,7 @@ export class RoadLayer {
       else map.set(k, [v]);
     };
     for (let lane = 0; lane < net.laneCount; lane++) {
+      if (net.isInternal(net.laneEdge[lane])) continue; // junction surfaces cover these
       const { start, count } = net.lanePoints(lane);
       const mid = (start + (count >> 1)) * 3;
       add(this.chunkLanes, key(net.laneShape[mid], net.laneShape[mid + 1]), lane);
@@ -292,7 +293,7 @@ export class RoadLayer {
     const byClass = new Map<RoadClass, number[]>();
     for (let e = 0; e < net.edgeCount; e++) {
       const cls = net.edgeClass[e];
-      if (cls === 'service') continue;
+      if (cls === 'service' || net.isInternal(e)) continue;
       // Draw each two-way road once.
       if (net.hasFlag(e, 'hasOpposite') && net.edgeFrom[e] > net.edgeTo[e]) continue;
       const lane = net.edgeLaneStart[e] + (net.edgeLaneCount[e] >> 1);

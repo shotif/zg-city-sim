@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyEdgeType } from '../src/world/roadNetwork';
+import { classifyEdgeType, decodePolylines } from '../src/world/roadNetwork';
 
 describe('classifyEdgeType', () => {
   it('maps SUMO OSM types to road classes', () => {
@@ -12,5 +12,17 @@ describe('classifyEdgeType', () => {
     expect(classifyEdgeType('highway.service|railway.rail')).toBe('service');
     expect(classifyEdgeType('railway.tram')).toBe('tram');
     expect(classifyEdgeType('railway.rail')).toBe('rail');
+  });
+});
+
+describe('decodePolylines', () => {
+  it('accumulates centimetre steps and elevations', () => {
+    const out = decodePolylines(
+      new Int32Array([100, 200]),
+      new Uint32Array([0, 2]),
+      new Int16Array([0, 0, 150, -50]),
+      new Int16Array([0, 600]),
+    );
+    expect(Array.from(out)).toEqual([1, 2, 0, 2.5, 1.5, 6]);
   });
 });

@@ -16,12 +16,12 @@ from pathlib import Path
 import numpy as np
 import osmium
 import sumo
-import sumolib
 
-from .config import CACHE_DIR, ORIGIN_E, ORIGIN_N, OUTPUT_DIR
+from .config import CACHE_DIR, OUTPUT_DIR
 from .osm import ATTRIBUTION as OSM_ATTRIBUTION
 from .osm import fetch_osm
 from .packed import write_packed
+from .simnet import pack_network, parse_net
 
 log = logging.getLogger(__name__)
 
@@ -81,24 +81,6 @@ NETCONVERT_OPTIONS = [
     "--junctions.corner-detail", "5",
     "--no-warnings",
 ]  # fmt: skip
-
-# Vehicle-class bits in `laneAllow`.
-VCLASS_BITS = {
-    "passenger": 1,
-    "bus": 2,
-    "tram": 4,
-    "truck": 8,
-    "rail": 16,
-    "bicycle": 32,
-    "pedestrian": 64,
-    "delivery": 128,
-}
-
-# Bits in `edgeFlags`.
-FLAG_BRIDGE = 1
-FLAG_TUNNEL = 2
-FLAG_HAS_OPPOSITE = 4
-FLAG_ROUNDABOUT = 8
 
 
 def wanted_way(tags: osmium.osm.TagList) -> bool:
@@ -168,120 +150,30 @@ def build_sumo_network() -> Path:
     return net_file
 
 
-def lane_permissions(lane: sumolib.net.lane.Lane) -> int:
-    bits = 0
-    for vclass, bit in VCLASS_BITS.items():
-        if lane.allows(vclass):
-            bits |= bit
-    if lane.allows("rail_urban") or lane.allows("rail_electric"):
-        bits |= VCLASS_BITS["rail"]
-    return bits
-
-
-def to_scene(points) -> list[tuple[float, float, float]]:
-    """SUMO (E, N[, z]) -> scene (x, z, elevation offset)."""
-    return [(p[0] - ORIGIN_E, ORIGIN_N - p[1], p[2] if len(p) > 2 else 0.0) for p in points]
-
-
 def export_network(net_file: Path, out_dir: Path) -> dict:
-    """Pack junctions, edges and lanes of the SUMO network into arrays for the app."""
-    net = sumolib.net.readNet(str(net_file), withInternal=False, withPrograms=False)
+    """Pack the SUMO network for the app (roads) and the traffic engine."""
+    net = parse_net(net_file)
+    arrays, tables = pack_network(net)
+    for stale in ("roads.bin.gz", "roads.json"):
+        (out_dir / stale).unlink(missing_ok=True)
+    packed = write_packed(out_dir / "net.bin.gz", arrays)
+    (out_dir / "net.json").write_text(json.dumps({**packed, **tables}, ensure_ascii=False))
 
-    names: dict[str, int] = {}
-    types: dict[str, int] = {}
-    junction_types: dict[str, int] = {}
-
-    def intern(table: dict[str, int], value: str) -> int:
-        return table.setdefault(value, len(table))
-
-    nodes = net.getNodes()
-    node_index = {n.getID(): i for i, n in enumerate(nodes)}
-    junction_pos, junction_type, junction_shape, junction_offsets = [], [], [], [0]
-    for n in nodes:
-        x, y = n.getCoord()[:2]
-        junction_pos.append((x - ORIGIN_E, ORIGIN_N - y))
-        junction_type.append(intern(junction_types, n.getType()))
-        junction_shape.extend(to_scene(n.getShape3D()))
-        junction_offsets.append(len(junction_shape))
-
-    roundabout_edges = {
-        e if isinstance(e, str) else e.getID() for r in net.getRoundabouts() for e in r.getEdges()
-    }
-    edges = [e for e in net.getEdges() if e.getFunction() == ""]
-    edge_ids = {e.getID() for e in edges}
-
-    edge_from, edge_to, edge_type, edge_flags, edge_speed, edge_name = [], [], [], [], [], []
-    edge_lane_start, edge_lane_count = [], []
-    lane_width, lane_allow, lane_shape, lane_offsets = [], [], [], [0]
-    for e in edges:
-        eid = e.getID()
-        flags = 0
-        if e.getParam("bridge", "no") not in ("no", ""):
-            flags |= FLAG_BRIDGE
-        if e.getParam("tunnel", "no") not in ("no", ""):
-            flags |= FLAG_TUNNEL
-        opposite = eid[1:] if eid.startswith("-") else "-" + eid
-        if opposite in edge_ids:
-            flags |= FLAG_HAS_OPPOSITE
-        if eid in roundabout_edges:
-            flags |= FLAG_ROUNDABOUT
-        edge_from.append(node_index[e.getFromNode().getID()])
-        edge_to.append(node_index[e.getToNode().getID()])
-        edge_type.append(intern(types, e.getType()))
-        edge_flags.append(flags)
-        edge_speed.append(e.getSpeed())
-        edge_name.append(intern(names, e.getName()) if e.getName() else 0xFFFFFFFF)
-        edge_lane_start.append(len(lane_width))
-        edge_lane_count.append(e.getLaneNumber())
-        for lane in e.getLanes():
-            lane_width.append(lane.getWidth())
-            lane_allow.append(lane_permissions(lane))
-            lane_shape.extend(to_scene(lane.getShape3D()))
-            lane_offsets.append(len(lane_shape))
-
-    arrays = {
-        "junctionPos": np.asarray(junction_pos, np.float32).ravel(),
-        "junctionType": np.asarray(junction_type, np.uint8),
-        "junctionShapeOffsets": np.asarray(junction_offsets, np.uint32),
-        "junctionShape": np.asarray(junction_shape, np.float32).ravel(),
-        "edgeFrom": np.asarray(edge_from, np.uint32),
-        "edgeTo": np.asarray(edge_to, np.uint32),
-        "edgeType": np.asarray(edge_type, np.uint16),
-        "edgeFlags": np.asarray(edge_flags, np.uint8),
-        "edgeSpeed": np.asarray(edge_speed, np.float32),
-        "edgeName": np.asarray(edge_name, np.uint32),
-        "edgeLaneStart": np.asarray(edge_lane_start, np.uint32),
-        "edgeLaneCount": np.asarray(edge_lane_count, np.uint8),
-        "laneWidth": np.asarray(lane_width, np.float32),
-        "laneAllow": np.asarray(lane_allow, np.uint16),
-        "laneShapeOffsets": np.asarray(lane_offsets, np.uint32),
-        "laneShape": np.asarray(lane_shape, np.float32).ravel(),
-    }
-    packed = write_packed(out_dir / "roads.bin.gz", arrays)
-    index = {
-        **packed,
-        "pointStride": 3,
-        "vclassBits": VCLASS_BITS,
-        "flags": {
-            "bridge": FLAG_BRIDGE,
-            "tunnel": FLAG_TUNNEL,
-            "hasOpposite": FLAG_HAS_OPPOSITE,
-            "roundabout": FLAG_ROUNDABOUT,
-        },
-        "types": list(types),
-        "junctionTypes": list(junction_types),
-        "names": list(names),
-    }
-    (out_dir / "roads.json").write_text(json.dumps(index, ensure_ascii=False))
-
-    road_km = sum(e.getLength() for e in edges if not e.getType().startswith("railway")) / 1000
+    internal = arrays["edgeFlags"] & tables["flags"]["internal"] != 0
+    lanes_internal = internal[arrays["laneEdge"]]
+    road_types = {i for i, t in enumerate(tables["types"]) if t.startswith("highway")}
+    lane0 = arrays["edgeLaneStart"]
+    is_road = np.isin(arrays["edgeType"], list(road_types)) & ~internal
+    road_km = float(arrays["laneLength"][lane0[is_road]].sum()) / 1000
     return {
-        "index": "network/roads.json",
+        "index": "network/net.json",
         "counts": {
-            "junctions": len(nodes),
-            "edges": len(edges),
-            "lanes": len(lane_width),
-            "trafficLights": len(net.getTrafficLights()),
+            "junctions": len(net.junctions),
+            "edges": int((~internal).sum()),
+            "lanes": int((~lanes_internal).sum()),
+            "internalLanes": int(lanes_internal.sum()),
+            "links": len(arrays["linkFrom"]),
+            "trafficLights": len(net.tls),
             "roadKm": round(road_km),
         },
     }

@@ -1,14 +1,23 @@
-import { type PackedIndex, loadPacked } from '../data/packed';
+import { type PackedIndex, type TypedArray, loadPacked } from '../data/packed';
 import { DATA_URL } from '../manifest';
 
-/** Index written next to the packed road arrays (pipeline/network.py). */
+/** Index written next to the packed network arrays (pipeline/simnet.py). */
 export interface RoadNetworkIndex extends PackedIndex {
-  pointStride: number;
   vclassBits: Record<string, number>;
-  flags: { bridge: number; tunnel: number; hasOpposite: number; roundabout: number };
+  flags: {
+    bridge: number;
+    tunnel: number;
+    hasOpposite: number;
+    roundabout: number;
+    internal: number;
+  };
   types: string[];
   junctionTypes: string[];
   names: string[];
+  tlsTypes: string[];
+  linkDirs: string[];
+  linkStates: string[];
+  none: number;
 }
 
 export type RoadClass =
@@ -47,8 +56,35 @@ export function classifyEdgeType(type: string): RoadClass {
 }
 
 /**
- * The lane-level road network in scene coordinates. Shapes are (x, z, elevation offset)
- * triples; the elevation offset lifts bridges and ramps above the terrain.
+ * Decode delta-encoded polylines into (x, z, elevation) triples in scene metres:
+ * per polyline an int32 centimetre origin, int16 centimetre steps and int16 centimetre
+ * elevations (pipeline/simnet.py encode_polylines).
+ */
+export function decodePolylines(
+  origin: ArrayLike<number>,
+  offsets: ArrayLike<number>,
+  delta: ArrayLike<number>,
+  elev: ArrayLike<number>,
+): Float32Array {
+  const out = new Float32Array(elev.length * 3);
+  for (let i = 0; i < offsets.length - 1; i++) {
+    let x = origin[i * 2];
+    let z = origin[i * 2 + 1];
+    for (let p = offsets[i]; p < offsets[i + 1]; p++) {
+      x += delta[p * 2];
+      z += delta[p * 2 + 1];
+      out[p * 3] = x / 100;
+      out[p * 3 + 1] = z / 100;
+      out[p * 3 + 2] = elev[p] / 100;
+    }
+  }
+  return out;
+}
+
+/**
+ * The lane-level road network in scene coordinates: normal lanes, the internal lanes
+ * that cross junctions, the links between them, right-of-way and traffic lights.
+ * Shapes are (x, z, elevation offset) triples; the offset lifts bridges and ramps.
  */
 export class RoadNetwork {
   readonly junctionPos: Float32Array;
@@ -59,47 +95,55 @@ export class RoadNetwork {
   readonly edgeTo: Uint32Array;
   readonly edgeType: Uint16Array;
   readonly edgeFlags: Uint8Array;
-  readonly edgeSpeed: Float32Array;
   readonly edgeName: Uint32Array;
   readonly edgeLaneStart: Uint32Array;
   readonly edgeLaneCount: Uint8Array;
+  readonly laneEdge: Uint32Array;
+  readonly laneLength: Float32Array;
+  readonly laneSpeed: Float32Array;
   readonly laneWidth: Float32Array;
   readonly laneAllow: Uint16Array;
   readonly laneShapeOffsets: Uint32Array;
   readonly laneShape: Float32Array;
   /** Road class per edge. */
   readonly edgeClass: RoadClass[];
-  /** Edge index of every lane. */
-  readonly laneEdge: Uint32Array;
 
   constructor(
     readonly index: RoadNetworkIndex,
-    arrays: Record<string, ArrayLike<number>>,
+    /** All packed arrays, as loaded (the traffic engine takes them as they are). */
+    readonly arrays: Record<string, TypedArray>,
   ) {
     this.junctionPos = arrays.junctionPos as Float32Array;
     this.junctionType = arrays.junctionType as Uint8Array;
     this.junctionShapeOffsets = arrays.junctionShapeOffsets as Uint32Array;
-    this.junctionShape = arrays.junctionShape as Float32Array;
+    this.junctionShape = decodePolylines(
+      arrays.junctionShapeOrigin,
+      arrays.junctionShapeOffsets,
+      arrays.junctionShapeDelta,
+      arrays.junctionShapeElev,
+    );
     this.edgeFrom = arrays.edgeFrom as Uint32Array;
     this.edgeTo = arrays.edgeTo as Uint32Array;
     this.edgeType = arrays.edgeType as Uint16Array;
     this.edgeFlags = arrays.edgeFlags as Uint8Array;
-    this.edgeSpeed = arrays.edgeSpeed as Float32Array;
     this.edgeName = arrays.edgeName as Uint32Array;
     this.edgeLaneStart = arrays.edgeLaneStart as Uint32Array;
     this.edgeLaneCount = arrays.edgeLaneCount as Uint8Array;
+    this.laneEdge = arrays.laneEdge as Uint32Array;
+    this.laneLength = arrays.laneLength as Float32Array;
+    this.laneSpeed = arrays.laneSpeed as Float32Array;
     this.laneWidth = arrays.laneWidth as Float32Array;
     this.laneAllow = arrays.laneAllow as Uint16Array;
     this.laneShapeOffsets = arrays.laneShapeOffsets as Uint32Array;
-    this.laneShape = arrays.laneShape as Float32Array;
+    this.laneShape = decodePolylines(
+      arrays.laneShapeOrigin,
+      arrays.laneShapeOffsets,
+      arrays.laneShapeDelta,
+      arrays.laneShapeElev,
+    );
 
     const typeClass = index.types.map(classifyEdgeType);
     this.edgeClass = Array.from(this.edgeType, (t) => typeClass[t]);
-    this.laneEdge = new Uint32Array(this.laneWidth.length);
-    for (let e = 0; e < this.edgeCount; e++) {
-      const start = this.edgeLaneStart[e];
-      this.laneEdge.fill(e, start, start + this.edgeLaneCount[e]);
-    }
   }
 
   get edgeCount(): number {
@@ -118,6 +162,11 @@ export class RoadNetwork {
     return (this.edgeFlags[edge] & this.index.flags[flag]) !== 0;
   }
 
+  /** Lanes inside junctions are drawn by the junction surface, not as roads. */
+  isInternal(edge: number): boolean {
+    return this.hasFlag(edge, 'internal');
+  }
+
   allows(lane: number, vclass: string): boolean {
     return (this.laneAllow[lane] & (this.index.vclassBits[vclass] ?? 0)) !== 0;
   }
@@ -125,10 +174,10 @@ export class RoadNetwork {
   /** Street name of an edge, if it has one. */
   nameOf(edge: number): string | undefined {
     const i = this.edgeName[edge];
-    return i === 0xffffffff ? undefined : this.index.names[i];
+    return i === this.index.none ? undefined : this.index.names[i];
   }
 
-  /** Number of shape points of a lane; point k is at laneShape[(start + k) * 3]. */
+  /** Shape points of a lane; point k is at laneShape[(start + k) * 3]. */
   lanePoints(lane: number): { start: number; count: number } {
     const start = this.laneShapeOffsets[lane];
     return { start, count: this.laneShapeOffsets[lane + 1] - start };
