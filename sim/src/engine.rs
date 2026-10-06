@@ -48,6 +48,9 @@ const PUSH_IN_WAIT: f32 = 15.0;
 /// After waiting this long (s), a driver enters a junction even if the road behind it is
 /// full, so gridlocks can unwind.
 const BLOCK_BOX_WAIT: f32 = 60.0;
+/// A vehicle standing inside a junction this long (s) no longer stops others from crossing
+/// its path (SUMO's --ignore-junction-blocker), so gridlocks can unwind.
+const JUNCTION_BLOCKER_TIME: f32 = 60.0;
 /// Actuated signals keep a green phase while a vehicle arrives within this time (s).
 const MAX_GAP: f32 = 3.0;
 /// Longest an actuated green phase runs past its planned duration (s).
@@ -970,6 +973,12 @@ impl Engine {
         true
     }
 
+    /// Whether vehicle `u` has stood still inside a junction for so long it no longer blocks
+    /// crossing traffic.
+    fn stuck_in_junction(&self, u: u32) -> bool {
+        self.vehs[u as usize].wait > JUNCTION_BLOCKER_TIME
+    }
+
     /// Vehicles inside the junction on `link`, then (if `approaching`) those about to enter.
     fn link_users(&self, link: u32, out: &mut [LinkUser; 8], approaching: bool) -> usize {
         let net = &self.net;
@@ -1098,16 +1107,23 @@ impl Engine {
             if fl == NONE || fl == link {
                 continue;
             }
-            // Never drive into a vehicle that is inside the junction on a crossing path.
+            // Never drive into a vehicle that is inside the junction on a crossing path
+            // (unless it has been stuck there for long).
             let n = self.link_users(fl, &mut users, false);
             if users[..n]
                 .iter()
-                .any(|u| u.veh != v && u.leave > arrive - 0.2)
+                .any(|u| u.veh != v && u.leave > arrive - 0.2 && !self.stuck_in_junction(u.veh))
             {
                 return true;
             }
-            // Courtesy: let a driver who has waited long at a crossing path go first.
-            let waited_longer = |w: &Vehicle| w.wait > PUSH_IN_WAIT && w.wait > veh.wait + 2.0;
+            // Courtesy: let a driver who has waited long at a crossing path go first, if it
+            // can go (its light allows it and there is room past the junction).
+            let waited_longer = |w: &Vehicle| {
+                w.wait > PUSH_IN_WAIT
+                    && w.wait > veh.wait + 2.0
+                    && self.signal_allows(fl, w.stop_done)
+                    && self.exit_has_room(fl, w)
+            };
             if can_stop && self.waiting_at(fl).is_some_and(waited_longer) {
                 return true;
             }
@@ -1132,7 +1148,7 @@ impl Engine {
                     continue;
                 }
                 if u.arrive <= 0.0 {
-                    if u.leave > arrive - 0.2 {
+                    if u.leave > arrive - 0.2 && !self.stuck_in_junction(u.veh) {
                         return true;
                     }
                     continue;

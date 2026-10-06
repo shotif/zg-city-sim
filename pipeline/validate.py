@@ -111,11 +111,76 @@ def read_counts(run_dir: Path) -> np.ndarray:
     return raw[1:].reshape(24, n)
 
 
+def read_speeds(run_dir: Path) -> np.ndarray | None:
+    """Mean speed as a share of the limit on each edge in each hour (0-254, 255 = no
+    traffic): (24, edges)."""
+    path = run_dir / "edge_speeds.bin"
+    if not path.exists():
+        return None
+    raw = path.read_bytes()
+    n = int(np.frombuffer(raw[:4], dtype="<u4")[0])
+    return np.frombuffer(raw[4:], dtype=np.uint8).reshape(24, n)
+
+
+# Hours compared for congestion: the busiest of the morning and of the afternoon.
+PEAKS = {"07-08": 7, "16-17": 16}
+# Traffic map bands (web/src/world/trafficLayer.ts): share of the speed limit.
+BANDS = [(0.7, "flowing"), (0.45, "slow"), (0.2, "congested"), (0.0, "jammed")]
+MAIN_ROADS = ("highway.motorway", "highway.trunk", "highway.primary", "highway.secondary")
+
+
+def band(share: float) -> str:
+    return next(name for low, name in BANDS if share >= low)
+
+
+def place_share(speeds: np.ndarray, edges: np.ndarray, length: np.ndarray) -> float:
+    """Length-weighted mean speed share on edges with traffic (nan without)."""
+    ratio = speeds[edges].astype(np.float64)
+    used = ratio < 255
+    if not used.any():
+        return float("nan")
+    w = length[edges][used]
+    return float((ratio[used] / 254 * w).sum() / w.sum())
+
+
+def hotspot_rows(
+    net: dict[str, np.ndarray], index: dict, speeds: np.ndarray
+) -> tuple[list[dict], dict[str, float]]:
+    """Simulated peak-hour speed at each news hotspot, and the share of main-road length
+    that is congested (below 45 % of the limit) in each peak."""
+    hotspots = json.loads((OUTPUT_DIR / "news" / "hotspots.json").read_text())["hotspots"]
+    length = net["laneLength"][net["edgeLaneStart"]].astype(np.float64)
+    rows = []
+    for h in hotspots:
+        edges = np.asarray(h["edges"], np.int64)
+        rows.append(
+            {
+                "name": h["name"],
+                "reports": len(h["reports"]),
+                **{k: place_share(speeds[hour], edges, length) for k, hour in PEAKS.items()},
+            }
+        )
+    internal = (net["edgeFlags"] & index["flags"]["internal"]) != 0
+    main = np.isin(np.asarray(index["types"])[net["edgeType"]], MAIN_ROADS) & ~internal
+    baseline = {}
+    for k, hour in PEAKS.items():
+        ratio = speeds[hour].astype(np.float64)
+        used = main & (ratio < 255)
+        congested = used & (ratio / 254 < 0.45)
+        baseline[k] = float(length[congested].sum() / max(length[used].sum(), 1.0))
+    return rows, baseline
+
+
 def fmt(n: float) -> str:
     return f"{n:,.0f}"
 
 
-def report(placements: list[Placement], unplaced: list[Station], day: dict) -> str:
+def report(
+    placements: list[Placement],
+    unplaced: list[Station],
+    day: dict,
+    hotspots: tuple[list[dict], dict[str, float]] | None = None,
+) -> str:
     """docs/VALIDATION.md."""
     placed = [p for p in placements if p.hourly is not None]
     inputs = [p for p in placed if p.station.leaves_map is not None]
@@ -231,6 +296,38 @@ def report(placements: list[Placement], unplaced: list[Station], day: dict) -> s
             f"{h['meanSpeedKmh']:.0f} | {fmt(h['stopped'])} | {fmt(h['departed'])} | "
             f"{h['tripMinutes']:.1f} | {h['tripKm']:.1f} |"
         )
+    if hotspots:
+        rows, baseline = hotspots
+        congested = [r for r in rows if any(not math.isnan(r[k]) and r[k] < 0.45 for k in PEAKS)]
+        lines += [
+            "",
+            "## Places the news reports jams at",
+            "",
+            "The app's news layer marks 39 places where Croatian news reported jams, "
+            "roadworks, closures or crashes between 2020 and 2026. Many reports are about "
+            "one-off works or crashes the simulation does not have, but chronic bottlenecks "
+            "should be slow in the simulated peaks too. Mean speed as a share of the speed "
+            "limit in the busiest hours (bands as on the traffic map: below 45 % is "
+            "congested):",
+            "",
+            "| Place | Reports | 07:00-08:00 | 16:00-17:00 |",
+            "|---|---:|---:|---:|",
+        ]
+
+        def cell(share: float) -> str:
+            return "no traffic" if math.isnan(share) else f"{share:.0%} {band(share)}"
+
+        for r in rows:
+            lines.append(
+                f"| {r['name']} | {r['reports']} | {cell(r['07-08'])} | {cell(r['16-17'])} |"
+            )
+        lines += [
+            "",
+            f"{len(congested)} of {len(rows)} places are congested in at least one peak. "
+            "On all main roads (motorways, trunk, primary and secondary roads), "
+            f"{baseline['07-08']:.0%} of the length is congested at 07:00-08:00 and "
+            f"{baseline['16-17']:.0%} at 16:00-17:00.",
+        ]
     lines += [
         "",
         "## Hourly profiles at the stations",
@@ -282,7 +379,9 @@ def main(argv: list[str] | None = None) -> None:
             continue
         p.hourly = counts[:, p.edges].sum(axis=1)
         placements.append(p)
-    args.out.write_text(report(placements, unplaced, day))
+    speeds = read_speeds(args.run_dir)
+    hotspots = hotspot_rows(net, index, speeds) if speeds is not None else None
+    args.out.write_text(report(placements, unplaced, day, hotspots))
     for p in placements:
         print(
             f"{p.station.id} {p.station.name:24s} {p.station.road:5s} counted {p.station.aadt:7,d}"
