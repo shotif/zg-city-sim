@@ -160,9 +160,10 @@ pub struct Successor {
     pub edge: u32,
     /// Vehicle classes that can make this move.
     pub allow: u16,
-    /// Extra seconds for the turn (left turns and U-turns are slower) and for the toll on
-    /// the edge it leads to.
+    /// Extra seconds for the turn (left turns and U-turns are slower).
     pub penalty: f32,
+    /// Seconds the toll on the edge it leads to is worth (`TOLL_TIME`), 0 on free roads.
+    pub toll: f32,
 }
 
 pub struct Network {
@@ -325,12 +326,7 @@ impl Network {
                 dir::TURN => 60.0,
                 _ => 0.0,
             };
-            let toll = if d.edge_flags[d.lane_edge[to] as usize] & edge_flag::TOLL != 0 {
-                TOLL_TIME * d.lane_length[to]
-            } else {
-                0.0
-            };
-            pairs.push((d.lane_edge[from], d.lane_edge[to], allow, turn + toll));
+            pairs.push((d.lane_edge[from], d.lane_edge[to], allow, turn));
         }
         pairs.sort_unstable_by_key(|p| (p.0, p.1));
         let mut succ_offset = vec![0u32; n_edges + 1];
@@ -346,10 +342,17 @@ impl Network {
                 i += 1;
             }
             succ_offset[from as usize + 1] += 1;
+            let toll = if d.edge_flags[to as usize] & edge_flag::TOLL != 0 {
+                let lane = d.edge_lane_start[to as usize] as usize;
+                TOLL_TIME * d.lane_length[lane]
+            } else {
+                0.0
+            };
             succ.push(Successor {
                 edge: to,
                 allow,
                 penalty,
+                toll,
             });
         }
         for e in 0..n_edges {
@@ -385,6 +388,11 @@ impl Network {
 
     pub fn is_internal_edge(&self, edge: u32) -> bool {
         self.d.edge_flags[edge as usize] & edge_flag::INTERNAL != 0
+    }
+
+    /// Whether an edge is tolled motorway.
+    pub fn is_toll(&self, edge: u32) -> bool {
+        self.d.edge_flags[edge as usize] & edge_flag::TOLL != 0
     }
 
     pub fn edge_lanes(&self, edge: u32) -> std::ops::Range<u32> {

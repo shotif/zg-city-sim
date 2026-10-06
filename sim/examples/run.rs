@@ -250,6 +250,14 @@ fn main() {
     let t0 = Instant::now();
     let mut engine = Engine::new(net, 1);
     engine.debug = std::env::var("DEBUG_TELEPORT").is_ok();
+    // DEBUG_EDGES=e1,e2: log the vehicles removed from these edges.
+    if let Ok(list) = std::env::var("DEBUG_EDGES") {
+        engine.debug = true;
+        engine.debug_edges = list
+            .split(',')
+            .filter_map(|e| e.trim().trim_start_matches('e').parse().ok())
+            .collect();
+    }
     match load_transit(&format!("{dir}/../transit")) {
         Some(data) if data.consistent(engine.net.edge_count()) => {
             println!("transit: {} trips", data.trips());

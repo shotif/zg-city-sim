@@ -191,6 +191,8 @@ pub struct Router {
     pub landmarks: Option<Landmarks>,
     /// Edges settled by the last query (for statistics and tuning).
     pub last_settled: usize,
+    /// Whether routes weigh motorway tolls (`Successor::toll`).
+    pub tolls: bool,
 }
 
 impl Router {
@@ -203,6 +205,7 @@ impl Router {
             heap: BinaryHeap::new(),
             landmarks: None,
             last_settled: 0,
+            tolls: true,
         }
     }
 
@@ -271,7 +274,8 @@ impl Router {
                     continue;
                 }
                 let next = s.edge;
-                let cost = g + travel_time[next as usize] + s.penalty;
+                let toll = if self.tolls { s.toll } else { 0.0 };
+                let cost = g + travel_time[next as usize] + s.penalty + toll;
                 let i = next as usize;
                 if self.epoch[i] != epoch || cost < self.g[i] {
                     self.epoch[i] = epoch;

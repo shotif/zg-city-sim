@@ -1030,4 +1030,68 @@ fn routes_avoid_tolls_where_a_free_road_is_not_much_slower() {
         router.route(&net, &jammed, start, exit, car),
         Some(vec![start, am, md, exit])
     );
+    // Drivers who do not weigh the toll take the motorway.
+    router.tolls = false;
+    assert_eq!(
+        router.route(&net, &tt, start, exit, car),
+        Some(vec![start, am, md, exit])
+    );
+
+    // Those are the drivers who cross the map's edge on a tolled motorway.
+    let engine = Engine::new(net, 1);
+    let trip = |flags: u8, from: u32, to: u32| Trip {
+        depart: 0.0,
+        from,
+        to,
+        vtype: vtype::CAR,
+        flags,
+    };
+    assert!(engine.weighs_tolls(&trip(0, start, exit)));
+    assert!(engine.weighs_tolls(&trip(trip::ENTER, af, exit)));
+    assert!(!engine.weighs_tolls(&trip(trip::ENTER, am, exit)));
+    assert!(!engine.weighs_tolls(&trip(trip::EXIT, start, md)));
+}
+
+#[test]
+fn tram_tracks_count_a_quarter_lane_when_splitting_green() {
+    // A one-lane road and a tram track crossing it, each with its own phase.
+    let mut b = Builder::default();
+    let j0 = b.junction(0.0, 0.0);
+    let j1 = b.junction(300.0, 0.0);
+    let j2 = b.junction(600.0, 0.0);
+    let jn = b.junction(300.0, -300.0);
+    let js = b.junction(300.0, 300.0);
+    let road_in = b.road(j0, j1, 1, 13.9);
+    let road_out = b.road(j1, j2, 1, 13.9);
+    let track_in = b.road(js, j1, 1, 13.9);
+    let track_out = b.road(j1, jn, 1, 13.9);
+    for e in [track_in, track_out] {
+        let lane = b.lane(e, 0) as usize;
+        b.d.lane_allow[lane] = crate::network::vclass::TRAM;
+    }
+    let links = [
+        b.connect(
+            b.lane(road_in, 0),
+            b.lane(road_out, 0),
+            j1,
+            dir::STRAIGHT,
+            b'O',
+        ),
+        b.connect(
+            b.lane(track_in, 0),
+            b.lane(track_out, 0),
+            j1,
+            dir::STRAIGHT,
+            b'O',
+        ),
+    ];
+    b.signal(
+        &links,
+        &[(30.0, "Gr"), (3.0, "yr"), (30.0, "rG"), (3.0, "ry")],
+    );
+    let engine = Engine::new(b.build(), 1);
+    let d = &engine.net.d;
+    // 48 s beyond the 6 s minimum each, split 1 to 0.25.
+    let durations: Vec<f32> = (0..4).map(|p| d.phase_duration[p]).collect();
+    assert!((durations[0] - 44.4).abs() < 0.01 && (durations[2] - 15.6).abs() < 0.01);
 }

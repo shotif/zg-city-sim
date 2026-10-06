@@ -17,7 +17,7 @@ use std::collections::{BinaryHeap, VecDeque};
 
 use crate::demand::Demand;
 use crate::idm;
-use crate::network::{NONE, Network, NetworkData, dir};
+use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::rng::Rng;
 use crate::router::{Landmarks, Router};
 use crate::transit::{PendingRun, Transit, TransitRun};
@@ -192,6 +192,8 @@ pub struct Vehicle {
     pub distance: f32,
     /// `trip::*` flags of the trip.
     pub trip_flags: u8,
+    /// Whether the driver's routes weigh motorway tolls (`Engine::weighs_tolls`).
+    pub weighs_tolls: bool,
     /// Timetabled trip of a bus or tram.
     pub transit: Option<Box<TransitRun>>,
 }
@@ -225,6 +227,7 @@ impl Vehicle {
             depart: 0.0,
             distance: 0.0,
             trip_flags: 0,
+            weighs_tolls: true,
             transit: None,
         }
     }
@@ -379,6 +382,9 @@ pub struct Engine {
     pub phase_seconds: [f64; 6],
     /// Keep diagnostics (`Stats::teleport_log`).
     pub debug: bool,
+    /// With `debug`: log the first vehicles removed from these edges instead of the first
+    /// few of each reason.
+    pub debug_edges: Vec<u32>,
 }
 
 /// Shortest green a re-timed phase gets (s).
@@ -446,8 +452,12 @@ fn retime_signals(net: &mut Network, tls_link_offsets: &[u32], tls_links: &[u32]
     }
 }
 
+/// Share of a lane a tram track counts as when splitting green time: a tram comes every few
+/// minutes, and actuated signals end its phase early when none is near.
+const TRAM_TRACK_SHARE: f32 = 0.25;
+
 /// Incoming lanes a phase lets go: those with right of way fully, those that must yield
-/// (permissive turns) half. `lanes` is scratch space.
+/// (permissive turns) half, tram tracks a quarter of that. `lanes` is scratch space.
 fn lanes_served(d: &NetworkData, links: &[u32], states: &[u8], lanes: &mut Vec<(u32, f32)>) -> f32 {
     lanes.clear();
     for &l in links {
@@ -457,6 +467,8 @@ fn lanes_served(d: &NetworkData, links: &[u32], states: &[u8], lanes: &mut Vec<(
             _ => continue,
         };
         let from = d.link_from[l as usize];
+        let road = d.lane_allow[from as usize] & (vclass::PASSENGER | vclass::BUS) != 0;
+        let w = if road { w } else { w * TRAM_TRACK_SHARE };
         match lanes.iter_mut().find(|(lane, _)| *lane == from) {
             Some(entry) => entry.1 = entry.1.max(w),
             None => lanes.push((from, w)),
@@ -799,6 +811,7 @@ impl Engine {
             scratch: Vec::new(),
             phase_seconds: [0.0; 6],
             debug: false,
+            debug_edges: Vec::new(),
             rng: Rng::new(seed),
             time: 0.0,
             step_no: 0,
@@ -1709,6 +1722,7 @@ impl Engine {
                 let leg = match tr.legs.get(&key) {
                     Some(leg) => leg.clone(),
                     None => {
+                        self.router.tolls = true;
                         let leg = self
                             .router
                             .route(&self.net, &self.free_time, e0, e1, p.vclass);
@@ -2258,6 +2272,7 @@ impl Engine {
         let Some(&dest) = veh.route.last() else {
             return;
         };
+        router.tolls = veh.weighs_tolls;
         let here = net.d.lane_edge[veh.lane as usize];
         for l in net.lane_links(veh.lane) {
             if net.link_allow[l as usize] & vclass == 0 {
@@ -2278,6 +2293,17 @@ impl Engine {
         veh.reroute_timer = REROUTE_RETRY;
     }
 
+    /// Whether a trip's driver weighs motorway tolls. Drivers already on a tolled motorway
+    /// where they cross the map's edge (or heading for one) chose it before the map and pay
+    /// the toll anyway, so they stay on it; everyone else avoids tolls where a free road is
+    /// not much slower.
+    pub fn weighs_tolls(&self, trip: &Trip) -> bool {
+        let on_toll = |flag: u8, edge: u32| {
+            trip.flags & flag != 0 && edge < self.net.edge_count() as u32 && self.net.is_toll(edge)
+        };
+        !on_toll(trip::ENTER, trip.from) && !on_toll(trip::EXIT, trip.to)
+    }
+
     // ---- insertion --------------------------------------------------------------------------
 
     fn insert_vehicles(&mut self) {
@@ -2293,6 +2319,7 @@ impl Engine {
                 self.stats.no_route += 1;
                 continue;
             }
+            self.router.tolls = self.weighs_tolls(&trip);
             let route = self
                 .router
                 .route(&self.net, &self.travel_time, trip.from, trip.to, vclass);
@@ -2420,6 +2447,7 @@ impl Engine {
         };
         let look = (self.rng.next_u32() & 0xffff) as u16;
         let next_link = self.choose_link(lane, route, 0, p.vclass);
+        let weighs_tolls = self.weighs_tolls(trip);
 
         let v = self.alloc_vehicle();
         let veh = &mut self.vehs[v as usize];
@@ -2430,6 +2458,7 @@ impl Engine {
         veh.speed = speed;
         veh.speed_factor = speed_factor;
         veh.trip_flags = trip.flags;
+        veh.weighs_tolls = weighs_tolls;
         veh.route.clear();
         veh.route.append(route);
         veh.next_link = next_link;
@@ -2770,7 +2799,14 @@ impl Engine {
                 .entry(format!("{reason:?}"))
                 .or_default();
             *count += 1;
-            if self.debug && *count <= 4 {
+            let edge = self.net.d.lane_edge[self.vehs[v as usize].lane as usize];
+            let log = if self.debug_edges.is_empty() {
+                *count <= 4
+            } else {
+                self.debug_edges.contains(&edge)
+                    && self.stats.removed_at.get(&edge).copied().unwrap_or(0) < 6
+            };
+            if self.debug && log {
                 let line = format!(
                     "{}\n      sees:{}",
                     self.describe(v),
