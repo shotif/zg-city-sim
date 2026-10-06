@@ -1,0 +1,96 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main, ccr-2d70b2aa-eggxc4]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Install pipeline dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Lint and test the pipeline
+        run: |
+          ruff check pipeline
+          ruff format --check pipeline
+          python -m pytest pipeline/tests -q
+
+      - name: Restore downloaded source data
+        uses: actions/cache@v4
+        with:
+          path: pipeline/.cache
+          key: pipeline-cache-${{ hashFiles('pipeline/*.py') }}
+          restore-keys: pipeline-cache-
+
+      - name: Build city data
+        run: python -m pipeline all
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Check, test and build the web app
+        working-directory: web
+        run: |
+          npm run format:check
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Smoke test in headless Chromium
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test --project=desktop
+
+      - name: Keep smoke-test screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshots
+          path: web/test-results
+          if-no-files-found: ignore
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: web/dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
