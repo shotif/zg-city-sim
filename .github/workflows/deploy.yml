@@ -82,7 +82,8 @@ jobs:
           path: web/dist
 
   deploy:
-    if: github.event_name != 'pull_request'
+    # Only main publishes; other branches are built and tested.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
