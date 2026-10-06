@@ -2,8 +2,9 @@
 
 Every building gets residents and jobs from its floor area and use. The use comes from its
 OpenStreetMap type, else from the OpenStreetMap land use around it, else from its shape.
-The City's census population and jobs are spread over residential and work floor area;
-the towns around it get their estimated totals the same way. Each building is attached to the
+Each of the City's 17 districts has its census population spread over the residential floor
+area inside it, and the City's jobs are spread over work floor area; the towns around it get
+their estimated totals the same way. Each building is attached to the
 nearest street a car can use, and the engine draws trips between street edges weighted by
 these numbers (sim/src/demand.rs).
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 
 import numpy as np
@@ -19,7 +21,7 @@ import osmium
 import shapely
 from pyproj import Transformer
 
-from .buildings import city_boundary
+from .buildings import city_boundary, city_districts
 from .config import CRS, ORIGIN_E, ORIGIN_N, OUTPUT_DIR
 from .osm import fetch_osm
 from .packed import read_packed, write_packed
@@ -34,8 +36,29 @@ ATTRIBUTION = {
     "url": "https://dzs.gov.hr/",
 }
 
-# Census 2021, City of Zagreb.
-POPULATION = 767_131
+# Census 2021 population of the City's districts (gradske četvrti), named as in the City's
+# register of spatial units.
+DISTRICT_POPULATION = {
+    "Brezovica": 12_046,
+    "Črnomerec": 38_084,
+    "Donja Dubrava": 33_537,
+    "Donji grad": 31_209,
+    "Gornja Dubrava": 58_255,
+    "Gornji grad - Medveščak": 26_423,
+    "Maksimir": 47_356,
+    "Novi Zagreb - istok": 55_898,
+    "Novi Zagreb - zapad": 63_917,
+    "Peščenica - Žitnjak": 53_023,
+    "Podsljeme": 18_974,
+    "Podsused - Vrapče": 44_910,
+    "Sesvete": 70_800,
+    "Stenjevec": 53_862,
+    "Trešnjevka - jug": 65_324,
+    "Trešnjevka - sjever": 52_974,
+    "Trnje": 40_539,
+}
+# Census 2021, City of Zagreb (767,131).
+POPULATION = sum(DISTRICT_POPULATION.values())
 # Persons working in the City (DZS employment by place of work, about 430k).
 JOBS = 430_000
 # The towns and municipalities around the City inside the map (Velika Gorica, Samobor,
@@ -179,14 +202,41 @@ def use_shares(
     return home, work
 
 
-def spread(floor_area: np.ndarray, inside: np.ndarray, city: float, outside: float) -> np.ndarray:
-    """Distribute the City's total over floor area inside it, and the outside total over
-    floor area outside."""
-    out = np.zeros_like(floor_area)
-    for mask, total in ((inside, city), (~inside, outside)):
-        area = floor_area[mask].sum()
-        if area > 0:
-            out[mask] = floor_area[mask] * (total / area)
+def spread(floor_area: np.ndarray, zone: np.ndarray, totals: list[float]) -> np.ndarray:
+    """Distribute each zone's total over the floor area in it (`zone`: index into `totals`
+    per building)."""
+    area = np.bincount(zone, floor_area, len(totals))
+    scale = np.divide(totals, area, out=np.zeros(len(totals)), where=area > 0)
+    return floor_area * scale[zone]
+
+
+def normalize_name(name: str) -> str:
+    """Name without case, punctuation or spacing differences ("Novi Zagreb – Istok")."""
+    return " ".join(re.findall(r"\w+", name.lower()))
+
+
+def district_population(names: list[str]) -> list[int]:
+    """Census population of each district, matched by name; every district must match."""
+    census = {normalize_name(k): v for k, v in DISTRICT_POPULATION.items()}
+    found = [census.get(normalize_name(n)) for n in names]
+    missing = [n for n, p in zip(names, found, strict=True) if p is None]
+    if missing or len(set(map(normalize_name, names))) != len(census):
+        raise ValueError(f"districts do not match the census: {missing or names}")
+    return [int(p) for p in found]
+
+
+def district_of(x: np.ndarray, z: np.ndarray, districts: np.ndarray) -> np.ndarray:
+    """Index of the district each point lies in. Points in no district (slivers between
+    outlines) go to the nearest one."""
+    points = shapely.points(x, z)
+    tree = shapely.STRtree(districts)
+    out = np.full(len(x), -1, np.int64)
+    p, d = tree.query(points, predicate="within")
+    out[p] = d
+    rest = np.flatnonzero(out < 0)
+    if len(rest):
+        p, d = tree.query_nearest(points[rest], all_matches=False)
+        out[rest[p]] = d
     return out
 
 
@@ -293,20 +343,25 @@ def build_demand() -> dict:
     area, x, z = outer_rings(b["ringOrigin"], b["ringOffsets"], b["deltas"], rings)
     floor_area = area * storeys(b["levels"], b["eave"]) * NET_AREA
 
-    boundary = shapely.transform(
-        city_boundary(), lambda c: np.column_stack([c[:, 0] - ORIGIN_E, ORIGIN_N - c[:, 1]])
-    )
+    def to_scene(c: np.ndarray) -> np.ndarray:
+        return np.column_stack([c[:, 0] - ORIGIN_E, ORIGIN_N - c[:, 1]])
+
+    boundary = shapely.transform(city_boundary(), to_scene)
     shapely.prepare(boundary)
     inside = shapely.contains_xy(boundary, x, z)
     centre = np.hypot(x, z) < CENTRE_RADIUS
+    names, outlines = city_districts()
+    population = district_population(names)
+    district = np.full(len(x), len(names), np.int64)  # outside the City
+    district[inside] = district_of(x[inside], z[inside], shapely.transform(outlines, to_scene))
 
     land_geoms, land_classes = read_landuse()
     landuse = classify_landuse(x, z, land_geoms, land_classes)
     home_share, work_share = use_shares(
         b_index["kinds"], b["kind"], landuse, area, b["eave"], centre
     )
-    residents = spread(floor_area * home_share, inside, POPULATION, OUTSIDE_POPULATION)
-    jobs = spread(floor_area * work_share, inside, JOBS, OUTSIDE_JOBS)
+    residents = spread(floor_area * home_share, district, [*population, OUTSIDE_POPULATION])
+    jobs = spread(floor_area * work_share, (~inside).astype(np.int64), [JOBS, OUTSIDE_JOBS])
 
     edges, lines, local = street_lines(net, n_index)
     edge_of = attach(x, z, edges, lines, local)
@@ -335,6 +390,19 @@ def build_demand() -> dict:
         "buildingsUnattached": int((~attached).sum()),
         "dailyCarTrips": round(total_residents * CAR_TRIPS_PER_RESIDENT),
     }
-    (out_dir / "demand.json").write_text(json.dumps({**packed, **stats}))
+    # Residents and jobs the simulation has per district (buildings far from any street
+    # have none).
+    per_district = [
+        {
+            "name": name,
+            "population": population[i],
+            "residents": round(float(residents[attached & (district == i)].sum())),
+            "jobs": round(float(jobs[attached & (district == i)].sum())),
+        }
+        for i, name in enumerate(names)
+    ]
+    (out_dir / "demand.json").write_text(
+        json.dumps({**packed, **stats, "districts": per_district}, ensure_ascii=False)
+    )
     log.info("demand: %s (%.0fs)", stats, time.monotonic() - started)
     return {"index": "demand/demand.json", **stats, "attribution": ATTRIBUTION}

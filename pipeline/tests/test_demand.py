@@ -1,10 +1,14 @@
 import numpy as np
+import pytest
 import shapely
 
 from pipeline.demand import (
+    DISTRICT_POPULATION,
     LANDUSE_CLASSES,
     attach,
     classify_landuse,
+    district_of,
+    district_population,
     outer_rings,
     spread,
     storeys,
@@ -53,10 +57,35 @@ def test_use_shares():
     np.testing.assert_allclose(work, [0, 1, 0, 1, 1, 0.2, 0.3])
 
 
-def test_spread_matches_totals_inside_and_outside():
-    floor = np.array([100.0, 300.0, 200.0, 600.0])
-    inside = np.array([True, True, False, False])
-    np.testing.assert_allclose(spread(floor, inside, 1000, 80), [250, 750, 20, 60])
+def test_spread_matches_each_zones_total():
+    floor = np.array([100.0, 300.0, 200.0, 600.0, 50.0])
+    zone = np.array([0, 0, 1, 1, 2])
+    # Zone 3 has no floor area: its total is dropped rather than divided by zero.
+    np.testing.assert_allclose(spread(floor, zone, [1000, 80, 5, 7]), [250, 750, 20, 60, 5])
+
+
+def test_district_population_matches_names_loosely():
+    names = list(DISTRICT_POPULATION)
+    names[0] = names[0].upper()
+    names[5] = "Gornji grad – Medveščak"
+    population = district_population(names[::-1])
+    assert population[::-1] == list(DISTRICT_POPULATION.values())
+    assert sum(population) == 767_131
+
+
+def test_district_population_rejects_unknown_or_missing_districts():
+    with pytest.raises(ValueError):
+        district_population([*list(DISTRICT_POPULATION)[:-1], "Novi Zagreb"])
+    with pytest.raises(ValueError):
+        district_population(list(DISTRICT_POPULATION)[:-1])
+
+
+def test_district_of_falls_back_to_the_nearest_district():
+    west = shapely.box(0, 0, 10, 10)
+    east = shapely.box(10.5, 0, 20, 10)
+    x = np.array([5.0, 15.0, 10.4, 10.2])
+    z = np.array([5.0, 5.0, 5.0, 5.0])
+    np.testing.assert_array_equal(district_of(x, z, np.array([west, east])), [0, 1, 1, 0])
 
 
 def test_classify_landuse_prefers_work_classes_where_areas_overlap():

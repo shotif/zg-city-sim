@@ -35,6 +35,7 @@ log = logging.getLogger(__name__)
 CKAN_API = "https://data.zagreb.hr/api/3/action/package_show?id="
 ZG3D_PACKAGE = "zg3d-2022-3d-model-gz"
 BOUNDARY_PACKAGE = "grad-zagreb-prostorna-jedinica"
+DISTRICT_PACKAGE = "gradske-cetvrti-prostorna-jedinica-mjesne-samouprave-za-podrucje-grada-zagreba"
 
 ZG3D_ATTRIBUTION = {
     "name": "ZG3D 2022, Grad Zagreb",
@@ -247,6 +248,16 @@ def city_boundary() -> shapely.Geometry:
     _, _, wkb, _ = pyogrio.raw.read(f"/vsizip/{path}", read_geometry=True, columns=[])
     boundary = shapely.union_all(shapely.from_wkb(wkb))
     return shapely.force_2d(boundary)
+
+
+def city_districts() -> tuple[list[str], np.ndarray]:
+    """Names and outlines (EPSG:3765) of the City's 17 districts (gradske četvrti), from the
+    same register as its boundary."""
+    url, modified = ckan_resource(DISTRICT_PACKAGE, "SHP")
+    stamp = re.sub(r"\D", "", modified)[:8] or "latest"
+    path = fetch_cached(url, CACHE_DIR / "boundary" / f"rpj_gc_{stamp}.zip")
+    _, _, wkb, fields = pyogrio.raw.read(f"/vsizip/{path}", read_geometry=True, columns=["JMS_IME"])
+    return [str(name) for name in fields[0]], shapely.force_2d(shapely.from_wkb(wkb))
 
 
 def _to_htrs(geoms: np.ndarray) -> np.ndarray:
