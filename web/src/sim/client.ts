@@ -23,6 +23,7 @@ export class SimClient {
   /** Mean speed / limit per edge (0-254; 255 = no traffic), refreshed every simulated minute. */
   edgeSpeeds?: Uint8Array;
   onFrame?: () => void;
+  onEdgeSpeeds?: (speeds: Uint8Array) => void;
   onReady?: (buildMs: number) => void;
   onError?: (message: string) => void;
 
@@ -54,6 +55,7 @@ export class SimClient {
         break;
       case 'edgeSpeeds':
         this.edgeSpeeds = message.speeds;
+        this.onEdgeSpeeds?.(message.speeds);
         break;
       case 'error':
         this.onError?.(message.message);

@@ -12,6 +12,7 @@ import type { HeightFn } from './world/roadGeometry';
 import { RoadLayer } from './world/roadLayer';
 import { type RoadNetwork, laneShapeHeights, loadRoadNetwork } from './world/roadNetwork';
 import { loadTerrain } from './world/terrain';
+import { TRAFFIC_BANDS, TrafficLayer } from './world/trafficLayer';
 import { VehicleLayer } from './world/vehicleLayer';
 
 const SKY = new THREE.Color(0xb9cfe0);
@@ -86,6 +87,7 @@ export interface DebugApi {
   buildingsReady: boolean;
   sim?: SimClient;
   vehicles?: VehicleLayer;
+  traffic?: TrafficLayer;
 }
 
 declare global {
@@ -108,6 +110,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
 
   let rig: CameraRig | undefined;
   let sim: SimClient | undefined;
+  let traffic: TrafficLayer | undefined;
+  let invalidateView = () => {};
   const hud = new Hud(container, {
     onMode: (mode) => rig?.setMode(mode),
     onRotateIso: (direction) => rig?.rotateIso(direction),
@@ -117,7 +121,12 @@ export async function startApp(container: HTMLElement): Promise<void> {
       sim?.setSpeed(speed);
       if (sim?.paused) sim.setPaused(false);
     },
+    onTrafficMap: (enabled) => {
+      if (traffic) traffic.enabled = enabled;
+      invalidateView();
+    },
   });
+  hud.setTrafficLegend(TRAFFIC_BANDS.map(({ color, label }) => ({ color, label })));
 
   try {
     // WebGL 2 by default: it is verified in CI. WebGPU is opt-in (?webgpu) until it has been
@@ -174,6 +183,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     const invalidate = () => {
       dirty = true;
     };
+    invalidateView = invalidate;
     activeRig.controls.addEventListener('change', invalidate);
 
     const resize = () => {
@@ -218,10 +228,17 @@ export async function startApp(container: HTMLElement): Promise<void> {
           vehicles = new VehicleLayer(surface);
           scene.add(vehicles.object);
           debug.vehicles = vehicles;
+          traffic = new TrafficLayer(net, surface);
+          scene.add(traffic.object);
+          debug.traffic = traffic;
           sim = startSimulation(net, await travel, surface, Number(params.get('speed')) || 1);
           debug.sim = sim;
           sim.onFrame = () => {
             simChanged = true;
+          };
+          sim.onEdgeSpeeds = (speeds) => {
+            traffic?.setSpeeds(speeds);
+            invalidate();
           };
           sim.onError = (message) => {
             console.error(message);
@@ -302,6 +319,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           });
         }
       }
+      if (roads) roads.overviewHidden = traffic?.shows(view.viewHeight) ?? false;
       const roadsChanged =
         roads?.update({
           mode: activeRig.mode,
@@ -321,7 +339,17 @@ export async function startApp(container: HTMLElement): Promise<void> {
           },
           5,
         ) ?? false;
-      if (!moving && !dirty && !roadsChanged && !buildingsChanged && !trafficMoving) return;
+      const trafficMapChanged = traffic?.update(view.viewHeight) ?? false;
+      if (
+        !moving &&
+        !dirty &&
+        !roadsChanged &&
+        !buildingsChanged &&
+        !trafficMoving &&
+        !trafficMapChanged
+      ) {
+        return;
+      }
       dirty = false;
 
       if (camera instanceof THREE.PerspectiveCamera) {

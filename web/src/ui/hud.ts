@@ -8,6 +8,13 @@ export interface HudCallbacks {
   onFaceNorth(): void;
   onPause?(paused: boolean): void;
   onSpeed?(speed: number): void;
+  onTrafficMap?(enabled: boolean): void;
+}
+
+/** A colour and its meaning, for the traffic map legend. */
+export interface LegendEntry {
+  color: number;
+  label: string;
 }
 
 /** What the simulation panel shows. */
@@ -83,7 +90,10 @@ export class Hud {
   private readonly simInfo: HTMLElement;
   private readonly pauseButton: HTMLButtonElement;
   private readonly speedButtons = new Map<number, HTMLButtonElement>();
+  private readonly trafficButton: HTMLButtonElement;
+  private readonly legend: HTMLElement;
   private simState?: HudSim;
+  private trafficMap = false;
 
   constructor(container: HTMLElement, callbacks: HudCallbacks) {
     this.root = el('div', 'hud', container);
@@ -113,6 +123,15 @@ export class Hud {
       this.speedButtons.set(speed, button);
     }
     this.simInfo = el('div', 'hud-sim-info', this.sim);
+    const mapRow = el('div', 'hud-sim-row', this.sim);
+    this.trafficButton = el('button', 'hud-button hud-speed', mapRow);
+    this.trafficButton.type = 'button';
+    this.trafficButton.textContent = 'Traffic map';
+    this.trafficButton.title = 'Colour roads by how fast traffic moves (T)';
+    this.trafficButton.setAttribute('aria-pressed', 'false');
+    this.trafficButton.addEventListener('click', () => this.toggleTrafficMap(callbacks));
+    this.legend = el('div', 'hud-legend', mapRow);
+    this.legend.hidden = true;
 
     const toolbar = el('div', 'hud-panel hud-toolbar', this.root);
     toolbar.setAttribute('role', 'toolbar');
@@ -179,6 +198,8 @@ export class Hud {
       else if (event.key === ' ' && this.simState) {
         event.preventDefault();
         callbacks.onPause?.(!this.simState.paused);
+      } else if ((event.key === 't' || event.key === 'T') && this.simState) {
+        this.toggleTrafficMap(callbacks);
       } else if ((event.key === '+' || event.key === '-') && this.simState) {
         const i = SIM_SPEEDS.indexOf(this.simState.speed) + (event.key === '+' ? 1 : -1);
         const speed = SIM_SPEEDS[Math.min(SIM_SPEEDS.length - 1, Math.max(0, i))];
@@ -223,6 +244,26 @@ export class Hud {
       }),
     );
     this.status.textContent = status;
+  }
+
+  private toggleTrafficMap(callbacks: HudCallbacks): void {
+    this.trafficMap = !this.trafficMap;
+    this.trafficButton.setAttribute('aria-pressed', String(this.trafficMap));
+    this.legend.hidden = !this.trafficMap;
+    callbacks.onTrafficMap?.(this.trafficMap);
+  }
+
+  /** Colours of the traffic map, shown next to its button while it is on. */
+  setTrafficLegend(entries: LegendEntry[]): void {
+    this.legend.replaceChildren(
+      ...entries.map(({ color, label }) => {
+        const item = document.createElement('span');
+        const swatch = document.createElement('i');
+        swatch.style.background = `#${color.toString(16).padStart(6, '0')}`;
+        item.append(swatch, document.createTextNode(label));
+        return item;
+      }),
+    );
   }
 
   /** Show the simulation panel with the current time, speed and traffic. */

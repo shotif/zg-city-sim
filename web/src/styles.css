@@ -116,6 +116,32 @@ canvas {
   font-variant-numeric: tabular-nums;
 }
 
+.hud-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.hud-legend[hidden] {
+  display: none;
+}
+
+.hud-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hud-legend i {
+  display: inline-block;
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+}
+
 .hud-title strong {
   font-size: 15px;
   letter-spacing: 0.02em;

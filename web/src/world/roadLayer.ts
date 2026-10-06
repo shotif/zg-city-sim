@@ -114,6 +114,9 @@ export class RoadLayer {
     this.buildOverview();
   }
 
+  /** Hide the zoomed-out road lines (while the traffic map draws the roads instead). */
+  overviewHidden = false;
+
   /** Chunks built so far (for diagnostics). */
   get builtChunks(): number {
     return this.chunks.size;
@@ -128,7 +131,10 @@ export class RoadLayer {
     let changed = false;
 
     for (const layer of this.overviewLayers) {
-      const visible = view.viewHeight >= OVERVIEW_MIN_VIEW && view.viewHeight <= layer.maxView;
+      const visible =
+        !this.overviewHidden &&
+        view.viewHeight >= OVERVIEW_MIN_VIEW &&
+        view.viewHeight <= layer.maxView;
       if (layer.lines.visible !== visible) {
         layer.lines.visible = visible;
         changed = true;
