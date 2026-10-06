@@ -265,6 +265,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
                   onSelect: (hotspot) => {
                     layer.select(hotspot);
                     if (hotspot) {
+                      // On a phone the reports cover the lower half: keep the place above.
+                      const narrow = container.clientWidth <= 640;
+                      activeRig.flyTo(hotspot.x, hotspot.z, undefined, narrow ? 0.25 : 0);
                       newsPanel?.setTraffic(
                         speeds ? placeTraffic(net, hotspot.edges, speeds) : sim ? undefined : null,
                       );

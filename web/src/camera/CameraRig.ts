@@ -161,6 +161,22 @@ export class CameraRig {
     this.startTransition(from, { ...from, azimuth: 0 }, 'perspective');
   }
 
+  /**
+   * Move smoothly to look at scene (x, z), keeping the angles and the zoom (or showing
+   * `viewHeight` metres). `above` puts the point that share of the view height above the
+   * middle of the screen, e.g. to keep it clear of a panel at the bottom.
+   */
+  flyTo(x: number, z: number, viewHeight?: number, above = 0): void {
+    const from = this.transition ? this.transition.to : this.state();
+    const height = viewHeight ?? from.viewHeight;
+    // Screen up, on the ground, points away from the camera.
+    const tx = x + above * height * Math.sin(from.azimuth);
+    const tz = z + above * height * Math.cos(from.azimuth);
+    const target = new THREE.Vector3(tx, this.groundHeight(tx, tz), tz);
+    const projection: Projection = this.currentMode === 'free' ? 'perspective' : 'orthographic';
+    this.startTransition(from, { ...from, target, viewHeight: height }, projection);
+  }
+
   /** Move instantly to look at scene (x, z) showing `viewHeight` metres, keeping the angles. */
   jumpTo(x: number, z: number, viewHeight: number): void {
     const state = this.transition ? this.transition.to : this.state();
