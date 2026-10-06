@@ -39,7 +39,8 @@ fn main() {
         _ => println!("transit: none"),
     }
     engine.demand = Some(demand);
-    engine.demand_scale = run::demand_scale();
+    engine.demand_scale = run::demand_scale(&format!("{root}/demand"));
+    println!("demand scale: {}", engine.demand_scale);
     engine.set_time((START_HOUR * 3600) as f64);
 
     let n = engine.net.edge_count();
@@ -126,9 +127,10 @@ fn main() {
     std::fs::write(format!("{out}/edge_speeds.bin"), bytes).expect("write speeds");
     let s = &engine.stats;
     let summary = format!(
-        "{{\"startHour\": {START_HOUR}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
+        "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"removedBecause\": {:?}, \
          \"hours\": [\n  {}\n]}}\n",
+        engine.demand_scale,
         started.elapsed().as_secs_f64(),
         s.departed,
         s.arrived,

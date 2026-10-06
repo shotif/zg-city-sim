@@ -186,25 +186,30 @@ def report(
     inputs = [p for p in placed if p.station.leaves_map is not None]
     checks = [p for p in placed if p.station.leaves_map is None]
 
+    # The run's volumes are compared at full demand: divided by the share it simulates.
+    scale = float(day.get("demandScale", 1.0))
+
     def rows(group: list[Placement]) -> list[str]:
         out = []
         for p in group:
             s = p.station
             sim = p.simulated
-            diff = (sim - s.aadt) / s.aadt
+            full = sim / scale
+            diff = (full - s.aadt) / s.aadt
+            scaled = f" {fmt(full)} |" if scale != 1 else ""
             out.append(
-                f"| {s.id} {s.name} | {s.road} | {fmt(s.aadt)} | {fmt(sim)} | "
-                f"{diff:+.0%} | {geh(sim, s.aadt):.0f} | {p.distance:.0f} m |"
+                f"| {s.id} {s.name} | {s.road} | {fmt(s.aadt)} | {fmt(sim)} |{scaled} "
+                f"{diff:+.0%} | {geh(full, s.aadt):.0f} | {p.distance:.0f} m |"
             )
         return out
 
     def summary(group: list[Placement]) -> str:
         if not group:
             return "no stations"
-        ratios = np.array([p.simulated / p.station.aadt for p in group])
+        ratios = np.array([p.simulated / scale / p.station.aadt for p in group])
         within = int(np.sum(np.abs(ratios - 1) <= 0.25))
         mape = float(np.mean(np.abs(ratios - 1)))
-        total = sum(p.simulated for p in group) / sum(p.station.aadt for p in group)
+        total = sum(p.simulated / scale for p in group) / sum(p.station.aadt for p in group)
         return (
             f"{within} of {len(group)} within ±25 %, mean absolute difference {mape:.0%}, "
             f"total simulated / counted {total:.2f}"
@@ -213,10 +218,29 @@ def report(
     hours = sorted(day["hours"], key=lambda h: h["hour"])
     peak = max(hours, key=lambda h: h["running"])
     departed = day["departed"]
-    head = [
-        "| Station | Road | Counted (PGDP 2025) | Simulated | Difference | GEH | Placed within |",
-        "|---|---|---:|---:|---:|---:|---:|",
-    ]
+    if scale != 1:
+        head = [
+            f"| Station | Road | Counted (PGDP 2025) | Simulated ({scale:.0%} demand) | "
+            "At full demand | Difference | GEH | Placed within |",
+            "|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    else:
+        head = [
+            "| Station | Road | Counted (PGDP 2025) | Simulated | Difference | GEH | "
+            "Placed within |",
+            "|---|---|---:|---:|---:|---:|---:|",
+        ]
+    scaled_note = (
+        [
+            f"The run simulates {scale:.0%} of the estimated demand (see What was calibrated), "
+            f"so its volumes are divided by {scale:g} before they are compared with the counts "
+            '("At full demand"). That checks where the model sends traffic, not how much '
+            "the simulated network can carry.",
+            "",
+        ]
+        if scale != 1
+        else []
+    )
     lines = [
         "# Validation: a simulated weekday against traffic counts",
         "",
@@ -237,6 +261,7 @@ def report(
         "its road number and section name (`pipeline/counts.py`). The last column shows how "
         "far the nearest edge of that road is from the point chosen.",
         "",
+        *scaled_note,
         "Two caveats about what agreement means:",
         "",
         "- Stations on roads that leave the map (the motorways and the D1 north) also set "
@@ -245,6 +270,32 @@ def report(
         "- PGDP averages all days of the year, including weekends and the summer season, "
         "which raise traffic on the motorways to the coast and lower it in the city. A typical "
         "working day is within about ±15 % of it on most roads.",
+        "",
+        "## What was calibrated",
+        "",
+        "- **Drivers**: a 1.0 s time gap, 2.2 m/s² acceleration and 2 m standing gap (IDM). A "
+        "queue leaves a green light at about 1,970 cars per lane per hour (the Highway "
+        "Capacity Manual's base saturation flow is 1,900; a test in `sim/src/tests.rs` "
+        "keeps it between 1,700 and 2,100).",
+        "- **Signals**: netconvert guesses the programs. The engine splits each cycle's green "
+        "time by the incoming lanes each phase lets go, and gives programs with four or more "
+        "green phases a 120 s cycle (`retime_signals` in `sim/src/engine.rs`). Green phases "
+        "stretch up to 20 s while traffic keeps arriving.",
+        "- **Traffic across the map's edge**: the motorway stations (and the D1 at Pojatno) "
+        "set the volume where their road leaves the map, less the share estimated to leave "
+        "at interchanges before the edge; uncounted roads get a typical volume for their "
+        "class (`pipeline/gateways.py`).",
+        "- **Demand**: 0.65 car trips per resident a day (Transport Master Plan survey), "
+        "spread over the hours of a weekday. Traffic coming in crosses the map's edge 45 "
+        "minutes ahead of the city's own trips. "
+        + (
+            f"This run simulates {scale:.0%} of that demand and of the traffic across the "
+            "map's edge (`DEMAND_SCALE` in `pipeline/demand.py`): at full demand the "
+            "simulated junctions carry less than Zagreb's real ones and the network gridlocks "
+            "after 8:00 (known gaps in [PLAN.md](PLAN.md))."
+            if scale != 1
+            else "This run simulates all of it."
+        ),
         "",
         "## Results",
         "",
@@ -362,6 +413,9 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python -m pipeline.validate", description=__doc__)
     parser.add_argument("run_dir", type=Path, help="output directory of the day runner")
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "docs" / "VALIDATION.md")
+    parser.add_argument(
+        "--demand-scale", type=float, help="demand scale of the run, if day.json lacks it"
+    )
     args = parser.parse_args(argv)
 
     index = json.loads((OUTPUT_DIR / "network" / "net.json").read_text())
@@ -370,6 +424,8 @@ def main(argv: list[str] | None = None) -> None:
     if counts.shape[1] != len(net["edgeFlags"]):
         raise SystemExit("the run was made on a different network; run it again")
     day = json.loads((args.run_dir / "day.json").read_text())
+    if args.demand_scale is not None:
+        day.setdefault("demandScale", args.demand_scale)
 
     placements, unplaced = [], []
     for station in STATIONS:

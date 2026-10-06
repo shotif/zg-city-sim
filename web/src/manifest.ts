@@ -58,6 +58,8 @@ export interface DemandLayer {
   /** Places where roads leave the map, and vehicles crossing there per day. */
   gateways?: number;
   gatewayDaily?: number;
+  /** Share of this demand the simulation runs (calibration, docs/VALIDATION.md). */
+  demandScale?: number;
   attribution?: Attribution | Attribution[];
 }
 

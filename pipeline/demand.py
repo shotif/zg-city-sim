@@ -76,6 +76,11 @@ OUTSIDE_JOBS = 80_000
 # Car trips per resident and day: 1.84 trips per person (Master Plan survey), 46 % by car,
 # 1.3 people per car.
 CAR_TRIPS_PER_RESIDENT = 1.84 * 0.46 / 1.3
+# Share of the estimated demand the simulation runs (docs/VALIDATION.md). The simulated
+# junctions carry less than Zagreb's real ones: at full demand the morning queues never
+# clear, and at 70 % they still lock up by 10:00. Until junctions and signals are calibrated,
+# the demand is scaled to what the network carries.
+DEMAND_SCALE = 0.6
 # Height of one storey, used when a building's number of storeys is unknown.
 STOREY = 3.0
 # Share of floor area that is usable (walls, stairs, plant rooms excluded).
@@ -404,6 +409,7 @@ def build_demand() -> dict:
         "dailyCarTrips": round(total_residents * CAR_TRIPS_PER_RESIDENT),
         "gateways": len(gateways),
         "gatewayDaily": round(sum(g["daily"] for g in gateways)),
+        "demandScale": DEMAND_SCALE,
     }
     # Residents and jobs the simulation has per district (buildings far from any street
     # have none).

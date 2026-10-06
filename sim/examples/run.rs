@@ -205,11 +205,25 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
     }
 }
 
-/// Share of the day's demand to simulate (DEMAND_SCALE, default 1).
-pub fn demand_scale() -> f32 {
-    std::env::var("DEMAND_SCALE")
+/// Share of the day's demand to simulate: DEMAND_SCALE if set, else the calibrated
+/// `demandScale` in `demand_dir/demand.json`, else 1.
+pub fn demand_scale(demand_dir: &str) -> f32 {
+    if let Some(scale) = std::env::var("DEMAND_SCALE")
         .ok()
         .and_then(|s| s.parse().ok())
+    {
+        return scale;
+    }
+    let index = std::fs::read_to_string(format!("{demand_dir}/demand.json")).unwrap_or_default();
+    index
+        .find("\"demandScale\": ")
+        .and_then(|i| {
+            let rest = &index[i + 15..];
+            rest[..rest.find([',', '}']).unwrap_or(rest.len())]
+                .trim()
+                .parse()
+                .ok()
+        })
         .unwrap_or(1.0)
 }
 
@@ -249,7 +263,8 @@ fn main() {
         t0.elapsed().as_secs_f64() * 1e3
     );
     engine.demand = Some(demand);
-    engine.demand_scale = demand_scale();
+    engine.demand_scale = demand_scale(&format!("{dir}/../demand"));
+    println!("demand scale: {}", engine.demand_scale);
     engine.set_time(start * 3600.0);
 
     let steps_per_minute = (60.0 / DT) as u32;
@@ -342,6 +357,14 @@ fn main() {
         s.route_settled as f64 / s.routes.max(1) as f64
     );
     println!("removed vehicles were: {:?}", s.teleport_reasons);
+    let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
+    places.sort_unstable_by(|a, b| b.cmp(a));
+    let top: Vec<String> = places
+        .iter()
+        .take(25)
+        .map(|(n, e)| format!("e{e}:{n}"))
+        .collect();
+    println!("removed most often on: {}", top.join(" "));
     // Where vehicles stand in queues: vehicles stopped over 30 s per edge (DUMP_QUEUES=file).
     if let Ok(path) = std::env::var("DUMP_QUEUES") {
         let mut stopped = vec![0u32; engine.net.edge_count()];

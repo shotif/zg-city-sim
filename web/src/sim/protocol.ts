@@ -10,6 +10,8 @@ export interface InitMessage {
   seed: number;
   /** Car trips per day at demand scale 1. */
   dailyTrips: number;
+  /** Share of the demand to run. */
+  demandScale: number;
   /** Simulated time to start at (s since midnight). */
   startTime: number;
   /** Run as fast as possible until this time, so the city fills with traffic. */

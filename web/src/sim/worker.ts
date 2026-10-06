@@ -38,6 +38,7 @@ async function init(message: InitMessage): Promise<void> {
   engine = await TrafficEngine.create(await response.arrayBuffer());
   for (const [name, data] of Object.entries(message.arrays)) engine.setArray(name, data);
   engine.build(message.seed, message.dailyTrips);
+  engine.setDemandScale(message.demandScale);
   engine.setTime(message.startTime);
   if (closed) engine.setClosed(closed);
   speed = message.speed;

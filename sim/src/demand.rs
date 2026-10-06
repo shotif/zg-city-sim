@@ -42,6 +42,10 @@ const COMMUTERS_FROM_OUTSIDE: f32 = 0.75;
 const GATEWAY_DECAY: f32 = 12_000.0;
 /// Through traffic leaves at a gateway at least this far (m) from where it came in.
 const THROUGH_MIN_DISTANCE: f32 = 10_000.0;
+/// How much earlier (s) traffic coming in crosses the map's edge than the city's own trips
+/// of the same purpose start: it still has 20-40 minutes to drive, and commuters from far
+/// away set off early to be at work on time.
+const INBOUND_LEAD: f64 = 2_700.0;
 /// Share of through traffic that drives at the hours of city traffic; the rest is spread
 /// evenly over the day (long-distance and freight traffic).
 const THROUGH_PEAKED: f32 = 0.7;
@@ -440,7 +444,7 @@ impl Demand {
         let vtype = |truck: bool| if truck { vtype::TRUCK } else { vtype::CAR };
 
         // Into the map: commuters to work, residents coming home, everyone else.
-        let (n, mix) = self.inbound.due(t, dt, scale);
+        let (n, mix) = self.inbound.due(t + INBOUND_LEAD, dt, scale);
         for _ in 0..n {
             let Some(g) = sample(&self.inbound.cum, rng) else {
                 break;

@@ -57,6 +57,7 @@ async function loadLayerArrays(
 interface TravelData {
   arrays: Record<string, TypedArray>;
   dailyTrips: number;
+  demandScale: number;
 }
 
 /** Start the traffic simulation in a worker on the loaded network. */
@@ -74,6 +75,7 @@ function startSimulation(
       arrays: { ...net.arrays, laneShape: net.laneShape, laneShapeY, ...travel.arrays },
       seed: 1,
       dailyTrips: travel.dailyTrips,
+      demandScale: travel.demandScale,
       startTime: START_TIME,
       warmUntil: WARM_UNTIL,
       speed,
@@ -247,6 +249,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       ]).then(([demand, transit]) => ({
         arrays: { ...demand, ...transit },
         dailyTrips: demand && demandLayer ? demandLayer.dailyCarTrips : DAILY_TRIPS,
+        demandScale: demandLayer?.demandScale ?? 1,
       }));
       loadRoadNetwork(networkLayer.index)
         .then(async (net) => {

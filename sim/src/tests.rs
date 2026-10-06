@@ -838,3 +838,50 @@ fn guessed_signal_programs_give_green_by_the_lanes_served() {
     let durations: Vec<f32> = (0..4).map(|p| d.phase_duration[p]).collect();
     assert_eq!(durations, vec![42.0, 3.0, 18.0, 3.0]);
 }
+
+#[test]
+fn a_queue_leaves_a_green_light_at_a_realistic_saturation_flow() {
+    // 30 cars queue at a red light on one lane, then get green.
+    let mut b = Builder::default();
+    let j0 = b.junction(0.0, 0.0);
+    let j1 = b.junction(1000.0, 0.0);
+    let j2 = b.junction(1500.0, 0.0);
+    let e0 = b.road(j0, j1, 1, 13.9);
+    let e1 = b.road(j1, j2, 1, 13.9);
+    let (l0, l1) = (b.lane(e0, 0), b.lane(e1, 0));
+    let link = b.connect(l0, l1, j1, dir::STRAIGHT, b'O');
+    b.signal(&[link], &[(200.0, "r"), (200.0, "G")]);
+    let mut engine = Engine::new(b.build(), 5);
+    for k in 0..30 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 3.0,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 200.0, |_| {});
+    assert_eq!(engine.vehicles_on(l0).len(), 30);
+    // Time each car crosses the stop line.
+    let mut crossed = Vec::new();
+    run_until(&mut engine, 120.0, |e| {
+        while crossed.len() < 30 - e.vehicles_on(l0).len() {
+            crossed.push(e.time);
+        }
+    });
+    assert_eq!(crossed.len(), 30);
+    // Saturation flow, from the fifth car on once the queue is moving: the Highway Capacity
+    // Manual's base is 1,900 cars per lane per hour.
+    let flow = 20.0 * 3600.0 / (crossed[24] - crossed[4]);
+    assert!(
+        (1_700.0..=2_100.0).contains(&flow),
+        "saturation flow {flow:.0} per hour"
+    );
+    // The first car gets going within a few seconds of green.
+    assert!(
+        crossed[0] - 200.0 < 4.0,
+        "first car crossed at {}",
+        crossed[0]
+    );
+}

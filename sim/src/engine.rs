@@ -265,6 +265,8 @@ pub struct Stats {
     pub buses: u32,
     /// Running vehicles coming from or going beyond the map.
     pub outside: u32,
+    /// Vehicles removed (stuck) per edge.
+    pub removed_at: std::collections::BTreeMap<u32, u32>,
 }
 
 enum Finish {
@@ -1751,7 +1753,11 @@ impl Engine {
                 self.stats.trip_km_sum += veh.distance as f64 / 1000.0;
                 self.stats.trip_count += 1;
             }
-            Finish::Teleported => self.stats.teleported += 1,
+            Finish::Teleported => {
+                self.stats.teleported += 1;
+                let edge = self.net.d.lane_edge[veh.lane as usize];
+                *self.stats.removed_at.entry(edge).or_default() += 1;
+            }
         }
         veh.serial = 0;
         veh.route.clear();

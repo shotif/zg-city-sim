@@ -57,3 +57,9 @@ def test_report_separates_inputs_from_independent_checks():
     # 24,000 simulated against 30,000 counted.
     assert "| 30,000 | 24,000 | -20% |" in independent
     assert "Busiest hour: 23:00" in text
+    assert "At full demand" not in text
+
+    # A run of half the demand is compared at full demand: 48,000 against 30,000.
+    text = report(placed, [], {**day, "demandScale": 0.5})
+    assert "| 30,000 | 24,000 | 48,000 | +60% |" in text
+    assert "simulates 50% of the estimated demand" in text
