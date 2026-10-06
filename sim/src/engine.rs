@@ -20,7 +20,8 @@ use crate::idm;
 use crate::network::{NONE, Network, dir};
 use crate::rng::Rng;
 use crate::router::{Landmarks, Router};
-use crate::vtype::{TYPES, VType};
+use crate::transit::{PendingRun, Transit, TransitRun};
+use crate::vtype::{self, TYPES, VType};
 
 /// Simulation step (s).
 pub const DT: f32 = 0.5;
@@ -31,6 +32,10 @@ pub const RENDER_STRIDE: usize = 8;
 pub const STUCK_TIME: f32 = 300.0;
 /// Seconds before a vehicle whose detour failed tries again.
 const REROUTE_RETRY: f32 = 20.0;
+/// Shortest stop of a bus or tram (s), for passengers to get on and off.
+const MIN_DWELL: [f64; 4] = [0.0, 0.0, 15.0, 20.0];
+/// Trips that cannot start within this time (s), for lack of room at the stop, are dropped.
+const MAX_TRANSIT_DELAY: f64 = 300.0;
 /// Trips that cannot be inserted within this time are dropped.
 const MAX_INSERT_DELAY: f64 = 120.0;
 /// Safety margin (s) a yielding vehicle wants before a priority vehicle arrives.
@@ -77,6 +82,8 @@ pub mod stat {
     pub const MEAN_TRIP_KM: usize = 11;
     pub const PENDING: usize = 12;
     pub const SLOTS: usize = 13;
+    pub const TRAMS: usize = 14;
+    pub const BUSES: usize = 15;
     pub const LEN: usize = 16;
 }
 
@@ -160,6 +167,8 @@ pub struct Vehicle {
     pub blink: i8,
     pub depart: f64,
     pub distance: f32,
+    /// Timetabled trip of a bus or tram.
+    pub transit: Option<Box<TransitRun>>,
 }
 
 impl Vehicle {
@@ -190,6 +199,7 @@ impl Vehicle {
             blink: 0,
             depart: 0.0,
             distance: 0.0,
+            transit: None,
         }
     }
 
@@ -224,6 +234,8 @@ pub struct Stats {
     pub teleport_reasons: std::collections::BTreeMap<String, u64>,
     /// Details of the first few removals per reason (with `Engine::debug`).
     pub teleport_log: Vec<String>,
+    pub trams: u32,
+    pub buses: u32,
 }
 
 enum Finish {
@@ -252,6 +264,10 @@ struct Plan {
     blink: i8,
     /// Stop sign this vehicle has now stopped at.
     stopped_at: u32,
+    /// A bus or tram standing at its next stop.
+    at_stop: bool,
+    /// A bus or tram that drove past its next stop.
+    missed_stop: bool,
 }
 
 enum LaneChange {
@@ -314,6 +330,8 @@ pub struct Engine {
     pending: BinaryHeap<Pending>,
     waiting: VecDeque<Waiting>,
     pub demand: Option<Demand>,
+    /// Timetabled trams and buses.
+    pub transit: Option<Transit>,
     /// Scale applied to generated demand (1 = full).
     pub demand_scale: f32,
     pub stats: Stats,
@@ -412,6 +430,7 @@ impl Engine {
             pending: BinaryHeap::new(),
             waiting: VecDeque::new(),
             demand: None,
+            transit: None,
             demand_scale: 1.0,
             stats: Stats::default(),
             render: Vec::new(),
@@ -431,6 +450,32 @@ impl Engine {
     pub fn set_time(&mut self, t: f64) {
         self.time = t;
         self.reset_signals();
+        if let Some(mut tr) = self.transit.take() {
+            // Trips under way start from the stop they last left.
+            tr.day_start = (t / 86_400.0).floor() * 86_400.0;
+            let tod = t - tr.day_start;
+            tr.next_trip = 0;
+            tr.waiting.clear();
+            while tr.next_trip < tr.data.trips() && tr.start_time(tr.next_trip) <= tod {
+                let trip = tr.next_trip;
+                tr.next_trip += 1;
+                if tr.end_time(trip) <= tod {
+                    continue;
+                }
+                let stops = tr.data.stops(trip as u32);
+                let from = stops
+                    .clone()
+                    .take_while(|&i| (tr.data.stop_time[i] as f64) <= tod)
+                    .last()
+                    .unwrap_or(stops.start);
+                tr.waiting.push(PendingRun {
+                    trip: trip as u32,
+                    from_stop: from as u32,
+                    since: t,
+                });
+            }
+            self.transit = Some(tr);
+        }
     }
 
     pub fn add_trip(&mut self, trip: Trip) {
@@ -461,6 +506,7 @@ impl Engine {
         lap(self, 2);
         self.lane_changes();
         lap(self, 3);
+        self.start_transit();
         self.insert_vehicles();
         lap(self, 4);
         self.collect_stats();
@@ -609,6 +655,9 @@ impl Engine {
                     None
                 };
                 let plan = self.plan_vehicle(v, leader);
+                if plan.at_stop || plan.missed_stop {
+                    self.serve_stop(v, plan.missed_stop);
+                }
                 self.acc[v as usize] = plan.acc;
                 let veh = &mut self.vehs[v as usize];
                 if let Some(pass) = plan.pass {
@@ -637,6 +686,8 @@ impl Engine {
             pass: None,
             blink: 0,
             stopped_at: NONE,
+            at_stop: false,
+            missed_stop: false,
         };
 
         let mut have_leader = false;
@@ -648,6 +699,22 @@ impl Engine {
         }
         if veh.coop != NONE {
             acc = acc.min(self.yield_to_changer(veh, vmax));
+        }
+
+        // A bus or tram stops at its next stop: on this lane, or further ahead (below).
+        let mut stop_ahead = self.next_stop_of(veh);
+        if let Some((route_idx, frac)) = stop_ahead
+            && route_idx == veh.route_idx
+            && !net.lane_internal[lane as usize]
+        {
+            let gap = frac * d_.lane_length[lane as usize] - veh.pos;
+            if gap < -2.0 {
+                plan.missed_stop = true;
+            } else {
+                acc = acc.min(stop_at(speed, vmax, gap + 0.5, p));
+                plan.at_stop = gap < 2.0 && speed < 0.3;
+            }
+            stop_ahead = None;
         }
 
         // Look ahead along the route: stop lines, junction lanes, the next vehicle ahead.
@@ -726,6 +793,14 @@ impl Engine {
                 if b > 0.2 {
                     acc = acc.min(-b);
                 }
+            }
+            if let Some((route_idx, frac)) = stop_ahead
+                && route_idx == route_i
+                && !net.lane_internal[next as usize]
+            {
+                let gap = dist + frac * d_.lane_length[next as usize];
+                acc = acc.min(stop_at(speed, vmax, gap + 0.5, p));
+                stop_ahead = None;
             }
             if let (false, Some(&r)) = (have_leader, self.lane_vehs[next as usize].first()) {
                 let rv = &self.vehs[r as usize];
@@ -1146,6 +1221,192 @@ impl Engine {
             .unwrap_or(NONE)
     }
 
+    // ---- scheduled trams and buses --------------------------------------------------------------
+
+    /// (route index, lane fraction) of a bus or tram's next stop.
+    fn next_stop_of(&self, veh: &Vehicle) -> Option<(u32, f32)> {
+        let run = veh.transit.as_ref()?;
+        run.target(&self.transit.as_ref()?.data)
+    }
+
+    /// A bus or tram at (or past) its next stop: wait for passengers and the timetable.
+    fn serve_stop(&mut self, v: u32, missed: bool) {
+        let Some(tr) = self.transit.as_ref() else {
+            return;
+        };
+        let time = self.time;
+        let veh = &mut self.vehs[v as usize];
+        let vtype = veh.vtype as usize;
+        let Some(run) = veh.transit.as_mut() else {
+            return;
+        };
+        let Some(stop) = run.next_stop() else {
+            return;
+        };
+        if missed {
+            run.next += 1;
+            run.dwelling = false;
+        } else if !run.dwelling {
+            run.dwelling = true;
+            let scheduled = tr.day_start + tr.data.stop_time[stop as usize] as f64;
+            run.dwell_until = (time + MIN_DWELL[vtype]).max(scheduled);
+        } else if time >= run.dwell_until {
+            run.next += 1;
+            run.dwelling = false;
+        }
+    }
+
+    /// Start the trips due now (and retry those that found no room at their stop).
+    fn start_transit(&mut self) {
+        let Some(mut tr) = self.transit.take() else {
+            return;
+        };
+        let horizon = self.time + DT as f64;
+        loop {
+            if tr.next_trip >= tr.data.trips() {
+                // A new service day once the last trip has started and midnight passed.
+                if tr.data.trips() == 0 || self.time < tr.day_start + 86_400.0 {
+                    break;
+                }
+                tr.day_start += 86_400.0;
+                tr.next_trip = 0;
+            }
+            let trip = tr.next_trip;
+            if tr.day_start + tr.start_time(trip) > horizon {
+                break;
+            }
+            tr.next_trip += 1;
+            let from_stop = tr.data.trip_stops[trip];
+            tr.waiting.push(PendingRun {
+                trip: trip as u32,
+                from_stop,
+                since: self.time,
+            });
+        }
+        let waiting = std::mem::take(&mut tr.waiting);
+        for run in waiting {
+            match self.start_run(&mut tr, run.trip, run.from_stop) {
+                Some(true) => tr.started += 1,
+                Some(false) if self.time - run.since < MAX_TRANSIT_DELAY => tr.waiting.push(run),
+                _ => tr.failed += 1,
+            }
+        }
+        self.transit = Some(tr);
+    }
+
+    /// Put a bus or tram on the road at stop `from_stop` of `trip`. Some(false): no room
+    /// yet; None: the trip cannot be routed.
+    fn start_run(&mut self, tr: &mut Transit, trip: u32, from_stop: u32) -> Option<bool> {
+        let data = &tr.data;
+        let stops = data.stops(trip);
+        let vtype = data.trip_type[trip as usize];
+        let p = &TYPES[vtype as usize];
+        let first = from_stop as usize;
+        let mut route = vec![data.stop_edge[first]];
+        let mut served = vec![(first as u32, 0u32)];
+        // Drive stop to stop; a stop the network cannot reach (or one behind the last on
+        // the same edge) is skipped.
+        let mut at = first;
+        for next in first + 1..stops.end {
+            let (e0, e1) = (data.stop_edge[at], data.stop_edge[next]);
+            if e0 == e1 {
+                if data.stop_frac[next] < data.stop_frac[at] {
+                    tr.skipped_stops += 1;
+                    continue;
+                }
+            } else {
+                let key = (e0, e1, p.vclass);
+                let leg = match tr.legs.get(&key) {
+                    Some(leg) => leg.clone(),
+                    None => {
+                        let leg = self
+                            .router
+                            .route(&self.net, &self.free_time, e0, e1, p.vclass);
+                        tr.legs.insert(key, leg.clone());
+                        leg
+                    }
+                };
+                let Some(leg) = leg else {
+                    tr.skipped_stops += 1;
+                    continue;
+                };
+                route.extend_from_slice(&leg[1..]);
+            }
+            served.push((next as u32, route.len() as u32 - 1));
+            at = next;
+        }
+        if served.len() < 2 {
+            return None;
+        }
+
+        // On the lane of the first stop that suits the route (trams have one).
+        let edge = route[0];
+        let mut lane = NONE;
+        let mut best = -1;
+        for l in self.net.edge_lanes(edge) {
+            let s = self.lane_score(l, &route, 0, p.vclass);
+            if s > best {
+                best = s;
+                lane = l;
+            }
+        }
+        if lane == NONE || best < 0 {
+            return None;
+        }
+        let len = self.net.d.lane_length[lane as usize];
+        let pos = (data.stop_frac[first] * len)
+            .max(p.length.min(len))
+            .min(len);
+        let list = &self.lane_vehs[lane as usize];
+        let idx = list.partition_point(|&u| self.vehs[u as usize].pos < pos);
+        if let Some(&l) = list.get(idx) {
+            let lv = &self.vehs[l as usize];
+            if lv.pos - lv.params().length - pos < p.min_gap {
+                return Some(false);
+            }
+        }
+        if idx > 0 {
+            let fv = &self.vehs[list[idx - 1] as usize];
+            let fp = fv.params();
+            let need = fp.min_gap + fv.speed * fv.speed / (2.0 * fp.decel);
+            if pos - p.length - fv.pos < need {
+                return Some(false);
+            }
+        }
+
+        let last = *route.last().unwrap();
+        let last_frac = data.stop_frac[served.last().unwrap().0 as usize];
+        let last_len = self.net.edge_length[last as usize];
+        let arrival_pos = (last_frac * last_len + 1.0).min(last_len - 0.1);
+        let scheduled = tr.day_start + data.stop_time[first] as f64;
+        let next_link = self.choose_link(lane, &route, 0, p.vclass);
+        let run = TransitRun {
+            trip,
+            stops: served,
+            next: 0,
+            dwell_until: scheduled,
+            dwelling: true,
+        };
+        let v = self.alloc_vehicle();
+        let look = (self.rng.next_u32() & 0xffff) as u16;
+        let veh = &mut self.vehs[v as usize];
+        veh.vtype = vtype;
+        veh.look = look;
+        veh.lane = lane;
+        veh.pos = pos;
+        veh.route = route;
+        veh.next_link = next_link;
+        veh.arrival_pos = arrival_pos;
+        veh.depart = self.time;
+        veh.transit = Some(Box::new(run));
+        self.lane_vehs[lane as usize].insert(idx, v);
+        if !self.lane_active[lane as usize] {
+            self.lane_active[lane as usize] = true;
+            self.active_lanes.push(lane);
+        }
+        Some(true)
+    }
+
     // ---- movement ---------------------------------------------------------------------------
 
     fn move_vehicles(&mut self) {
@@ -1175,7 +1436,7 @@ impl Engine {
                 veh.speed = v1;
                 veh.accel = a;
                 veh.distance += ds;
-                if v1 < 0.1 {
+                if v1 < 0.1 && !veh.transit.as_ref().is_some_and(|run| run.dwelling) {
                     veh.wait += DT;
                     veh.wait_total += DT;
                 } else {
@@ -1291,6 +1552,7 @@ impl Engine {
                 let next_link = self.choose_link(next, &veh.route, route_idx, p.vclass);
                 let detour = next_link == NONE
                     && (route_idx as usize + 1) < veh.route.len()
+                    && veh.transit.is_none()
                     && self.must_detour(next);
                 let will_pass = next_link != NONE && self.signal_allows(next_link, veh.stop_done);
                 let veh = &mut self.vehs[v as usize];
@@ -1376,14 +1638,17 @@ impl Engine {
         let d = &net.d;
         let veh = &self.vehs[v as usize];
         let lane = veh.lane;
-        if net.lane_internal[lane as usize] {
+        // Trams stay on their rails; nobody changes lanes inside a junction.
+        if net.lane_internal[lane as usize] || veh.vtype == vtype::TRAM {
             return None;
         }
         let p = veh.params();
         let len = d.lane_length[lane as usize];
         let dist = len - veh.pos;
-        // Stuck at the end of a lane with no way on along the route: go another way.
-        if veh.next_link == NONE
+        // Stuck at the end of a lane with no way on along the route: go another way (buses
+        // and trams keep to their route and stops).
+        if veh.transit.is_none()
+            && veh.next_link == NONE
             && veh.route_idx as usize + 1 < veh.route.len()
             && dist < 5.0
             && veh.wait > 20.0
@@ -2034,6 +2299,7 @@ impl Engine {
         let mut sum = 0.0f64;
         let mut running = 0u32;
         let mut stopped = 0u32;
+        let (mut trams, mut buses) = (0u32, 0u32);
         let mut stuck = std::mem::take(&mut self.scratch);
         stuck.clear();
         let d = &self.net.d;
@@ -2044,6 +2310,11 @@ impl Engine {
                 let veh = &self.vehs[v as usize];
                 sum += veh.speed as f64;
                 running += 1;
+                match veh.vtype {
+                    vtype::TRAM => trams += 1,
+                    vtype::BUS => buses += 1,
+                    _ => {}
+                }
                 if veh.speed < 0.1 {
                     stopped += 1;
                     if veh.wait > STUCK_TIME {
@@ -2095,6 +2366,8 @@ impl Engine {
         let s = &mut self.stats;
         s.running = running;
         s.stopped = stopped;
+        s.trams = trams;
+        s.buses = buses;
         s.mean_speed = if running > 0 {
             (sum / running as f64) as f32
         } else {
@@ -2146,6 +2419,8 @@ impl Engine {
         out[stat::MEAN_TRIP_KM] = s.mean_trip_km as f64;
         out[stat::PENDING] = self.pending.len() as f64;
         out[stat::SLOTS] = self.vehs.len() as f64;
+        out[stat::TRAMS] = s.trams as f64;
+        out[stat::BUSES] = s.buses as f64;
         out
     }
 

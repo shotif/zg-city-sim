@@ -60,11 +60,12 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
 **Status (M2, 2026-10-06).** The engine (`sim/`) runs the whole city in the browser:
 - **Demand from buildings** (`pipeline/demand.py`): every building gets residents and jobs from its floor area (footprint × storeys) and use. The use comes from its OSM type, else the OSM land use around it, else its shape. The City's 767,131 residents (census 2021) and about 430k jobs are spread over residential and work floor area; the towns around it inside the map get about 260k residents and 80k jobs. Each building attaches to its nearest street.
 - That makes 1.03M residents and about 669k car trips a weekday (1.84 trips per person × 46 % by car ÷ 1.3 per car), timed by an hourly profile. Destinations follow a gravity model: the mean car trip is about 7 km.
+- **ZET trams and buses** on a weekday's GTFS timetable (13,529 trips: 3,838 tram, 9,691 bus). The pipeline places each stop on a lane of its mode in the route's direction of travel (shape-based). In the engine, each trip drives stop to stop, waits at least 15 s (bus) or 20 s (tram) at each stop and never leaves before its scheduled time. Trips already under way when the simulation starts begin at the stop they last left, so the morning service (about 150 trams, 200 buses) is on the streets at once. Trams keep to their tracks: separate edges, with SUMO's railway topology repair for tracks mapped against their direction.
 - IDM car following; lane changes to reach the next turn plus MOBIL overtaking; SUMO's junction right-of-way (each link yields to its `response` links and never enters while a `foes` link's vehicle is inside); stop signs.
 - No entering a junction without room behind it, looking through the sub-metre edges netconvert leaves inside junction clusters.
 - Drivers who have waited 15 s push in where oncoming drivers can still brake, and drivers who could stop let long waiters go first. After a minute, drivers enter a full junction so gridlocks can unwind.
 - Actuated signals from the SUMO programs: a green phase ends after its minimum once nobody is arriving, at most 10 s after its planned length.
-- U-turns only at dead ends.
+- U-turns: a vehicle class plans one only where it has no other way on (buses still turn at terminals).
 - A* routing with landmark lower bounds (ALT), on travel times the simulation measures every minute.
 - Vehicles stuck for 5 minutes are removed, as SUMO teleports them: about 0.7 % of trips in a 07:00–07:30 peak test, mostly queues spilling back.
 - Native speed about 28× real time in the morning peak (14,000 vehicles). The browser runs the WebAssembly build in a worker.
@@ -74,6 +75,8 @@ Known gaps:
 - Guessed signal programs at big junctions have up to 7 green phases; real timings would help a lot (M3).
 - Routing is half the engine's time; a compact routing graph or contraction hierarchies would help.
 - Commuters from outside the map and through traffic are not modelled yet (M3).
+- Buses stop in whatever lane they are in, not at the kerb; one bus terminal (Črnomerec) is unreachable in the converted network, so its stop is skipped.
+- Trams and cars do not share lanes yet: tram tracks are separate edges (joining them into street lanes broke tram connectivity), so cars only meet trams at junctions.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.

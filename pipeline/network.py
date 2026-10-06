@@ -75,16 +75,16 @@ NETCONVERT_OPTIONS = [
     "--osm.layer-elevation", "6",
     "--osm.all-attributes", "true",
     "--osm.extra-attributes", "bridge,tunnel,layer",
-    # Tram tracks running along a street become tram-permitting lanes of that street.
-    "--edges.join-tram-dist", "1.6",
+    # Tram tracks stay edges of their own: joining them into street lanes
+    # (--edges.join-tram-dist) loses tram connections wherever the tracks leave the street.
+    # Repair track topology: some OSM tracks are mapped against their direction, leaving
+    # dead ends where two one-way tracks start at the same switch.
+    "--railway.topology.repair",
     "--remove-edges.isolated",
     "--keep-edges.components", "1",
     "--output.street-names",
     "--output.original-names",
     "--junctions.corner-detail", "5",
-    # U-turns only at dead ends: elsewhere they are rare in Zagreb, and routes full of them
-    # gridlock short stretches of dual carriageway.
-    "--no-turnarounds.except-deadend",
     "--no-warnings",
 ]  # fmt: skip
 

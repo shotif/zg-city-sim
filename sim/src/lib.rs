@@ -16,6 +16,7 @@ pub mod idm;
 pub mod network;
 pub mod rng;
 pub mod router;
+pub mod transit;
 pub mod vtype;
 
 #[cfg(test)]

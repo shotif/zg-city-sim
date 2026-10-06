@@ -41,6 +41,8 @@ export const STAT = {
   meanTripKm: 11,
   pending: 12,
   slots: 13,
+  trams: 14,
+  buses: 15,
 } as const;
 
 /** Words per vehicle slot in the render buffer and what they hold (engine::write_render). */

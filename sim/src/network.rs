@@ -295,12 +295,23 @@ impl Network {
             }
         }
 
-        // Routing graph: edge -> next edge, merged over all links.
+        // Routing graph: edge -> next edge, merged over all links. A class may plan a U-turn
+        // only where it has no other way on: U-turns are rare in Zagreb, and routes full of
+        // them gridlock short stretches of dual carriageway; buses still turn at terminals.
+        let mut onward = vec![0u16; n_edges];
+        for l in 0..n_links {
+            if d.link_dir[l] != dir::TURN {
+                onward[d.lane_edge[d.link_from[l] as usize] as usize] |= link_allow[l];
+            }
+        }
         let mut pairs: Vec<(u32, u32, u16, f32)> = Vec::with_capacity(n_links);
         for l in 0..n_links {
             let from = d.link_from[l] as usize;
             let to = d.link_to[l] as usize;
-            let allow = link_allow[l];
+            let mut allow = link_allow[l];
+            if d.link_dir[l] == dir::TURN {
+                allow &= !onward[d.lane_edge[from] as usize] | vclass::BUS | vclass::TRAM;
+            }
             let penalty = match d.link_dir[l] {
                 dir::LEFT | dir::PARTLEFT => 4.0,
                 dir::TURN => 60.0,

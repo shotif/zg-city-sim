@@ -3,7 +3,7 @@
 A realistic traffic and city-building simulator of Zagreb, Croatia, running entirely in the browser.
 
 - Whole City of Zagreb in 3D, built from open data (terrain, land cover, roads, the City's official 3D buildings).
-- Live traffic simulation: cars, trucks, ZET trams and buses (from milestone M2).
+- Live traffic simulation: cars and trucks from where people live and work, ZET trams and buses on their timetable.
 - Build roads and bridges, change lanes and signals, zone new neighbourhoods, and watch traffic adapt.
 
 See [docs/PLAN.md](docs/PLAN.md) for the vision, architecture and roadmap.
@@ -26,7 +26,8 @@ Requirements: Node.js 22+, Python 3.12+, Rust (stable) with the WebAssembly targ
 # 1. Build the data (downloads ~400 MB on first run, cached in pipeline/.cache):
 #    terrain + ground (elevation, land cover), network (OpenStreetMap -> SUMO road network),
 #    buildings (City of Zagreb ZG3D model inside the City, OpenStreetMap outside),
-#    demand (residents and jobs per street from buildings, census and land use)
+#    demand (residents and jobs per street from buildings, census and land use),
+#    transit (ZET's weekday tram and bus timetable, stops placed on the network)
 python -m venv .venv && . .venv/bin/activate
 pip install -r pipeline/requirements.txt
 python -m pipeline all
@@ -45,7 +46,7 @@ To run the engine natively on the same data (faster to iterate on, with a breakd
 vehicles are held up):
 
 ```bash
-gunzip -k web/public/data/network/net.bin.gz web/public/data/demand/demand.bin.gz
+gunzip -k web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
 cd sim
 cargo test
 cargo run --release --example run -- ../web/public/data/network 7 30   # 07:00, 30 minutes

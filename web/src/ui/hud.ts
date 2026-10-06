@@ -20,7 +20,9 @@ export interface HudSim {
   rate: number;
   warming: boolean;
   vehicles: number;
-  /** Mean speed of moving traffic, km/h. */
+  trams: number;
+  buses: number;
+  /** Mean speed of all traffic, km/h. */
   meanSpeed: number;
 }
 
@@ -245,7 +247,8 @@ export class Hud {
     const lagging = !sim.paused && !sim.warming && sim.rate < sim.speed * 0.8;
     this.simInfo.textContent = sim.warming
       ? 'Filling the streets with traffic…'
-      : `${sim.vehicles.toLocaleString('en')} vehicles · ${Math.round(sim.meanSpeed)} km/h average` +
+      : `${sim.vehicles.toLocaleString('en')} vehicles · ${sim.trams} trams · ${sim.buses} buses · ` +
+        `${Math.round(sim.meanSpeed)} km/h` +
         (lagging ? ` · running at ${sim.rate.toFixed(sim.rate < 10 ? 1 : 0)}×` : '');
   }
 

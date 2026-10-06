@@ -569,3 +569,79 @@ fn render_buffer_places_vehicles_on_their_lane() {
     );
     assert_eq!(engine.render[o + 5], engine.vehs[v as usize].serial);
 }
+
+#[test]
+fn bus_keeps_its_timetable() {
+    use crate::transit::{Transit, TransitData};
+    let (b, e0, e1) = straight_road(500.0, 1);
+    let net = b.build();
+    let lane0 = net.edge_lanes(e0).start;
+    let len0 = net.d.lane_length[lane0 as usize];
+    let mut engine = Engine::new(net, 3);
+    // Stops at 20 % and 80 % of the first road and half way along the second; the bus is
+    // due at the middle stop only at 100 s, long after it can get there.
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::BUS],
+        trip_route: vec![0],
+        trip_stops: vec![0, 3],
+        stop_edge: vec![e0, e0, e1],
+        stop_frac: vec![0.2, 0.8, 0.5],
+        stop_time: vec![10.0, 100.0, 140.0],
+    }));
+    engine.set_time(0.0);
+    let middle = 0.8 * len0;
+    let mut left_middle_at = None;
+    let mut waited_at_middle = false;
+    run_until(&mut engine, 300.0, |e| {
+        for v in e.vehs.iter().filter(|v| v.alive() && v.vtype == vtype::BUS) {
+            if v.lane == lane0 && (v.pos - middle).abs() < 2.5 && v.speed < 0.3 {
+                waited_at_middle = true;
+            }
+            if left_middle_at.is_none()
+                && (v.lane != lane0 || v.pos > middle + 3.0)
+                && waited_at_middle
+            {
+                left_middle_at = Some(e.time);
+            }
+        }
+    });
+    assert!(waited_at_middle, "the bus stopped at the middle stop");
+    let left = left_middle_at.expect("the bus went on");
+    assert!(
+        left >= 100.0,
+        "left the middle stop at {left}, before its scheduled 100 s"
+    );
+    assert!(
+        left < 120.0,
+        "left the middle stop at {left}, long after 100 s"
+    );
+    let tr = engine.transit.as_ref().unwrap();
+    assert_eq!((tr.started, tr.failed), (1, 0));
+    assert_eq!(engine.stats.arrived, 1);
+}
+
+#[test]
+fn trips_under_way_start_from_their_current_stop() {
+    use crate::transit::{Transit, TransitData};
+    let (b, e0, e1) = straight_road(500.0, 1);
+    let net = b.build();
+    let lane1 = net.edge_lanes(e1).start;
+    let mut engine = Engine::new(net, 3);
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::TRAM],
+        trip_route: vec![0],
+        trip_stops: vec![0, 3],
+        stop_edge: vec![e0, e1, e1],
+        stop_frac: vec![0.2, 0.3, 0.9],
+        stop_time: vec![3600.0, 3700.0, 3800.0],
+    }));
+    // Joining at 3720 s: the tram has left its second stop, on the second road.
+    engine.set_time(3720.0);
+    engine.step();
+    let tram = engine
+        .vehs
+        .iter()
+        .find(|v| v.alive())
+        .expect("the tram is on the road");
+    assert_eq!((tram.vtype, tram.lane), (vtype::TRAM, lane1));
+}

@@ -61,8 +61,14 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
     timeout: 150_000,
   });
   await expect(page.locator('.hud-sim-clock')).toHaveText(/^07:0\d$/);
-  const running = await page.evaluate(() => window.__ZG__?.sim?.stats?.[1] ?? 0);
+  const [running, trams, buses] = await page.evaluate(() => {
+    const stats = window.__ZG__?.sim?.stats;
+    return [stats?.[1] ?? 0, stats?.[14] ?? 0, stats?.[15] ?? 0];
+  });
   expect(running).toBeGreaterThan(1000);
+  // ZET runs about 150 trams and 200 buses at 7 in the morning.
+  expect(trams).toBeGreaterThan(80);
+  expect(buses).toBeGreaterThan(100);
 
   // Look at the busiest place near the centre.
   const spot = await page.evaluate(() => {

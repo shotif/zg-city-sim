@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 
 import { CameraRig, type ViewMode } from './camera/CameraRig';
 import { type PackedIndex, type TypedArray, loadPacked } from './data/packed';
-import { DATA_URL, type DemandLayer, attributions, loadManifest } from './manifest';
+import { DATA_URL, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
 import { STAT } from './sim/wasm';
 import { Hud } from './ui/hud';
@@ -23,25 +23,34 @@ const START_TIME = 6 * 3600 + 50 * 60;
 const WARM_UNTIL = 7 * 3600;
 const WASM_URL = `${import.meta.env.BASE_URL}sim/zg_sim.wasm`;
 
-/** Residents and jobs per street edge, for the simulation's trips. */
-interface Demand {
-  arrays: Record<string, TypedArray>;
-  dailyTrips: number;
+/** Arrays of a packed data layer (by its index path), or undefined if it fails to load. */
+async function loadLayerArrays(
+  indexPath: string | undefined,
+  what: string,
+): Promise<Record<string, TypedArray> | undefined> {
+  if (!indexPath) return undefined;
+  try {
+    const response = await fetch(DATA_URL + indexPath);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const index = (await response.json()) as PackedIndex;
+    const folder = indexPath.slice(0, indexPath.lastIndexOf('/') + 1);
+    return await loadPacked(DATA_URL + folder + index.file, index);
+  } catch (error) {
+    console.warn(`${what} could not be loaded`, error);
+    return undefined;
+  }
 }
 
-async function loadDemand(layer: DemandLayer): Promise<Demand> {
-  const response = await fetch(DATA_URL + layer.index);
-  if (!response.ok) throw new Error(`Could not load ${layer.index} (HTTP ${response.status})`);
-  const index = (await response.json()) as PackedIndex;
-  const folder = layer.index.slice(0, layer.index.lastIndexOf('/') + 1);
-  const arrays = await loadPacked(DATA_URL + folder + index.file, index);
-  return { arrays, dailyTrips: layer.dailyCarTrips };
+/** What the simulation needs besides the network: where people live and work, timetables. */
+interface TravelData {
+  arrays: Record<string, TypedArray>;
+  dailyTrips: number;
 }
 
 /** Start the traffic simulation in a worker on the loaded network. */
 function startSimulation(
   net: RoadNetwork,
-  demand: Demand | undefined,
+  travel: TravelData,
   height: HeightFn,
   speed: number,
 ): SimClient {
@@ -50,9 +59,9 @@ function startSimulation(
     {
       wasmUrl: new URL(WASM_URL, document.baseURI).href,
       // Views share the network's buffer, which is copied once; the heights are moved.
-      arrays: { ...net.arrays, laneShape: net.laneShape, laneShapeY, ...demand?.arrays },
+      arrays: { ...net.arrays, laneShape: net.laneShape, laneShapeY, ...travel.arrays },
       seed: 1,
-      dailyTrips: demand?.dailyTrips ?? DAILY_TRIPS,
+      dailyTrips: travel.dailyTrips,
       startTime: START_TIME,
       warmUntil: WARM_UNTIL,
       speed,
@@ -189,14 +198,16 @@ export async function startApp(container: HTMLElement): Promise<void> {
     if (networkLayer) {
       hud.setNotice('Loading road network…');
       const surface = terrain.heightfield.meshSurface(stride);
-      // Trips come from where people live and work; without that data, from the streets.
-      const demandLayer = manifest.layers.demand;
-      const demand = demandLayer
-        ? loadDemand(demandLayer).catch((error: unknown) => {
-            console.warn('Travel demand could not be loaded; using street-based demand', error);
-            return undefined;
-          })
-        : Promise.resolve(undefined);
+      // Car trips come from where people live and work (without that data, from the
+      // streets); trams and buses run to ZET's timetable.
+      const { demand: demandLayer, transit: transitLayer } = manifest.layers;
+      const travel: Promise<TravelData> = Promise.all([
+        loadLayerArrays(demandLayer?.index, 'Travel demand'),
+        loadLayerArrays(transitLayer?.index, 'The ZET timetable'),
+      ]).then(([demand, transit]) => ({
+        arrays: { ...demand, ...transit },
+        dailyTrips: demand && demandLayer ? demandLayer.dailyCarTrips : DAILY_TRIPS,
+      }));
       loadRoadNetwork(networkLayer.index)
         .then(async (net) => {
           roads = new RoadLayer(net, surface);
@@ -207,7 +218,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           vehicles = new VehicleLayer(surface);
           scene.add(vehicles.object);
           debug.vehicles = vehicles;
-          sim = startSimulation(net, await demand, surface, Number(params.get('speed')) || 1);
+          sim = startSimulation(net, await travel, surface, Number(params.get('speed')) || 1);
           debug.sim = sim;
           sim.onFrame = () => {
             simChanged = true;
@@ -285,6 +296,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
             rate: sim.rate,
             warming: sim.warming,
             vehicles: sim.stats[STAT.running],
+            trams: sim.stats[STAT.trams],
+            buses: sim.stats[STAT.buses],
             meanSpeed: sim.stats[STAT.meanSpeed] * 3.6,
           });
         }

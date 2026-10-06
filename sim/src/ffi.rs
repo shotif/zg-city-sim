@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use crate::demand::Demand;
 use crate::engine::{DT, Engine, RENDER_STRIDE, Trip, stat};
 use crate::network::{Network, NetworkData};
+use crate::transit::{Transit, TransitData};
 
 #[derive(Default)]
 struct State {
@@ -18,6 +19,7 @@ struct State {
     demand_edges: Vec<u32>,
     demand_home: Vec<f32>,
     demand_work: Vec<f32>,
+    transit: TransitData,
     engine: Option<Engine>,
     stats: [f64; stat::LEN],
 }
@@ -29,32 +31,28 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     f(guard.get_or_insert_with(State::default))
 }
 
-/// Allocate one of the demand arrays (per-edge home and work weights).
-fn alloc_demand_array(
-    s: &mut State,
-    name: &str,
-    count: usize,
-    elem_size: usize,
-) -> Option<*mut u8> {
-    if elem_size != 4 {
-        return None;
-    }
-    let ptr = match name {
-        "demandEdge" => {
-            s.demand_edges = vec![0; count];
-            s.demand_edges.as_mut_ptr() as *mut u8
-        }
-        "demandHome" => {
-            s.demand_home = vec![0.0; count];
-            s.demand_home.as_mut_ptr() as *mut u8
-        }
-        "demandWork" => {
-            s.demand_work = vec![0.0; count];
-            s.demand_work.as_mut_ptr() as *mut u8
-        }
+/// Zeroed storage for `count` elements, returned as a pointer for JS to fill.
+fn alloc<T: Copy + Default>(v: &mut Vec<T>, count: usize) -> *mut u8 {
+    *v = vec![T::default(); count];
+    v.as_mut_ptr() as *mut u8
+}
+
+/// Allocate one of the demand (per-edge home and work weights) or timetable arrays.
+fn alloc_extra_array(s: &mut State, name: &str, count: usize, elem_size: usize) -> Option<*mut u8> {
+    let t = &mut s.transit;
+    let (ptr, size) = match name {
+        "demandEdge" => (alloc(&mut s.demand_edges, count), 4),
+        "demandHome" => (alloc(&mut s.demand_home, count), 4),
+        "demandWork" => (alloc(&mut s.demand_work, count), 4),
+        "transitTripType" => (alloc(&mut t.trip_type, count), 1),
+        "transitTripRoute" => (alloc(&mut t.trip_route, count), 2),
+        "transitTripStops" => (alloc(&mut t.trip_stops, count), 4),
+        "transitStopEdge" => (alloc(&mut t.stop_edge, count), 4),
+        "transitStopFrac" => (alloc(&mut t.stop_frac, count), 4),
+        "transitStopTime" => (alloc(&mut t.stop_time, count), 4),
         _ => return None,
     };
-    Some(ptr)
+    (size == elem_size).then_some(ptr)
 }
 
 /// Allocate `bytes` bytes (e.g. for passing a string). Free with `zg_free`.
@@ -93,7 +91,7 @@ pub unsafe extern "C" fn zg_array(
     };
     with_state(|s| match s.data.alloc_array(name, count, elem_size) {
         Some(bytes) => bytes.as_mut_ptr(),
-        None => alloc_demand_array(s, name, count, elem_size).unwrap_or(std::ptr::null_mut()),
+        None => alloc_extra_array(s, name, count, elem_size).unwrap_or(std::ptr::null_mut()),
     })
 }
 
@@ -117,8 +115,13 @@ pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
         } else {
             Demand::from_network(&net, daily_trips)
         };
+        let transit = std::mem::take(&mut s.transit);
+        let has_transit = transit.trips() > 0 && transit.consistent(net.edge_count());
         let mut engine = Engine::new(net, seed as u64);
         engine.demand = Some(demand);
+        if has_transit {
+            engine.transit = Some(Transit::new(transit));
+        }
         s.engine = Some(engine);
         0
     })

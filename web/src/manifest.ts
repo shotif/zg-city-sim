@@ -58,6 +58,16 @@ export interface DemandLayer {
   attribution?: Attribution;
 }
 
+/** ZET trams and buses, a weekday's timetable placed on the network (pipeline/transit.py). */
+export interface TransitLayer {
+  index: string;
+  serviceDate: string;
+  trips: number;
+  tramTrips: number;
+  busTrips: number;
+  attribution?: Attribution;
+}
+
 export interface WorldManifest {
   version: number;
   generated: string;
@@ -72,6 +82,7 @@ export interface WorldManifest {
     network?: NetworkLayer;
     buildings?: BuildingsLayer;
     demand?: DemandLayer;
+    transit?: TransitLayer;
   };
 }
 

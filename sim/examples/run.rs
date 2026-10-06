@@ -1,7 +1,7 @@
 //! Run the engine natively on the network the pipeline exported, reporting traffic and
 //! why vehicles are held up.
 //!
-//!   gunzip -k web/public/data/network/net.bin.gz web/public/data/demand/demand.bin.gz
+//!   gunzip -k web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
 //!   cargo run --release --example run -- web/public/data/network [start_hour] [minutes] [daily_trips]
 
 use std::collections::HashMap;
@@ -10,6 +10,7 @@ use std::time::Instant;
 use zg_sim::demand::Demand;
 use zg_sim::engine::{DT, Engine, Holdup};
 use zg_sim::network::{Network, NetworkData};
+use zg_sim::transit::{Transit, TransitData};
 
 /// A packed file's arrays (pipeline/packed.py): name -> (type, byte offset, length).
 type Packed = (HashMap<String, (String, usize, usize)>, Vec<u8>);
@@ -54,7 +55,7 @@ fn elem_size(t: &str) -> usize {
 }
 
 /// Network arrays from `dir/net.*`, with lane shapes decoded like the app does.
-fn load(dir: &str) -> NetworkData {
+pub fn load(dir: &str) -> NetworkData {
     let (decoded, blob) =
         read_packed(dir, "net").expect("net.json and net.bin (gunzip -k net.bin.gz)");
     let mut data = NetworkData::default();
@@ -87,6 +88,44 @@ fn load(dir: &str) -> NetworkData {
     }
     data.lane_shape = shape;
     data
+}
+
+/// The timetable from `dir/transit.*`.
+pub fn load_transit(dir: &str) -> Option<TransitData> {
+    let (arrays, blob) = read_packed(dir, "transit")?;
+    let bytes = |name: &str, size: usize| -> Vec<u8> {
+        let (_, offset, length) = &arrays[name];
+        blob[*offset..*offset + length * size].to_vec()
+    };
+    let words = |name: &str| -> Vec<[u8; 4]> {
+        bytes(name, 4)
+            .chunks_exact(4)
+            .map(|c| c.try_into().unwrap())
+            .collect()
+    };
+    Some(TransitData {
+        trip_type: bytes("transitTripType", 1),
+        trip_route: bytes("transitTripRoute", 2)
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect(),
+        trip_stops: words("transitTripStops")
+            .into_iter()
+            .map(u32::from_le_bytes)
+            .collect(),
+        stop_edge: words("transitStopEdge")
+            .into_iter()
+            .map(u32::from_le_bytes)
+            .collect(),
+        stop_frac: words("transitStopFrac")
+            .into_iter()
+            .map(f32::from_le_bytes)
+            .collect(),
+        stop_time: words("transitStopTime")
+            .into_iter()
+            .map(f32::from_le_bytes)
+            .collect(),
+    })
 }
 
 /// Building-based demand from `dir/demand.*`: edges, residents and jobs per edge.
@@ -157,6 +196,14 @@ fn main() {
     let t0 = Instant::now();
     let mut engine = Engine::new(net, 1);
     engine.debug = std::env::var("DEBUG_TELEPORT").is_ok();
+    match load_transit(&format!("{dir}/../transit")) {
+        Some(data) if data.consistent(engine.net.edge_count()) => {
+            println!("transit: {} trips", data.trips());
+            engine.transit = Some(Transit::new(data));
+        }
+        Some(_) => println!("transit: timetable does not match the network"),
+        None => println!("transit: none (no transit/transit.bin)"),
+    }
     println!(
         "engine with routing landmarks ready in {:.0} ms",
         t0.elapsed().as_secs_f64() * 1e3
@@ -251,6 +298,17 @@ fn main() {
         s.route_settled as f64 / s.routes.max(1) as f64
     );
     println!("removed vehicles were: {:?}", s.teleport_reasons);
+    if let Some(tr) = &engine.transit {
+        println!(
+            "transit: {} runs started, {} could not be routed, {} stops skipped, {} waiting; now {} trams, {} buses",
+            tr.started,
+            tr.failed,
+            tr.skipped_stops,
+            tr.waiting.len(),
+            s.trams,
+            s.buses
+        );
+    }
     for line in &s.teleport_log {
         println!("  removed: {line}");
     }
