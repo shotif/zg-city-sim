@@ -1,5 +1,5 @@
 /** Messages between the main thread (SimClient) and the simulation worker. */
-import type { NumericArray } from './wasm';
+import type { NumericArray, SignalPrograms } from './wasm';
 
 export interface InitMessage {
   type: 'init';
@@ -25,7 +25,9 @@ export type ToWorker =
   | { type: 'pause'; paused: boolean }
   | { type: 'demand'; scale: number }
   /** Close these edges to routing (live road closures), replacing earlier ones. */
-  | { type: 'closures'; edges: Uint32Array };
+  | { type: 'closures'; edges: Uint32Array }
+  /** Replace the network edits in force: four words per edit (edit/edits.ts). */
+  | { type: 'edits'; id: number; words: Uint32Array };
 
 export interface FrameMessage {
   type: 'frame';
@@ -40,7 +42,9 @@ export interface FrameMessage {
 }
 
 export type FromWorker =
-  | { type: 'ready'; buildMs: number }
+  | { type: 'ready'; buildMs: number; signals: SignalPrograms }
+  /** Edits `id` are in force: how many fit the network, and the signal programs now. */
+  | { type: 'edited'; id: number; applied: number; signals: SignalPrograms }
   | FrameMessage
   | { type: 'edgeSpeeds'; time: number; speeds: Uint8Array }
   | { type: 'error'; message: string };

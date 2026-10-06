@@ -148,3 +148,96 @@ test('shows news hotspots and live road closures', async ({ page }, testInfo) =>
 
   expect(errors).toEqual([]);
 });
+
+test('edits roads with the Build tools, keeps them and shares them', async ({
+  page,
+  context,
+}, testInfo) => {
+  test.setTimeout(420_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+
+  const ready = () =>
+    page.waitForFunction(
+      () => window.__ZG__?.sim?.ready === true && window.__ZG__?.build !== undefined,
+      null,
+      { timeout: 150_000 },
+    );
+  const applied = (n: number) =>
+    page.waitForFunction((k) => window.__ZG__?.sim?.editsApplied?.applied === k, n, {
+      timeout: 30_000,
+    });
+
+  await page.goto('./');
+  await ready();
+  // A two-lane stretch of Savska cesta near the centre.
+  const target = await page.evaluate(() => {
+    const index = window.__ZG__!.roadIndex!;
+    const net = index.net;
+    for (let e = 0; e < net.edgeCount; e++) {
+      if (net.nameOf(e) !== 'Savska cesta' || net.edgeLaneCount[e] < 2) continue;
+      if (!index.editable(e) || index.turns(e).length < 2) continue;
+      const ref = index.ref(e);
+      if (Math.hypot(ref.x, ref.z) < 4000) return { edge: e, x: ref.x, z: ref.z };
+    }
+    return null;
+  });
+  expect(target).not.toBeNull();
+
+  await page.keyboard.press('b');
+  await expect(page.locator('.build-panel')).toBeVisible();
+  await expect(page.locator('.build-hint')).toBeVisible();
+  await page.evaluate(({ x, z }) => {
+    window.__ZG__?.setView('map');
+    window.__ZG__?.lookAt(x, z, 250);
+  }, target!);
+  await page.waitForTimeout(2000);
+  // Click the road in the middle of the view.
+  const canvas = page.locator('canvas');
+  const box = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await expect(page.locator('.build-road-name')).toHaveText('Savska cesta');
+  expect(await page.evaluate(() => window.__ZG__?.build?.selected)).toBe(target!.edge);
+
+  // A lower speed limit, a bus lane and a banned turn reach the engine.
+  await page.getByLabel('Speed limit').selectOption('30');
+  await expect(page.locator('.build-list li')).toHaveCount(1);
+  await expect(page.locator('.build-list li').first()).toContainText('Savska cesta: 30 km/h');
+  await applied(1);
+  await page.getByLabel('Lane 1 from the left').selectOption('bus');
+  await applied(2);
+  await page.locator('.build-turns input[type="checkbox"]').first().uncheck();
+  await expect(page.locator('.build-list li')).toHaveCount(3);
+  await applied(3);
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: testInfo.outputPath('build.png') });
+
+  // Kept in the browser across a reload.
+  await page.reload();
+  await ready();
+  await applied(3);
+  await page.keyboard.press('b');
+  await expect(page.locator('.build-list li')).toHaveCount(3);
+
+  // Shared as a link, which opens with the same edits.
+  await page.getByRole('button', { name: 'Share link' }).click();
+  await expect(page.locator('.build-status')).toHaveText('Link copied.');
+  const link = await page.evaluate(() => navigator.clipboard.readText());
+  expect(link).toMatch(/#edits=[A-Za-z0-9_-]+$/);
+  await page.getByRole('button', { name: 'Clear' }).click();
+  await expect(page.locator('.build-list li')).toHaveCount(0);
+  await applied(0);
+  await page.goto(link);
+  await ready();
+  await expect(page.locator('.build-panel')).toBeVisible();
+  await expect(page.locator('.build-status')).toContainText('Loaded 3 edits from the link.');
+  await expect(page.locator('.build-list li')).toHaveCount(3);
+  await applied(3);
+  expect(page.url()).not.toContain('#edits=');
+
+  expect(errors).toEqual([]);
+});

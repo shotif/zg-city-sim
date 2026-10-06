@@ -25,8 +25,9 @@ let last = 0;
 let msPerStep = 2;
 let rate = 0;
 let lastEdgeSpeeds = -Infinity;
-/** Closed edges, kept until the engine is built. */
+/** Closed edges and edits, kept until the engine is built. */
 let closed: Uint32Array | undefined;
+let edits: { id: number; words: Uint32Array } | undefined;
 
 const post = (message: FromWorker, transfer: Transferable[] = []) =>
   self.postMessage(message, transfer);
@@ -43,9 +44,15 @@ async function init(message: InitMessage): Promise<void> {
   if (closed) engine.setClosed(closed);
   speed = message.speed;
   warmUntil = message.warmUntil;
-  post({ type: 'ready', buildMs: performance.now() - t0 });
+  post({ type: 'ready', buildMs: performance.now() - t0, signals: engine.signalPrograms() });
+  if (edits) applyEdits(engine, edits);
   last = performance.now();
   tick();
+}
+
+function applyEdits(sim: TrafficEngine, message: { id: number; words: Uint32Array }): void {
+  const applied = sim.setEdits(message.words);
+  post({ type: 'edited', id: message.id, applied, signals: sim.signalPrograms() });
 }
 
 function tick(): void {
@@ -107,6 +114,10 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
     case 'closures':
       closed = message.edges;
       engine?.setClosed(closed);
+      break;
+    case 'edits':
+      edits = message;
+      if (engine) applyEdits(engine, message);
       break;
   }
 };

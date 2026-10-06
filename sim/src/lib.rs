@@ -10,6 +10,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod demand;
+pub mod edits;
 pub mod engine;
 pub mod ffi;
 pub mod idm;

@@ -15,6 +15,9 @@ export interface EngineExports {
   zg_set_demand_scale(scale: number): void;
   zg_add_trip(depart: number, from: number, to: number, vtype: number): void;
   zg_set_closed(edges: number, count: number): void;
+  zg_set_edits(words: number, count: number): number;
+  zg_signal_ptr(which: number): number;
+  zg_signal_len(which: number): number;
   zg_step(steps: number): number;
   zg_dt(): number;
   zg_render_ptr(): number;
@@ -72,6 +75,18 @@ export const INFO = {
 } as const;
 
 export const VEHICLE_TYPES = ['car', 'truck', 'bus', 'tram'] as const;
+
+/** The signal programs as the engine runs them: netconvert's guesses re-timed, with edits. */
+export interface SignalPrograms {
+  /** Phases of program t: phaseOffsets[t] to phaseOffsets[t + 1]. */
+  phaseOffsets: Uint32Array;
+  /** Seconds per phase. */
+  duration: Float32Array;
+  /** States of phase p's links: states[stateOffsets[p] to stateOffsets[p + 1]], one ASCII
+   * character per controlled link ('G', 'g' green, 'y' yellow, 'r' red). */
+  stateOffsets: Uint32Array;
+  states: Uint8Array;
+}
 
 export type NumericArray =
   | Uint8Array
@@ -145,6 +160,35 @@ export class TrafficEngine {
     );
     ex.zg_set_closed(ptr, edges.length);
     ex.zg_free(ptr, bytes);
+  }
+
+  /** Replace the network edits in force (four words per edit, see edits.ts); returns how
+   * many fit the network. */
+  setEdits(words: Uint32Array): number {
+    const ex = this.exports;
+    const bytes = words.byteLength;
+    const ptr = bytes > 0 ? ex.zg_alloc(bytes) : 0;
+    if (bytes > 0) {
+      new Uint8Array(this.memory, ptr, bytes).set(
+        new Uint8Array(words.buffer, words.byteOffset, bytes),
+      );
+    }
+    const applied = ex.zg_set_edits(ptr, words.length);
+    if (bytes > 0) ex.zg_free(ptr, bytes);
+    return applied;
+  }
+
+  /** Copies of the signal programs the engine runs. */
+  signalPrograms(): SignalPrograms {
+    const ex = this.exports;
+    const view = <T>(which: number, make: (buffer: ArrayBuffer, ptr: number, n: number) => T) =>
+      make(this.memory, ex.zg_signal_ptr(which), ex.zg_signal_len(which));
+    return {
+      phaseOffsets: view(0, (b, p, n) => new Uint32Array(b, p, n).slice()),
+      duration: view(1, (b, p, n) => new Float32Array(b, p, n).slice()),
+      stateOffsets: view(2, (b, p, n) => new Uint32Array(b, p, n).slice()),
+      states: view(3, (b, p, n) => new Uint8Array(b, p, n).slice()),
+    };
   }
 
   /** Advance `steps` steps; returns the simulated time. */

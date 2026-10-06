@@ -2,9 +2,23 @@ import * as THREE from 'three/webgpu';
 
 import { CameraRig, type ViewMode } from './camera/CameraRig';
 import { type PackedIndex, type TypedArray, loadPacked } from './data/packed';
+import {
+  type Edit,
+  type ResolvedEdit,
+  decodeEditsFromUrl,
+  editWords,
+  encodeEditsForUrl,
+  loadSavedEdits,
+  parseEdits,
+  resolveEdits,
+  saveEdits,
+  serializeEdits,
+} from './edit/edits';
+import { RoadIndex } from './edit/roadIndex';
 import { DATA_URL, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
 import { STAT } from './sim/wasm';
+import { BuildPanel } from './ui/buildPanel';
 import { ClosureMarkers } from './ui/closureMarkers';
 import { Hud } from './ui/hud';
 import { NewsPanel } from './ui/newsPanel';
@@ -17,6 +31,7 @@ import {
   placeClosures,
   zagrebNow,
 } from './world/closures';
+import { EDIT_COLORS, EditLayer } from './world/editLayer';
 import { WorldFrame } from './world/frame';
 import type { HeightFn } from './world/roadGeometry';
 import { RoadLayer } from './world/roadLayer';
@@ -105,6 +120,13 @@ export interface DebugApi {
   newsPanel?: NewsPanel;
   /** Live road closures in force, placed on the network. */
   closures?: PlacedClosure[];
+  /** The Build tools, once the road network is loaded. */
+  build?: BuildPanel;
+  roadIndex?: RoadIndex;
+  /** Edits in force, matched to the network. */
+  edits?: ResolvedEdit[];
+  /** Pick the road at a screen point (CSS pixels in the canvas), as a click would. */
+  pickAt?(x: number, y: number): number | undefined;
 }
 
 declare global {
@@ -132,7 +154,12 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let closureMarkers: ClosureMarkers | undefined;
   let closureLayer: ClosureLayer | undefined;
   let closedEdges: Uint32Array | undefined;
+  let buildPanel: BuildPanel | undefined;
   let invalidateView = () => {};
+  // Edits: from a shared link, else saved in this browser.
+  const editsFromLink = /[#&]edits=([^&]+)/.exec(location.hash)?.[1];
+  let edits: Edit[] = loadSavedEdits();
+  let editWordsNow: Uint32Array | undefined;
   const hud = new Hud(container, {
     onMode: (mode) => rig?.setMode(mode),
     onRotateIso: (direction) => rig?.rotateIso(direction),
@@ -153,6 +180,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
     onClosures: (enabled) => {
       closureMarkers?.setVisible(enabled);
       if (closureLayer) closureLayer.object.visible = enabled;
+      invalidateView();
+    },
+    onBuild: (enabled) => {
+      buildPanel?.setVisible(enabled);
       invalidateView();
     },
   });
@@ -230,6 +261,124 @@ export async function startApp(container: HTMLElement): Promise<void> {
       `Renderer: ${backend} · terrain mesh every ${stride * terrain.heightfield.resolution} m · data built ${manifest.generated}`,
     );
 
+    /** The Build tools: road picking, the panel, the edits layer and the edit list. */
+    const setUpBuild = (net: RoadNetwork, surface: HeightFn): BuildPanel => {
+      const index = new RoadIndex(net);
+      debug.roadIndex = index;
+      const layer = new EditLayer(net, surface);
+      scene.add(layer.object);
+      let resolved: ResolvedEdit[] = [];
+      const redraw = () => {
+        const groups: { edges: number[]; color: number; width?: number }[] = (
+          Object.keys(EDIT_COLORS) as (keyof typeof EDIT_COLORS)[]
+        )
+          .filter((kind) => kind !== 'selected')
+          .map((kind) => ({
+            color: EDIT_COLORS[kind],
+            edges: resolved
+              .filter((r) => r.edit.kind === kind)
+              .flatMap((r) => (r.edit.kind === 'ban' ? r.edges.slice(0, 1) : r.edges)),
+          }));
+        const selected = panel.selected;
+        if (selected !== undefined) {
+          groups.push({ color: EDIT_COLORS.selected, edges: [selected], width: 8 });
+        }
+        layer.show(groups);
+        invalidate();
+      };
+      const apply = (list: Edit[]) => {
+        edits = list;
+        const matched = resolveEdits(index, list);
+        resolved = matched.resolved;
+        debug.edits = resolved;
+        panel.setEdits(list, resolved, matched.missing.length);
+        saveEdits(list);
+        editWordsNow = editWords(resolved);
+        sim?.setEdits(editWordsNow);
+        if (list.length === 0) panel.setStatus('');
+        if (!sim) panel.setInForce(0);
+        redraw();
+      };
+      const panel = new BuildPanel(hud.element, index, {
+        onEdits: apply,
+        onSelect: () => redraw(),
+        onClose: () => {
+          hud.setBuild(false);
+          panel.setVisible(false);
+          invalidate();
+        },
+        shareLink: async (list) =>
+          `${location.origin}${location.pathname}${location.search}#edits=${await encodeEditsForUrl(list)}`,
+        importFile: async (file) => parseEdits(await file.text()),
+        exportFile: (list) => {
+          const blob = new Blob([serializeEdits(list)], { type: 'application/json' });
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = 'zg-city-sim-edits.json';
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        },
+      });
+      debug.build = panel;
+      hud.enableBuild();
+
+      // A click (not a drag) on the map picks the road there while the panel is open.
+      const raycaster = new THREE.Raycaster();
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const hit = new THREE.Vector3();
+      const pickAt = (px: number, py: number): number | undefined => {
+        const canvas = renderer.domElement;
+        const ndc = new THREE.Vector2(
+          (px / canvas.clientWidth) * 2 - 1,
+          -(py / canvas.clientHeight) * 2 + 1,
+        );
+        raycaster.setFromCamera(ndc, activeRig.camera);
+        const view = activeRig.state();
+        let ground = terrain.heightfield.sample(view.target.x, view.target.z);
+        for (let i = 0; i < 3; i++) {
+          plane.constant = -ground;
+          if (!raycaster.ray.intersectPlane(plane, hit)) return undefined;
+          ground = terrain.heightfield.sample(hit.x, hit.z);
+        }
+        const metersPerPixel = view.viewHeight / Math.max(1, canvas.clientHeight);
+        const radius = Math.min(60, Math.max(6, metersPerPixel * 12));
+        return index.pick(hit.x, hit.z, radius);
+      };
+      debug.pickAt = pickAt;
+      let down: { x: number; y: number; t: number } | undefined;
+      renderer.domElement.addEventListener('pointerdown', (event) => {
+        down = { x: event.offsetX, y: event.offsetY, t: performance.now() };
+      });
+      renderer.domElement.addEventListener('pointerup', (event) => {
+        if (!panel.visible || !down || event.button !== 0) return;
+        const moved = Math.hypot(event.offsetX - down.x, event.offsetY - down.y);
+        if (moved > 6 || performance.now() - down.t > 600) return;
+        const edge = pickAt(event.offsetX, event.offsetY);
+        if (edge !== undefined) panel.select(edge);
+      });
+
+      // Edits from a shared link: at start, or pasted into this tab later.
+      const loadFromLink = (encoded: string) =>
+        decodeEditsFromUrl(encoded)
+          .then((list) => {
+            apply(list);
+            hud.setBuild(true);
+            panel.setVisible(true);
+            panel.setStatus(
+              `Loaded ${list.length} edit${list.length === 1 ? '' : 's'} from the link.`,
+            );
+          })
+          .catch(() => panel.setStatus('The link has no edits that could be read.'))
+          .finally(() => history.replaceState(null, '', location.pathname + location.search));
+      if (editsFromLink) loadFromLink(editsFromLink);
+      else apply(edits);
+      window.addEventListener('hashchange', () => {
+        const encoded = /[#&]edits=([^&]+)/.exec(location.hash)?.[1];
+        if (encoded) loadFromLink(encoded);
+      });
+      return panel;
+    };
+
     // Roads load after the terrain is on screen, then traffic starts on them.
     let roads: RoadLayer | undefined;
     let vehicles: VehicleLayer | undefined;
@@ -257,6 +406,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           scene.add(roads.object);
           debug.roads = roads;
           invalidate();
+          buildPanel = setUpBuild(net, surface);
           const newsInfo = manifest.layers.news;
           if (newsInfo) {
             loadNews(newsInfo.index)
@@ -320,6 +470,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
           sim = startSimulation(net, await travel, surface, Number(params.get('speed')) || 1);
           debug.sim = sim;
           if (closedEdges) sim.setClosures(closedEdges);
+          if (editWordsNow) sim.setEdits(editWordsNow);
+          const running = sim;
+          sim.onReady = () => {
+            if (running.signals) buildPanel?.setSignals(running.signals);
+          };
+          sim.onEdited = (applied, signals) => {
+            buildPanel?.setSignals(signals);
+            buildPanel?.setInForce(applied);
+          };
           sim.onFrame = () => {
             simChanged = true;
           };

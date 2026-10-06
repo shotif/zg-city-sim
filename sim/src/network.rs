@@ -181,6 +181,11 @@ pub struct Network {
     pub link_via_length: Vec<f32>,
     /// Vehicle classes allowed on the whole link (from, via and to lanes).
     pub link_allow: Vec<u16>,
+    /// Lane permissions as loaded: edits change `d.lane_allow`, and a vehicle already on a
+    /// lane closed to it may still drive off it (`refresh_links`).
+    pub lane_allow_loaded: Vec<u16>,
+    /// Turns banned by edits: these links carry no traffic.
+    pub link_banned: Vec<bool>,
     /// For each junction, the link id of each request index.
     pub junction_request_links: Vec<u32>,
     pub junction_request_offset: Vec<u32>,
@@ -252,21 +257,16 @@ impl Network {
         }
 
         let mut link_via_length = vec![0f32; n_links];
-        let mut link_allow = vec![0u16; n_links];
         for l in 0..n_links {
             let mut lane = d.link_via[l];
             let mut len = 0.0;
-            let mut allow =
-                d.lane_allow[d.link_from[l] as usize] & d.lane_allow[d.link_to[l] as usize];
             let mut guard = 0;
             while lane != NONE && lane_internal[lane as usize] && guard < 8 {
                 len += d.lane_length[lane as usize];
-                allow &= d.lane_allow[lane as usize];
                 lane = d.lane_next[lane as usize];
                 guard += 1;
             }
             link_via_length[l] = len;
-            link_allow[l] = allow;
         }
 
         // Request index -> link per junction.
@@ -286,13 +286,11 @@ impl Network {
         }
 
         let mut edge_length = vec![0f32; n_edges];
-        let mut edge_speed = vec![13.9f32; n_edges];
         let mut edge_mid = vec![(0f32, 0f32); n_edges];
         for e in 0..n_edges {
             let lane0 = d.edge_lane_start[e] as usize;
             if d.edge_lane_count[e] > 0 {
                 edge_length[e] = d.lane_length[lane0];
-                edge_speed[e] = d.lane_speed[lane0].max(1.0);
                 let (a, b) = (
                     d.lane_shape_offsets[lane0] as usize,
                     d.lane_shape_offsets[lane0 + 1] as usize,
@@ -304,20 +302,81 @@ impl Network {
             }
         }
 
-        // Routing graph: edge -> next edge, merged over all links. A class may plan a U-turn
-        // only where it has no other way on: U-turns are rare in Zagreb, and routes full of
-        // them gridlock short stretches of dual carriageway; buses still turn at terminals.
+        let lane_allow_loaded = d.lane_allow.clone();
+        let mut net = Network {
+            d,
+            lane_index,
+            lane_internal,
+            lane_abs_y,
+            lane_geom_length,
+            shape_dist,
+            link_via_length,
+            link_allow: vec![0; n_links],
+            lane_allow_loaded,
+            link_banned: vec![false; n_links],
+            junction_request_links,
+            junction_request_offset,
+            edge_length,
+            edge_speed: vec![13.9; n_edges],
+            edge_mid,
+            succ_offset: vec![0; n_edges + 1],
+            succ: Vec::new(),
+        };
+        net.refresh_speeds();
+        net.refresh_links();
+        Ok(net)
+    }
+
+    /// Edge speeds from their lanes' limits (the rightmost lane's, as SUMO's edge speed).
+    pub fn refresh_speeds(&mut self) {
+        let d = &self.d;
+        for e in 0..d.edge_flags.len() {
+            if d.edge_lane_count[e] > 0 {
+                self.edge_speed[e] = d.lane_speed[d.edge_lane_start[e] as usize].max(1.0);
+            }
+        }
+    }
+
+    /// Link permissions and the routing graph from the lanes' permissions and the banned
+    /// turns. A link needs its junction lanes and the lane it leads to to allow a class; the
+    /// lane it leaves counts as loaded, so vehicles on a lane an edit closed can drive off it.
+    pub fn refresh_links(&mut self) {
+        let d = &self.d;
+        for l in 0..d.link_from.len() {
+            let mut allow = self.lane_allow_loaded[d.link_from[l] as usize]
+                & d.lane_allow[d.link_to[l] as usize];
+            let mut lane = d.link_via[l];
+            let mut guard = 0;
+            while lane != NONE && self.lane_internal[lane as usize] && guard < 8 {
+                allow &= d.lane_allow[lane as usize];
+                lane = d.lane_next[lane as usize];
+                guard += 1;
+            }
+            self.link_allow[l] = if self.link_banned[l] { 0 } else { allow };
+        }
+        self.build_routing();
+    }
+
+    /// Routing graph: edge -> next edge, merged over all links. A class may plan a U-turn
+    /// only where it has no other way on: U-turns are rare in Zagreb, and routes full of
+    /// them gridlock short stretches of dual carriageway; buses still turn at terminals.
+    /// Every pair of edges a link joins stays in the graph, even with no class allowed, so
+    /// the landmark bounds (which ignore classes) stay valid as edits change permissions.
+    fn build_routing(&mut self) {
+        let d = &self.d;
+        let n_edges = d.edge_flags.len();
+        let n_links = d.link_from.len();
         let mut onward = vec![0u16; n_edges];
         for l in 0..n_links {
             if d.link_dir[l] != dir::TURN {
-                onward[d.lane_edge[d.link_from[l] as usize] as usize] |= link_allow[l];
+                onward[d.lane_edge[d.link_from[l] as usize] as usize] |= self.link_allow[l];
             }
         }
         let mut pairs: Vec<(u32, u32, u16, f32)> = Vec::with_capacity(n_links);
         for l in 0..n_links {
             let from = d.link_from[l] as usize;
             let to = d.link_to[l] as usize;
-            let mut allow = link_allow[l];
+            let mut allow = self.link_allow[l];
             if d.link_dir[l] == dir::TURN {
                 allow &= !onward[d.lane_edge[from] as usize] | vclass::BUS | vclass::TRAM;
             }
@@ -330,7 +389,7 @@ impl Network {
         }
         pairs.sort_unstable_by_key(|p| (p.0, p.1));
         let mut succ_offset = vec![0u32; n_edges + 1];
-        let mut succ: Vec<Successor> = Vec::new();
+        let mut succ: Vec<Successor> = Vec::with_capacity(pairs.len());
         let mut i = 0;
         while i < pairs.len() {
             let (from, to) = (pairs[i].0, pairs[i].1);
@@ -358,24 +417,8 @@ impl Network {
         for e in 0..n_edges {
             succ_offset[e + 1] += succ_offset[e];
         }
-
-        Ok(Network {
-            d,
-            lane_index,
-            lane_internal,
-            lane_abs_y,
-            lane_geom_length,
-            shape_dist,
-            link_via_length,
-            link_allow,
-            junction_request_links,
-            junction_request_offset,
-            edge_length,
-            edge_speed,
-            edge_mid,
-            succ_offset,
-            succ,
-        })
+        self.succ_offset = succ_offset;
+        self.succ = succ;
     }
 
     pub fn lane_count(&self) -> usize {

@@ -9,6 +9,7 @@
 use std::sync::Mutex;
 
 use crate::demand::{Demand, Gateway};
+use crate::edits::Edit;
 use crate::engine::{DT, Engine, RENDER_STRIDE, Trip, stat};
 use crate::network::{Network, NetworkData};
 use crate::transit::{Transit, TransitData};
@@ -204,6 +205,60 @@ pub unsafe extern "C" fn zg_set_closed(edges: *const u32, n: usize) {
         if let Some(e) = s.engine.as_mut() {
             e.set_closed(list)
         }
+    })
+}
+
+/// Replace the network edits in force (`edits.rs`): `n` u32 words at `words`, four per
+/// edit (kind, two arguments, value as f32 bits). Returns how many edits fit the network.
+///
+/// # Safety
+/// `words` must point to `n` u32 values (or `n` be 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_set_edits(words: *const u32, n: usize) -> u32 {
+    let list: &[u32] = if n == 0 || words.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(words, n) }
+    };
+    let edits = Edit::decode(list);
+    with_state(|s| s.engine.as_mut().map_or(0, |e| e.set_edits(&edits) as u32))
+}
+
+/// Pointer to one of the engine's signal arrays as it runs them (the guessed programs
+/// re-timed, with edits): 0 `tlsPhaseOffsets` (u32), 1 `phaseDuration` (f32),
+/// 2 `phaseStateOffsets` (u32), 3 `phaseStates` (u8). Its length is `zg_signal_len`.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_signal_ptr(which: u32) -> *const u8 {
+    with_state(|s| {
+        let Some(e) = s.engine.as_ref() else {
+            return std::ptr::null();
+        };
+        let d = &e.net.d;
+        match which {
+            0 => d.tls_phase_offsets.as_ptr() as *const u8,
+            1 => d.phase_duration.as_ptr() as *const u8,
+            2 => d.phase_state_offsets.as_ptr() as *const u8,
+            3 => d.phase_states.as_ptr(),
+            _ => std::ptr::null(),
+        }
+    })
+}
+
+/// Number of elements of the signal array `which` (see `zg_signal_ptr`).
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_signal_len(which: u32) -> u32 {
+    with_state(|s| {
+        let Some(e) = s.engine.as_ref() else {
+            return 0;
+        };
+        let d = &e.net.d;
+        (match which {
+            0 => d.tls_phase_offsets.len(),
+            1 => d.phase_duration.len(),
+            2 => d.phase_state_offsets.len(),
+            3 => d.phase_states.len(),
+            _ => 0,
+        }) as u32
     })
 }
 

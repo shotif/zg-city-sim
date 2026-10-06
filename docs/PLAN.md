@@ -102,6 +102,30 @@ Known gaps:
 - Buses stop in whatever lane they are in, not at the kerb; one bus terminal (Črnomerec) is unreachable in the converted network, so its stop is skipped.
 - Trams and cars do not share lanes yet: tram tracks are separate edges (joining them into street lanes broke tram connectivity), so cars only meet trams at junctions.
 
+**Plan (M4 Build, 2026-10-06).** Netconvert builds the network offline and cannot run in the browser, so edits take their own path: the engine changes the arrays it already has (lanes, links, signal programs, the routing graph) while it runs. Steps, each pushed to `main` when it works:
+
+- **M4a, edit foundation** (done 2026-10-06: the Build panel, key `B`).
+  - *Edit model* (`web/src/edit/`): a list of edits, each naming the roads it changes by position and heading rather than by id, because ids change whenever CI rebuilds the network from newer OpenStreetMap data. Kept in the browser's local storage, shareable as a link (the list compressed into the URL) or a JSON file.
+  - *Edits*: close a road or one of its lanes, set a speed limit, reserve a lane for buses, ban a turn, set a signal's green times.
+  - *Engine* (`sim/src/edits.rs`): every change rebuilds the edited state from the network as loaded, so edits can be removed in any order. It updates lane speeds and permissions, the links' permissions, the routing graph and the free-flow times. Edits that make roads faster also rebuild the landmark tables, a few at a time between steps, so routes stay optimal. Vehicles whose route uses a changed road re-plan at once; the rest re-plan over the next minute, so traffic visibly shifts. Live closures keep working as they do now.
+  - *App*: a Build panel (key `B`). Pick a road on the map to see its lanes, limit and turns; change them; list, undo and share edits. Road picking uses a grid over lane shapes.
+  - Tests: engine tests on hand-built networks (a closed lane empties, a turn ban re-routes, a bus lane keeps cars out, a faster road attracts traffic, removing an edit restores the network). A Playwright test makes an edit through the panel and checks it reaches the engine and survives a reload.
+  - As built: a closed road or lane keeps buses and trams (they run to their timetable), and vehicles already on it drive off it. A bus lane also lets taxis and emergency vehicles in, as Zagreb's do. The landmark tables take 24 searches of about 25 ms each (natively) on the whole network; the engine runs one per step after an edit that makes roads faster, and routes use the straight-line bound until they are done. A shared link carries the edits deflated in its fragment, so they never reach a server.
+- **M4b, before and after.**
+  - Compare starts a second worker on the unedited network, with the same seed, start time and demand, and keeps it at the same simulated time.
+  - The panel shows the differences: total delay (vehicle-hours lost against free flow), mean speed, and travel times between district centres (routed on each engine's measured times). A difference map colours roads by the change in volume or speed.
+  - Offline, `sim/examples/compare.rs` runs both networks through a peak period natively and writes the same numbers, for the project presets.
+- **M4c, real projects.**
+  - Research planned Zagreb road projects: Jarunski most, the extensions of Radnička cesta and Avenija Većeslava Holjevca, and others in the City's plans and the news.
+  - Each becomes a patch of OpenStreetMap-style ways in `pipeline/projects/`, run through netconvert with the base data into its own network. Ids differ, so demand and transit are rebuilt for it.
+  - The app loads a project's network in place of today's, and shows before/after numbers precomputed offline with the native runner.
+- **M4d, drawing roads and bridges.**
+  - Draw a road between existing junctions or new points, choosing its type, lanes and speed.
+  - This needs an engine-side junction builder: lanes and shapes for the new edges, connections and right of way at the junctions it touches (priority by road class, SUMO-style request and foe bits), and a signal program where the junction has signals. New roads are drawn by the road layer from the same arrays.
+- **M4e, roundabouts and signals.**
+  - Convert a junction into a roundabout from a template (a ring of one-way edges, yield at entry).
+  - Edit a signal program's phases and green splits, with the engine's re-timing as the starting point.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.

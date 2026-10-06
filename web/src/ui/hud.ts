@@ -11,6 +11,7 @@ export interface HudCallbacks {
   onTrafficMap?(enabled: boolean): void;
   onNews?(enabled: boolean): void;
   onClosures?(enabled: boolean): void;
+  onBuild?(enabled: boolean): void;
 }
 
 /** A colour and its meaning, for the traffic map legend. */
@@ -99,10 +100,12 @@ export class Hud {
   private readonly layers: HTMLElement;
   private readonly newsButton: HTMLButtonElement;
   private readonly closuresButton: HTMLButtonElement;
+  private readonly buildButton: HTMLButtonElement;
   private simState?: HudSim;
   private trafficMap = false;
   private news = false;
   private closures = true;
+  private build = false;
 
   constructor(container: HTMLElement, callbacks: HudCallbacks) {
     this.root = el('div', 'hud', container);
@@ -156,6 +159,13 @@ export class Hud {
     this.closuresButton.hidden = true;
     this.closuresButton.setAttribute('aria-pressed', 'true');
     this.closuresButton.addEventListener('click', () => this.toggleClosures(callbacks));
+    this.buildButton = el('button', 'hud-button hud-speed', this.layers);
+    this.buildButton.type = 'button';
+    this.buildButton.textContent = 'Build';
+    this.buildButton.title = 'Change roads, lanes, turns and signals (B)';
+    this.buildButton.hidden = true;
+    this.buildButton.setAttribute('aria-pressed', 'false');
+    this.buildButton.addEventListener('click', () => this.setBuild(!this.build, callbacks));
 
     const toolbar = el('div', 'hud-panel hud-toolbar', this.root);
     toolbar.setAttribute('role', 'toolbar');
@@ -214,7 +224,9 @@ export class Hud {
     this.setLoading('Loading Zagreb…');
 
     window.addEventListener('keydown', (event) => {
-      if (event.target instanceof HTMLInputElement || event.metaKey || event.ctrlKey) return;
+      const typing =
+        event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement;
+      if (typing || event.metaKey || event.ctrlKey) return;
       const mode = MODES.find((m) => m.key === event.key)?.mode;
       if (mode) callbacks.onMode(mode);
       else if (event.key === 'q' || event.key === 'Q') callbacks.onRotateIso(-1);
@@ -228,6 +240,8 @@ export class Hud {
         this.toggleNews(callbacks);
       } else if ((event.key === 'c' || event.key === 'C') && !this.closuresButton.hidden) {
         this.toggleClosures(callbacks);
+      } else if ((event.key === 'b' || event.key === 'B') && !this.buildButton.hidden) {
+        this.setBuild(!this.build, callbacks);
       } else if ((event.key === '+' || event.key === '-') && this.simState) {
         const i = SIM_SPEEDS.indexOf(this.simState.speed) + (event.key === '+' ? 1 : -1);
         const speed = SIM_SPEEDS[Math.min(SIM_SPEEDS.length - 1, Math.max(0, i))];
@@ -296,6 +310,19 @@ export class Hud {
       ? ''
       : `, as of ${when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
     this.closuresButton.title = `Road closures from the City of Zagreb${age} (C)`;
+  }
+
+  /** Offer the Build tools. */
+  enableBuild(): void {
+    this.layers.hidden = false;
+    this.buildButton.hidden = false;
+  }
+
+  /** Turn the Build tools on or off (`callbacks` given: tell the app). */
+  setBuild(enabled: boolean, callbacks?: HudCallbacks): void {
+    this.build = enabled;
+    this.buildButton.setAttribute('aria-pressed', String(enabled));
+    callbacks?.onBuild?.(enabled);
   }
 
   private toggleClosures(callbacks: HudCallbacks): void {

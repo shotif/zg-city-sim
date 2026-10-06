@@ -1,9 +1,10 @@
 //! Engine tests on small hand-built networks.
 
 use crate::demand::{Demand, Gateway};
+use crate::edits::Edit;
 use crate::engine::{DT, Engine, Trip, stat, travel_time, trip};
 use crate::idm;
-use crate::network::{LINK_STATE_CHARS, NONE, Network, NetworkData, dir, edge_flag};
+use crate::network::{LINK_STATE_CHARS, NONE, Network, NetworkData, dir, edge_flag, vclass};
 use crate::rng::Rng;
 use crate::router::Router;
 use crate::vtype::{self, TYPES};
@@ -1094,4 +1095,273 @@ fn tram_tracks_count_a_quarter_lane_when_splitting_green() {
     // 48 s beyond the 6 s minimum each, split 1 to 0.25.
     let durations: Vec<f32> = (0..4).map(|p| d.phase_duration[p]).collect();
     assert!((durations[0] - 44.4).abs() < 0.01 && (durations[2] - 15.6).abs() < 0.01);
+}
+
+// ---- edits (M4a) ----------------------------------------------------------------------------
+
+/// Two ways from A to Z: straight on through M (1 km), or a 1.4 km detour through C; then
+/// on to Z. Returns the engine and the edges (direct, up, down, last).
+fn two_ways() -> (Engine, [u32; 4]) {
+    let mut b = Builder::default();
+    let a = b.junction(0.0, 0.0);
+    let m = b.junction(1000.0, 0.0);
+    let c = b.junction(500.0, 500.0);
+    let z = b.junction(1500.0, 0.0);
+    let direct = b.road(a, m, 1, 13.9);
+    let up = b.road(a, c, 1, 13.9);
+    let down = b.road(c, m, 1, 13.9);
+    let last = b.road(m, z, 1, 13.9);
+    let (l_direct, l_up, l_down, l_last) = (
+        b.lane(direct, 0),
+        b.lane(up, 0),
+        b.lane(down, 0),
+        b.lane(last, 0),
+    );
+    b.connect(l_up, l_down, c, dir::STRAIGHT, b'M');
+    b.connect(l_direct, l_last, m, dir::STRAIGHT, b'M');
+    b.connect(l_down, l_last, m, dir::STRAIGHT, b'M');
+    (Engine::new(b.build(), 9), [direct, up, down, last])
+}
+
+fn car_route(engine: &mut Engine, from: u32, to: u32) -> Option<Vec<u32>> {
+    let mut router = Router::new(engine.net.edge_count());
+    router.route(
+        &engine.net,
+        &engine.travel_time,
+        from,
+        to,
+        vclass::PASSENGER,
+    )
+}
+
+#[test]
+fn edits_survive_encoding_for_the_app() {
+    let all = [
+        Edit::CloseRoad { edge: 7 },
+        Edit::CloseLane { edge: 3, lane: 1 },
+        Edit::SpeedLimit {
+            edge: 9,
+            speed: 8.33,
+        },
+        Edit::LaneClasses {
+            edge: 4,
+            lane: 0,
+            classes: vclass::BUS,
+        },
+        Edit::BanTurn { from: 1, to: 2 },
+        Edit::Green {
+            tls: 0,
+            phase: 2,
+            seconds: 31.5,
+        },
+    ];
+    let words: Vec<u32> = all.iter().flat_map(|e| e.encode()).collect();
+    assert_eq!(Edit::decode(&words), all);
+    // Unknown kinds and a trailing partial record are skipped.
+    assert_eq!(Edit::decode(&[99, 1, 2, 3, 1, 5]), vec![]);
+}
+
+#[test]
+fn a_banned_turn_sends_traffic_the_other_way() {
+    let (mut engine, [direct, up, down, last]) = two_ways();
+    assert_eq!(
+        car_route(&mut engine, direct, last),
+        Some(vec![direct, last])
+    );
+    // From the start of the network (the direct road or the detour), with the turn from the
+    // direct road onto the last one banned, only the detour remains.
+    assert_eq!(
+        engine.set_edits(&[Edit::BanTurn {
+            from: direct,
+            to: last
+        }]),
+        1
+    );
+    assert_eq!(car_route(&mut engine, direct, last), None);
+    assert_eq!(car_route(&mut engine, up, last), Some(vec![up, down, last]));
+    // Turns no link makes are rejected.
+    assert_eq!(engine.set_edits(&[Edit::BanTurn { from: up, to: last }]), 0);
+}
+
+#[test]
+fn a_closed_road_keeps_cars_out_but_lets_those_on_it_leave() {
+    let (b, e0, e1) = straight_road(300.0, 1);
+    let mut engine = Engine::new(b.build(), 4);
+    let lane0 = engine.net.edge_lanes(e0).start;
+    let v = engine.insert_at(vtype::CAR, vec![e0, e1], lane0, 50.0, 10.0);
+    let serial = engine.vehs[v as usize].serial;
+    // Close the road the car is on: it still drives off it, and nothing else can route in.
+    assert_eq!(engine.set_edits(&[Edit::CloseRoad { edge: e0 }]), 1);
+    assert_eq!(car_route(&mut engine, e0, e1), Some(vec![e0, e1]));
+    run_until(&mut engine, 120.0, assert_no_overlaps);
+    assert!(engine.vehs[v as usize].serial != serial || !engine.vehs[v as usize].alive());
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (1, 0));
+    // Closing the road it leads to: no route for cars, but buses keep theirs.
+    engine.set_edits(&[Edit::CloseRoad { edge: e1 }]);
+    assert_eq!(car_route(&mut engine, e0, e1), None);
+    let mut router = Router::new(engine.net.edge_count());
+    assert!(
+        router
+            .route(&engine.net, &engine.travel_time, e0, e1, vclass::BUS)
+            .is_some()
+    );
+}
+
+#[test]
+fn a_closed_lane_or_bus_lane_empties_of_cars() {
+    for edit in [
+        Edit::CloseLane { edge: 1, lane: 1 },
+        Edit::LaneClasses {
+            edge: 1,
+            lane: 1,
+            classes: vclass::BUS,
+        },
+    ] {
+        let (b, e0, e1) = straight_road(600.0, 2);
+        assert_eq!(e1, 1);
+        let mut engine = Engine::new(b.build(), 8);
+        let closed = engine.net.edge_lanes(e1).start + 1;
+        assert_eq!(engine.set_edits(&[edit]), 1);
+        for k in 0..30 {
+            engine.add_trip(Trip {
+                depart: k as f64 * 2.0,
+                from: e0,
+                to: e1,
+                vtype: vtype::CAR,
+                flags: 0,
+            });
+        }
+        run_until(&mut engine, 300.0, |e| {
+            assert!(
+                e.vehicles_on(closed).is_empty(),
+                "a car on the closed lane at t={}",
+                e.time
+            );
+            assert_no_overlaps(e);
+        });
+        let s = &engine.stats;
+        assert!(s.departed >= 25, "departed {}", s.departed);
+        assert_eq!((s.arrived, s.teleported), (s.departed, 0));
+    }
+}
+
+#[test]
+fn a_faster_road_draws_routes_once_the_landmarks_are_rebuilt() {
+    // From A to D: via B is shorter but slow, via C longer but fast.
+    let mut b = Builder::default();
+    let a = b.junction(0.0, 0.0);
+    let bj = b.junction(500.0, 300.0);
+    let c = b.junction(500.0, -600.0);
+    let dj = b.junction(1000.0, 0.0);
+    let ej = b.junction(1500.0, 0.0);
+    let start = b.road(ej, a, 1, 13.9);
+    let ab = b.road(a, bj, 1, 5.0);
+    let bd = b.road(bj, dj, 1, 5.0);
+    let ac = b.road(a, c, 1, 25.0);
+    let cd = b.road(c, dj, 1, 25.0);
+    let exit = b.road(dj, ej, 1, 13.9);
+    for (from, to, j) in [
+        (start, ab, a),
+        (start, ac, a),
+        (ab, bd, bj),
+        (ac, cd, c),
+        (bd, exit, dj),
+        (cd, exit, dj),
+    ] {
+        let (fl, tl) = (b.lane(from, 0), b.lane(to, 0));
+        b.connect(fl, tl, j, dir::STRAIGHT, b'M');
+    }
+    let mut engine = Engine::new(b.build(), 2);
+    let fast = vec![start, ac, cd, exit];
+    let slow = vec![start, ab, bd, exit];
+    let v = engine.insert_at(
+        vtype::CAR,
+        fast.clone(),
+        engine.net.edge_lanes(start).start,
+        10.0,
+        10.0,
+    );
+    // Raise the limit on the short way to 70 km/h: it becomes the fastest, the landmark
+    // tables no longer bound it and are rebuilt step by step, and the car on its way
+    // re-plans within a minute.
+    let quick = 70.0 / 3.6;
+    let edits = [
+        Edit::SpeedLimit {
+            edge: ab,
+            speed: quick,
+        },
+        Edit::SpeedLimit {
+            edge: bd,
+            speed: quick,
+        },
+    ];
+    assert_eq!(engine.set_edits(&edits), 2);
+    assert!(!engine.landmarks_ready());
+    assert_eq!(car_route(&mut engine, start, exit), Some(slow.clone()));
+    run_until(&mut engine, 30.0, |_| {});
+    assert!(engine.landmarks_ready());
+    assert_eq!(
+        engine.vehs[v as usize].route, slow,
+        "the car on its way takes the faster road"
+    );
+    // Slowing roads keeps the tables valid: no rebuild.
+    engine.set_edits(&[Edit::SpeedLimit {
+        edge: ac,
+        speed: 10.0,
+    }]);
+    assert!(engine.landmarks_ready());
+}
+
+#[test]
+fn removing_edits_restores_the_network_as_loaded() {
+    let mut engine = signalled_crossroads(&[(30.0, "GGrrrr"), (5.0, "yyrrrr"), (30.0, "rrGGGG")]);
+    let before = (
+        engine.net.d.lane_allow.clone(),
+        engine.net.d.lane_speed.clone(),
+        engine.net.link_allow.clone(),
+        program(&engine),
+    );
+    let edits = [
+        Edit::CloseLane { edge: 0, lane: 1 },
+        Edit::SpeedLimit {
+            edge: 2,
+            speed: 5.0,
+        },
+        Edit::BanTurn { from: 2, to: 7 },
+        Edit::Green {
+            tls: 0,
+            phase: 0,
+            seconds: 45.0,
+        },
+    ];
+    assert_eq!(engine.set_edits(&edits), 4);
+    assert_eq!(engine.edits(), &edits);
+    assert_eq!(program(&engine)[0].1, 45.0);
+    assert!(engine.net.link_allow != before.2);
+    run_until(&mut engine, 30.0, |_| {});
+    assert_eq!(engine.set_edits(&[]), 0);
+    assert_eq!(engine.net.d.lane_allow, before.0);
+    assert_eq!(engine.net.d.lane_speed, before.1);
+    assert_eq!(engine.net.link_allow, before.2);
+    assert_eq!(program(&engine), before.3);
+    // Out-of-range values and unknown roads, lanes and phases are rejected.
+    let bad = [
+        Edit::SpeedLimit {
+            edge: 2,
+            speed: 0.1,
+        },
+        Edit::CloseLane { edge: 2, lane: 5 },
+        Edit::CloseRoad { edge: 9999 },
+        Edit::Green {
+            tls: 0,
+            phase: 9,
+            seconds: 20.0,
+        },
+        Edit::Green {
+            tls: 0,
+            phase: 0,
+            seconds: 1000.0,
+        },
+    ];
+    assert_eq!(engine.set_edits(&bad), 0);
 }

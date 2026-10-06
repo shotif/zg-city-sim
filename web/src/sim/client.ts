@@ -1,4 +1,5 @@
 import type { FromWorker, InitMessage, ToWorker } from './protocol';
+import type { SignalPrograms } from './wasm';
 
 export interface SimFrame {
   /** Simulated time (s since midnight). */
@@ -22,7 +23,12 @@ export class SimClient {
   paused = false;
   /** Mean speed / limit per edge (0-254; 255 = no traffic), refreshed every simulated minute. */
   edgeSpeeds?: Uint8Array;
+  /** Signal programs as the engine runs them, once it is built and after each edit. */
+  signals?: SignalPrograms;
+  /** Edits in force: the latest id the worker has applied, and how many fit. */
+  editsApplied?: { id: number; applied: number };
   onFrame?: () => void;
+  onEdited?: (applied: number, signals: SignalPrograms) => void;
   onEdgeSpeeds?: (speeds: Uint8Array) => void;
   onReady?: (buildMs: number) => void;
   onError?: (message: string) => void;
@@ -43,7 +49,13 @@ export class SimClient {
     switch (message.type) {
       case 'ready':
         this.ready = true;
+        this.signals = message.signals;
         this.onReady?.(message.buildMs);
+        break;
+      case 'edited':
+        this.signals = message.signals;
+        this.editsApplied = { id: message.id, applied: message.applied };
+        if (message.id === this.editsId) this.onEdited?.(message.applied, message.signals);
         break;
       case 'frame':
         this.prev = this.cur;
@@ -95,6 +107,14 @@ export class SimClient {
   /** Close these edges to routing (live road closures), replacing earlier closures. */
   setClosures(edges: Uint32Array): void {
     this.send({ type: 'closures', edges });
+  }
+
+  private editsId = 0;
+
+  /** Replace the network edits in force (four words per edit, see edit/edits.ts). */
+  setEdits(words: Uint32Array): void {
+    this.editsId += 1;
+    this.send({ type: 'edits', id: this.editsId, words });
   }
 
   dispose(): void {

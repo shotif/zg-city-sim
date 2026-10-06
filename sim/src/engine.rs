@@ -16,10 +16,11 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 
 use crate::demand::Demand;
+use crate::edits::{self, Edit, Loaded};
 use crate::idm;
 use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::rng::Rng;
-use crate::router::{Landmarks, Router};
+use crate::router::{LandmarkBuild, Landmarks, Router};
 use crate::transit::{PendingRun, Transit, TransitRun};
 use crate::vtype::{self, TYPES, VType};
 
@@ -68,6 +69,13 @@ const LANE_CHANGE_ROOM: f32 = 150.0;
 const SHORT_EDGE_LOOKAHEAD: u32 = 4;
 /// Routing cost of a closed road (s): routes avoid it wherever there is another way.
 const CLOSED_TIME: f32 = 3_600.0;
+/// After an edit, every vehicle re-plans its route within this time (s); those whose way on
+/// the edit closed re-plan at once.
+const REPLAN_TIME: f32 = 60.0;
+/// Vehicles this close (m) to the end of their lane keep their plan for the junction ahead.
+const REPLAN_MARGIN: f32 = 25.0;
+/// Landmark searches run per step while the tables are rebuilt after an edit.
+const LANDMARK_SEARCHES_PER_STEP: usize = 1;
 
 /// Flags in the render buffer's info word (bits 0-7: vehicle type, 16-31: colour seed).
 pub mod info {
@@ -365,6 +373,14 @@ pub struct Engine {
     pub edge_entered: Vec<u32>,
     /// Closed roads (sorted): routes avoid them.
     closed: Vec<u32>,
+    /// Edits in force (`set_edits`), and the network as loaded to apply them to.
+    edits: Vec<Edit>,
+    loaded: Loaded,
+    /// Vehicles (slot, serial) still to re-plan after the last edit, and how many per step.
+    replan: Vec<(u32, u32)>,
+    replan_per_step: usize,
+    /// Landmark tables being rebuilt after an edit made roads faster.
+    landmark_job: Option<LandmarkBuild>,
     router: Router,
     pending: BinaryHeap<Pending>,
     waiting: VecDeque<Waiting>,
@@ -780,8 +796,14 @@ impl Engine {
             .collect();
         let mut router = Router::new(n_edges);
         router.landmarks = Some(Landmarks::build(&net, &free_time));
+        let loaded = Loaded::of(&net);
         let mut engine = Engine {
             router,
+            edits: Vec::new(),
+            loaded,
+            replan: Vec::new(),
+            replan_per_step: 0,
+            landmark_job: None,
             travel_time: free_time.clone(),
             free_time,
             edge_speed_sum: vec![0.0; n_edges],
@@ -883,6 +905,8 @@ impl Engine {
         lap(self, 3);
         self.start_transit();
         self.insert_vehicles();
+        self.replan_some();
+        self.build_landmarks();
         lap(self, 4);
         self.collect_stats();
         lap(self, 5);
@@ -2914,6 +2938,150 @@ impl Engine {
     /// Roads closed with `set_closed`.
     pub fn closed(&self) -> &[u32] {
         &self.closed
+    }
+
+    // ---- edits --------------------------------------------------------------------------
+
+    /// Replace the edits in force with `edits` (see `edits.rs`), on the network as loaded.
+    /// Returns how many fit the network; the others are ignored. Vehicles whose way on is
+    /// no longer open re-plan at once, the rest within `REPLAN_TIME`. Where an edit makes a
+    /// road faster, the landmark tables are rebuilt over the next steps, and routes use the
+    /// straight-line bound meanwhile.
+    pub fn set_edits(&mut self, edits: &[Edit]) -> usize {
+        self.loaded.restore(&mut self.net);
+        let mut applied = Vec::with_capacity(edits.len());
+        for edit in edits {
+            if edits::apply(&mut self.net, edit) {
+                applied.push(*edit);
+            }
+        }
+        self.net.refresh_speeds();
+        self.net.refresh_links();
+        for e in 0..self.free_time.len() {
+            let free = self.net.edge_length[e] / self.net.edge_speed[e].max(1.0);
+            if (free - self.free_time[e]).abs() > 1e-3 * self.free_time[e] {
+                self.free_time[e] = free;
+                self.travel_time[e] = free;
+            }
+        }
+        for &e in &self.closed {
+            self.travel_time[e as usize] = CLOSED_TIME;
+        }
+        let valid = self
+            .router
+            .landmarks
+            .as_ref()
+            .is_some_and(|l| l.valid_for(&self.free_time));
+        if !valid || self.landmark_job.is_some() {
+            self.router.landmarks = None;
+            self.landmark_job = Some(LandmarkBuild::new(&self.net, &self.free_time));
+        }
+        self.edits = applied;
+
+        // Re-plan: at once where the way on is closed, gradually everywhere else.
+        let live: Vec<u32> = self.live_vehicles().collect();
+        let mut later = Vec::new();
+        for v in live {
+            let veh = &self.vehs[v as usize];
+            if veh.transit.is_some() {
+                continue;
+            }
+            if !self.net.lane_internal[veh.lane as usize] && self.route_blocked(v) {
+                self.replan_vehicle(v, true);
+            } else {
+                later.push((v, veh.serial));
+            }
+        }
+        self.replan_per_step = later.len().div_ceil((REPLAN_TIME / DT) as usize).max(1);
+        self.replan = later;
+        self.edits.len()
+    }
+
+    /// Edits in force.
+    pub fn edits(&self) -> &[Edit] {
+        &self.edits
+    }
+
+    /// Whether the landmark tables are complete (false while being rebuilt after an edit).
+    pub fn landmarks_ready(&self) -> bool {
+        self.landmark_job.is_none()
+    }
+
+    /// Whether a vehicle's route ahead uses a move its class may no longer make.
+    fn route_blocked(&self, v: u32) -> bool {
+        let veh = &self.vehs[v as usize];
+        let vclass = veh.params().vclass;
+        veh.route[veh.route_idx as usize..].windows(2).any(|w| {
+            !self
+                .net
+                .successors(w[0])
+                .iter()
+                .any(|s| s.edge == w[1] && s.allow & vclass != 0)
+        })
+    }
+
+    /// Plan a vehicle's route again from the road it is on. `now`: even right before the
+    /// junction ahead (its way on is closed). Keeps the old route if there is no other.
+    fn replan_vehicle(&mut self, v: u32, now: bool) {
+        let veh = &self.vehs[v as usize];
+        let lane = veh.lane;
+        if self.net.lane_internal[lane as usize] {
+            return;
+        }
+        if !now && self.net.d.lane_length[lane as usize] - veh.pos < REPLAN_MARGIN {
+            return;
+        }
+        let Some(&dest) = veh.route.last() else {
+            return;
+        };
+        let vclass = veh.params().vclass;
+        let here = self.net.d.lane_edge[lane as usize];
+        self.router.tolls = veh.weighs_tolls;
+        let Some(route) = self
+            .router
+            .route(&self.net, &self.travel_time, here, dest, vclass)
+        else {
+            return;
+        };
+        if route[..] == veh.route[veh.route_idx as usize..] {
+            return;
+        }
+        let link = self.choose_link(lane, &route, 0, vclass);
+        let veh = &mut self.vehs[v as usize];
+        veh.route = route;
+        veh.route_idx = 0;
+        veh.next_link = link;
+        veh.reroute_timer = 0.0;
+    }
+
+    /// Re-plan the next few vehicles waiting since the last edit.
+    fn replan_some(&mut self) {
+        for _ in 0..self.replan_per_step {
+            let Some((v, serial)) = self.replan.pop() else {
+                return;
+            };
+            let veh = &self.vehs[v as usize];
+            if veh.alive() && veh.serial == serial {
+                self.replan_vehicle(v, false);
+            }
+        }
+    }
+
+    /// Run the next landmark searches; swap the tables in when complete.
+    fn build_landmarks(&mut self) {
+        let Some(job) = self.landmark_job.as_mut() else {
+            return;
+        };
+        let mut done = false;
+        for _ in 0..LANDMARK_SEARCHES_PER_STEP {
+            if job.step(&self.net) {
+                done = true;
+                break;
+            }
+        }
+        if done && let Some(job) = self.landmark_job.take() {
+            self.router.landmarks = Some(job.finish());
+        }
     }
 
     pub fn stats_array(&self) -> [f64; stat::LEN] {

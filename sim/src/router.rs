@@ -35,11 +35,83 @@ pub struct Landmarks {
     table: Vec<u16>,
     count: usize,
     pub edges: Vec<u32>,
+    /// Free-flow time of each edge the tables were built on: bounds stay valid while no
+    /// edge is faster than this.
+    pub free_time: Vec<f32>,
 }
 
 impl Landmarks {
     /// Pick landmarks spread around the network's edge and compute their tables.
     pub fn build(net: &Network, free_time: &[f32]) -> Landmarks {
+        let mut job = LandmarkBuild::new(net, free_time);
+        while !job.step(net) {}
+        job.finish()
+    }
+
+    /// Whether the bounds hold for these free-flow times (no edge faster than when built).
+    pub fn valid_for(&self, free_time: &[f32]) -> bool {
+        free_time.len() == self.free_time.len()
+            && free_time
+                .iter()
+                .zip(&self.free_time)
+                .all(|(&now, &then)| now >= then * 0.999)
+    }
+
+    /// Lower bound on the travel time from edge `e` to edge `t` (whose table entries are
+    /// `t_from`/`t_to`, looked up once per query).
+    #[inline]
+    fn bound(&self, e: u32, t_from: &[u16; LANDMARKS], t_to: &[u16; LANDMARKS]) -> f32 {
+        let s = self.slot[e as usize];
+        if s == NONE {
+            return 0.0;
+        }
+        let mut best = 0i32;
+        let row = &self.table[s as usize * self.count * 2..(s as usize + 1) * self.count * 2];
+        for l in 0..self.count {
+            let (fe, te) = (row[l * 2], row[l * 2 + 1]);
+            // Triangle inequality both ways around landmark l (the -1 absorbs rounding).
+            if fe != FAR && t_from[l] != FAR {
+                best = best.max(t_from[l] as i32 - fe as i32 - 1);
+            }
+            if te != FAR && t_to[l] != FAR {
+                best = best.max(te as i32 - t_to[l] as i32 - 1);
+            }
+        }
+        best as f32
+    }
+
+    fn target(&self, t: u32) -> ([u16; LANDMARKS], [u16; LANDMARKS]) {
+        let mut tf = [FAR; LANDMARKS];
+        let mut tt = [FAR; LANDMARKS];
+        let s = self.slot[t as usize];
+        if s != NONE {
+            for l in 0..self.count {
+                tf[l] = self.table[(s as usize * self.count + l) * 2];
+                tt[l] = self.table[(s as usize * self.count + l) * 2 + 1];
+            }
+        }
+        (tf, tt)
+    }
+}
+
+/// Landmark tables built a search at a time (`step`), so the browser can rebuild them
+/// between simulation steps after an edit makes roads faster.
+pub struct LandmarkBuild {
+    slot: Vec<u32>,
+    edges: Vec<u32>,
+    table: Vec<u16>,
+    /// Free-flow time of each edge the tables are built on.
+    free_time: Vec<f32>,
+    pred_offset: Vec<u32>,
+    pred: Vec<(u32, f32)>,
+    /// Searches done: landmark `done / 2`, forward when even.
+    done: usize,
+    dist: Vec<f32>,
+    heap: BinaryHeap<(Reverse<u32>, u32)>,
+}
+
+impl LandmarkBuild {
+    pub fn new(net: &Network, free_time: &[f32]) -> LandmarkBuild {
         let n_edges = net.edge_count();
         let mut slot = vec![NONE; n_edges];
         let mut n = 0usize;
@@ -96,89 +168,81 @@ impl Landmarks {
             }
         }
         let edges: Vec<u32> = best.iter().filter(|b| b.0 != NONE).map(|b| b.0).collect();
-        let count = edges.len();
+        LandmarkBuild {
+            table: vec![FAR; edges.len() * n * 2],
+            slot,
+            edges,
+            free_time: free_time.to_vec(),
+            pred_offset,
+            pred,
+            done: 0,
+            dist: vec![f32::INFINITY; n_edges],
+            heap: BinaryHeap::new(),
+        }
+    }
 
-        let mut table = vec![FAR; count * n * 2];
-        let mut dist = vec![f32::INFINITY; n_edges];
-        let mut heap = BinaryHeap::new();
-        for (l, &landmark) in edges.iter().enumerate() {
-            for forward in [true, false] {
-                dist.fill(f32::INFINITY);
-                dist[landmark as usize] = 0.0;
-                heap.clear();
-                heap.push((Reverse(0f32.to_bits()), landmark));
-                while let Some((Reverse(bits), e)) = heap.pop() {
-                    let g = f32::from_bits(bits);
-                    if g > dist[e as usize] {
-                        continue;
-                    }
-                    let i = (slot[e as usize] as usize * count + l) * 2 + usize::from(!forward);
-                    table[i] = g.min(FAR as f32 - 1.0) as u16;
-                    let mut relax = |next: u32, cost: f32| {
-                        let c = g + cost;
-                        if c < dist[next as usize] {
-                            dist[next as usize] = c;
-                            heap.push((Reverse(c.to_bits()), next));
-                        }
-                    };
-                    if forward {
-                        for s in net.successors(e) {
-                            relax(s.edge, free_time[s.edge as usize] + s.penalty);
-                        }
-                    } else {
-                        let (a, b) = (
-                            pred_offset[e as usize] as usize,
-                            pred_offset[e as usize + 1] as usize,
-                        );
-                        for &(p, cost) in &pred[a..b] {
-                            relax(p, cost);
-                        }
-                    }
+    /// Searches still to run.
+    pub fn remaining(&self) -> usize {
+        self.edges.len() * 2 - self.done
+    }
+
+    /// Run the next search; true when the tables are complete.
+    pub fn step(&mut self, net: &Network) -> bool {
+        if self.done >= self.edges.len() * 2 {
+            return true;
+        }
+        let (l, forward) = (self.done / 2, self.done.is_multiple_of(2));
+        let count = self.edges.len();
+        let landmark = self.edges[l];
+        let (dist, heap, table) = (&mut self.dist, &mut self.heap, &mut self.table);
+        dist.fill(f32::INFINITY);
+        dist[landmark as usize] = 0.0;
+        heap.clear();
+        heap.push((Reverse(0f32.to_bits()), landmark));
+        while let Some((Reverse(bits), e)) = heap.pop() {
+            let g = f32::from_bits(bits);
+            if g > dist[e as usize] {
+                continue;
+            }
+            let s = self.slot[e as usize];
+            if s != NONE {
+                let i = (s as usize * count + l) * 2 + usize::from(!forward);
+                table[i] = g.min(FAR as f32 - 1.0) as u16;
+            }
+            let mut relax = |next: u32, cost: f32| {
+                let c = g + cost;
+                if c < dist[next as usize] {
+                    dist[next as usize] = c;
+                    heap.push((Reverse(c.to_bits()), next));
+                }
+            };
+            if forward {
+                for s in net.successors(e) {
+                    relax(s.edge, self.free_time[s.edge as usize] + s.penalty);
+                }
+            } else {
+                let (a, b) = (
+                    self.pred_offset[e as usize] as usize,
+                    self.pred_offset[e as usize + 1] as usize,
+                );
+                for &(p, cost) in &self.pred[a..b] {
+                    relax(p, cost);
                 }
             }
         }
+        self.done += 1;
+        self.done >= self.edges.len() * 2
+    }
+
+    /// The finished tables, and the free-flow times they were built on.
+    pub fn finish(self) -> Landmarks {
         Landmarks {
-            slot,
-            table,
-            count,
-            edges,
+            count: self.edges.len(),
+            slot: self.slot,
+            table: self.table,
+            edges: self.edges,
+            free_time: self.free_time,
         }
-    }
-
-    /// Lower bound on the travel time from edge `e` to edge `t` (whose table entries are
-    /// `t_from`/`t_to`, looked up once per query).
-    #[inline]
-    fn bound(&self, e: u32, t_from: &[u16; LANDMARKS], t_to: &[u16; LANDMARKS]) -> f32 {
-        let s = self.slot[e as usize];
-        if s == NONE {
-            return 0.0;
-        }
-        let mut best = 0i32;
-        let row = &self.table[s as usize * self.count * 2..(s as usize + 1) * self.count * 2];
-        for l in 0..self.count {
-            let (fe, te) = (row[l * 2], row[l * 2 + 1]);
-            // Triangle inequality both ways around landmark l (the -1 absorbs rounding).
-            if fe != FAR && t_from[l] != FAR {
-                best = best.max(t_from[l] as i32 - fe as i32 - 1);
-            }
-            if te != FAR && t_to[l] != FAR {
-                best = best.max(te as i32 - t_to[l] as i32 - 1);
-            }
-        }
-        best as f32
-    }
-
-    fn target(&self, t: u32) -> ([u16; LANDMARKS], [u16; LANDMARKS]) {
-        let mut tf = [FAR; LANDMARKS];
-        let mut tt = [FAR; LANDMARKS];
-        let s = self.slot[t as usize];
-        if s != NONE {
-            for l in 0..self.count {
-                tf[l] = self.table[(s as usize * self.count + l) * 2];
-                tt[l] = self.table[(s as usize * self.count + l) * 2 + 1];
-            }
-        }
-        (tf, tt)
     }
 }
 
