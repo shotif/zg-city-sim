@@ -60,6 +60,15 @@ impl Demand {
         work: &[f32],
         daily_trips: f64,
     ) -> Demand {
+        // Ignore entries for edges the network does not have (stale or mismatched data).
+        let n = net.edge_count() as u32;
+        let keep: Vec<usize> = (0..edges.len().min(home.len()).min(work.len()))
+            .filter(|&i| edges[i] < n && !net.is_internal_edge(edges[i]))
+            .collect();
+        let edges: Vec<u32> = keep.iter().map(|&i| edges[i]).collect();
+        let home: Vec<f32> = keep.iter().map(|&i| home[i]).collect();
+        let work: Vec<f32> = keep.iter().map(|&i| work[i]).collect();
+        let (home, work) = (&home[..], &work[..]);
         let pos = edges.iter().map(|&e| net.edge_mid[e as usize]).collect();
         let truck_ok = edges
             .iter()

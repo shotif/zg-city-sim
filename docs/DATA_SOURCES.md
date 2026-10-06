@@ -9,10 +9,10 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | Copernicus DEM GLO-30 | Terrain | Copernicus (free, attribution) | ✅ in use |
 | ESA WorldCover 2021 | Ground land cover | CC BY 4.0 | ✅ in use |
 | OpenStreetMap (OSM US Slice extract) | Road network, building types and roof shapes, buildings outside the City | ODbL 1.0 | ✅ in use |
-| ZG3D 2022, City of Zagreb | Buildings: 357,683 footprints with measured heights; LoD2 3D models | Otvorena dozvola | ⏳ heights being integrated; LoD2 roofs later |
+| ZG3D 2022, City of Zagreb | Buildings: 357,683 footprints with measured heights; LoD2 3D models | Otvorena dozvola | ✅ in use (footprints, heights, roof type from volume); LoD2 roofs later |
 | ZET GTFS static | Tram and bus routes, stops, timetables | Otvorena dozvola | M2 |
 | ZET GTFS-RT | Live tram and bus positions | Otvorena dozvola, "test purpose only" | M6 (needs a proxy) |
-| DZS Census 2021 | Population by district and settlement, commuters | attribution requested | M3 |
+| DZS Census 2021 | Population by district and settlement, commuters | attribution requested | ✅ City total in use for demand; districts and commuters in M3 |
 | Hrvatske ceste counts 2025 | Calibration (AADT at counting stations) | page says Otvorena dozvola, PDF says all rights reserved | M3 |
 | Transport Master Plan (2020) | Calibration targets: trip rates, modal split | reports, no licence | M3 |
 | City road closures feed | Live closures | Otvorena dozvola | M3/M6 (needs a proxy or scheduled job) |

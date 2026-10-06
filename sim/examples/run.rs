@@ -1,7 +1,7 @@
 //! Run the engine natively on the network the pipeline exported, reporting traffic and
 //! why vehicles are held up.
 //!
-//!   gunzip -k web/public/data/network/net.bin.gz
+//!   gunzip -k web/public/data/network/net.bin.gz web/public/data/demand/demand.bin.gz
 //!   cargo run --release --example run -- web/public/data/network [start_hour] [minutes] [daily_trips]
 
 use std::collections::HashMap;
@@ -11,29 +11,30 @@ use zg_sim::demand::Demand;
 use zg_sim::engine::{DT, Engine, Holdup};
 use zg_sim::network::{Network, NetworkData};
 
-/// Read `net.json` (the packed index) and the uncompressed `net.bin` from `dir`.
-fn load(dir: &str) -> NetworkData {
-    let index = std::fs::read_to_string(format!("{dir}/net.json")).expect("net.json");
-    let blob = std::fs::read(format!("{dir}/net.bin")).expect("net.bin (gunzip -k net.bin.gz)");
-    let mut data = NetworkData::default();
-    let mut decoded: HashMap<String, (String, usize, usize)> = HashMap::new();
+/// A packed file's arrays (pipeline/packed.py): name -> (type, byte offset, length).
+type Packed = (HashMap<String, (String, usize, usize)>, Vec<u8>);
+
+/// Read `<name>.json` (the packed index) and the uncompressed `<name>.bin` from `dir`.
+fn read_packed(dir: &str, name: &str) -> Option<Packed> {
+    let index = std::fs::read_to_string(format!("{dir}/{name}.json")).ok()?;
+    let blob = std::fs::read(format!("{dir}/{name}.bin")).ok()?;
+    let mut arrays = HashMap::new();
     // The index is simple enough to scan: "name": {"type": "u32", "offset": N, "length": N}
-    let arrays = &index[index.find("\"arrays\"").unwrap()..];
-    for part in arrays.split("}, ").chain(std::iter::once("")) {
+    let body = &index[index.find("\"arrays\"")?..];
+    for part in body.split("}, ").chain(std::iter::once("")) {
         let Some(q) = part.rfind("{\"type\"") else {
             continue;
         };
         let name_end = part[..q].rfind("\":").unwrap();
         let name_start = part[..name_end].rfind('"').unwrap() + 1;
-        let name = &part[name_start..name_end];
         let field = |key: &str| {
             let i = part.find(&format!("\"{key}\": ")).unwrap() + key.len() + 4;
             let rest = &part[i..];
             let end = rest.find([',', '}']).unwrap_or(rest.len());
             rest[..end].trim_matches('"').to_string()
         };
-        decoded.insert(
-            name.to_string(),
+        arrays.insert(
+            part[name_start..name_end].to_string(),
             (
                 field("type"),
                 field("offset").parse().unwrap(),
@@ -41,18 +42,29 @@ fn load(dir: &str) -> NetworkData {
             ),
         );
     }
-    let size = |t: &str| match t {
+    Some((arrays, blob))
+}
+
+fn elem_size(t: &str) -> usize {
+    match t {
         "u8" | "i8" => 1,
         "u16" | "i16" => 2,
         _ => 4,
-    };
+    }
+}
+
+/// Network arrays from `dir/net.*`, with lane shapes decoded like the app does.
+fn load(dir: &str) -> NetworkData {
+    let (decoded, blob) =
+        read_packed(dir, "net").expect("net.json and net.bin (gunzip -k net.bin.gz)");
+    let mut data = NetworkData::default();
     for (name, (ty, offset, length)) in &decoded {
-        let es = size(ty);
+        let es = elem_size(ty);
         if let Some(bytes) = data.alloc_array(name, *length, es) {
             bytes.copy_from_slice(&blob[*offset..*offset + length * es]);
         }
     }
-    // Decode lane shapes like the app: int32 cm origin, int16 cm steps, int16 cm elevation.
+    // int32 cm origin, int16 cm steps, int16 cm elevation per point.
     let get = |name: &str| decoded[name].clone();
     let read_i32 = |o: usize| i32::from_le_bytes(blob[o..o + 4].try_into().unwrap());
     let read_i16 = |o: usize| i16::from_le_bytes(blob[o..o + 2].try_into().unwrap());
@@ -77,6 +89,31 @@ fn load(dir: &str) -> NetworkData {
     data
 }
 
+/// Building-based demand from `dir/demand.*`: edges, residents and jobs per edge.
+fn load_demand(dir: &str) -> Option<(Vec<u32>, Vec<f32>, Vec<f32>)> {
+    let (arrays, blob) = read_packed(dir, "demand")?;
+    let words = |name: &str| -> Vec<[u8; 4]> {
+        let (_, offset, length) = &arrays[name];
+        blob[*offset..*offset + length * 4]
+            .chunks_exact(4)
+            .map(|c| c.try_into().unwrap())
+            .collect()
+    };
+    let edges = words("demandEdge")
+        .into_iter()
+        .map(u32::from_le_bytes)
+        .collect();
+    let home = words("demandHome")
+        .into_iter()
+        .map(f32::from_le_bytes)
+        .collect();
+    let work = words("demandWork")
+        .into_iter()
+        .map(f32::from_le_bytes)
+        .collect();
+    Some((edges, home, work))
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = args
@@ -85,10 +122,8 @@ fn main() {
         .unwrap_or("web/public/data/network");
     let start: f64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(7.0);
     let minutes: u32 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
-    let trips: f64 = args
-        .get(4)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(500_000.0);
+    // Daily car trips; 0 = from the demand data.
+    let trips: f64 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0.0);
 
     let t0 = Instant::now();
     let net = Network::build(load(dir)).expect("consistent network");
@@ -98,9 +133,30 @@ fn main() {
         net.d.link_from.len(),
         t0.elapsed().as_secs_f64() * 1e3
     );
-    let demand = Demand::from_network(&net, trips);
+    let demand_dir = format!("{dir}/../demand");
+    let demand = match load_demand(&demand_dir) {
+        Some((edges, home, work)) => {
+            let residents: f32 = home.iter().sum();
+            // Car trips per resident: 1.84 trips per person, 46 % by car, 1.3 per car.
+            let daily = if trips > 0.0 {
+                trips
+            } else {
+                residents as f64 * 1.84 * 0.46 / 1.3
+            };
+            println!(
+                "demand: {} edges, {residents:.0} residents, {daily:.0} car trips a day",
+                edges.len()
+            );
+            Demand::new(&net, edges, &home, &work, daily)
+        }
+        None => {
+            println!("demand: placeholder from the network (no {demand_dir}/demand.bin)");
+            Demand::from_network(&net, if trips > 0.0 { trips } else { 500_000.0 })
+        }
+    };
     let t0 = Instant::now();
     let mut engine = Engine::new(net, 1);
+    engine.debug = std::env::var("DEBUG_TELEPORT").is_ok();
     println!(
         "engine with routing landmarks ready in {:.0} ms",
         t0.elapsed().as_secs_f64() * 1e3
@@ -194,6 +250,10 @@ fn main() {
         s.routes,
         s.route_settled as f64 / s.routes.max(1) as f64
     );
+    println!("removed vehicles were: {:?}", s.teleport_reasons);
+    for line in &s.teleport_log {
+        println!("  removed: {line}");
+    }
     if engine.phase_seconds.iter().any(|&t| t > 0.0) {
         let names = [
             "signals+demand",

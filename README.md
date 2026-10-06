@@ -25,7 +25,8 @@ Requirements: Node.js 22+, Python 3.12+, Rust (stable) with the WebAssembly targ
 ```bash
 # 1. Build the data (downloads ~400 MB on first run, cached in pipeline/.cache):
 #    terrain + ground (elevation, land cover), network (OpenStreetMap -> SUMO road network),
-#    buildings (City of Zagreb ZG3D model inside the City, OpenStreetMap outside)
+#    buildings (City of Zagreb ZG3D model inside the City, OpenStreetMap outside),
+#    demand (residents and jobs per street from buildings, census and land use)
 python -m venv .venv && . .venv/bin/activate
 pip install -r pipeline/requirements.txt
 python -m pipeline all
@@ -44,7 +45,7 @@ To run the engine natively on the same data (faster to iterate on, with a breakd
 vehicles are held up):
 
 ```bash
-gunzip -k web/public/data/network/net.bin.gz
+gunzip -k web/public/data/network/net.bin.gz web/public/data/demand/demand.bin.gz
 cd sim
 cargo test
 cargo run --release --example run -- ../web/public/data/network 7 30   # 07:00, 30 minutes

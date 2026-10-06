@@ -303,7 +303,7 @@ impl Network {
             let allow = link_allow[l];
             let penalty = match d.link_dir[l] {
                 dir::LEFT | dir::PARTLEFT => 4.0,
-                dir::TURN => 20.0,
+                dir::TURN => 60.0,
                 _ => 0.0,
             };
             pairs.push((d.lane_edge[from], d.lane_edge[to], allow, penalty));

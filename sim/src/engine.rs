@@ -26,14 +26,25 @@ use crate::vtype::{TYPES, VType};
 pub const DT: f32 = 0.5;
 /// 32-bit words per vehicle slot in the render buffer.
 pub const RENDER_STRIDE: usize = 8;
-/// Vehicles stopped this long are removed, as SUMO "teleports" them, so gridlocks clear.
-pub const STUCK_TIME: f32 = 180.0;
+/// Vehicles stopped this long are removed, as SUMO "teleports" them (same default), so
+/// gridlocks clear. Long enough to sit out two red phases at the biggest junctions.
+pub const STUCK_TIME: f32 = 300.0;
+/// Seconds before a vehicle whose detour failed tries again.
+const REROUTE_RETRY: f32 = 20.0;
 /// Trips that cannot be inserted within this time are dropped.
 const MAX_INSERT_DELAY: f64 = 120.0;
 /// Safety margin (s) a yielding vehicle wants before a priority vehicle arrives.
 const YIELD_MARGIN: f32 = 1.5;
+/// After waiting this long at a junction (s), a driver pushes in where oncoming drivers can
+/// still brake comfortably, and drivers who could stop let it go first.
+const PUSH_IN_WAIT: f32 = 15.0;
+/// After waiting this long (s), a driver enters a junction even if the road behind it is
+/// full, so gridlocks can unwind.
+const BLOCK_BOX_WAIT: f32 = 60.0;
 /// Actuated signals keep a green phase while a vehicle arrives within this time (s).
 const MAX_GAP: f32 = 3.0;
+/// Longest an actuated green phase runs past its planned duration (s).
+const MAX_EXTENSION: f32 = 10.0;
 /// MOBIL lane changes: weight of the new follower's disadvantage and the gain needed.
 const POLITENESS: f32 = 0.3;
 const CHANGE_THRESHOLD: f32 = 0.3;
@@ -141,6 +152,8 @@ pub struct Vehicle {
     pub wait_total: f32,
     /// Seconds until the next lane change is allowed.
     pub lc_timer: f32,
+    /// Seconds until a failed detour may be tried again.
+    pub reroute_timer: f32,
     /// A vehicle that needs to change into this vehicle's lane just ahead of it.
     pub coop: u32,
     /// Indicator: 1 left, -1 right.
@@ -172,6 +185,7 @@ impl Vehicle {
             wait: 0.0,
             wait_total: 0.0,
             lc_timer: 0.0,
+            reroute_timer: 0.0,
             coop: NONE,
             blink: 0,
             depart: 0.0,
@@ -206,6 +220,10 @@ pub struct Stats {
     /// Routes computed and edges the searches settled (routing cost).
     pub routes: u64,
     pub route_settled: u64,
+    /// Why removed vehicles were stuck (`Holdup` names).
+    pub teleport_reasons: std::collections::BTreeMap<String, u64>,
+    /// Details of the first few removals per reason (with `Engine::debug`).
+    pub teleport_log: Vec<String>,
 }
 
 enum Finish {
@@ -222,6 +240,8 @@ struct LinkUser {
     /// Seconds until its rear has left the junction.
     leave: f32,
     speed: f32,
+    /// Whether it could still stop comfortably before the stop line.
+    can_stop: bool,
 }
 
 /// What a vehicle decided this step.
@@ -303,6 +323,8 @@ pub struct Engine {
     /// Seconds spent per step phase (signals+demand, plan, move, lane changes, insertion,
     /// statistics); filled only with the `profile` feature.
     pub phase_seconds: [f64; 6],
+    /// Keep diagnostics (`Stats::teleport_log`).
+    pub debug: bool,
 }
 
 /// Seconds to cover `d` metres from speed `v`, accelerating at `a` up to `vmax`.
@@ -395,6 +417,7 @@ impl Engine {
             render: Vec::new(),
             scratch: Vec::new(),
             phase_seconds: [0.0; 6],
+            debug: false,
             rng: Rng::new(seed),
             time: 0.0,
             step_no: 0,
@@ -507,8 +530,11 @@ impl Engine {
             let p = self.tls_phase[t] as usize;
             let elapsed = self.tls_elapsed[t];
             let d = &self.net.d;
-            let (min, max) = (d.phase_min_dur[p], d.phase_max_dur[p]);
-            let advance = if max > min + 0.5 {
+            // Guessed programs allow 50 s extensions on every phase (cycles up to 10
+            // minutes); Zagreb's signals run 60-120 s cycles, so extensions stay near plan.
+            let min = d.phase_min_dur[p];
+            let max = d.phase_max_dur[p].min(d.phase_duration[p].max(min) + MAX_EXTENSION);
+            let advance = if d.phase_max_dur[p] > min + 0.5 {
                 elapsed >= max || (elapsed >= min && !self.phase_has_demand(t, p))
             } else {
                 elapsed >= d.phase_duration[p]
@@ -762,7 +788,10 @@ impl Engine {
         if !full {
             return true;
         }
-        if dist < speed * speed / (2.0 * p.decel) + p.length + 5.0 && !self.exit_has_room(link, p) {
+        if veh.wait < BLOCK_BOX_WAIT
+            && dist < speed * speed / (2.0 * p.decel) + p.length + 5.0
+            && !self.exit_has_room(link, veh)
+        {
             return false;
         }
         let net = &self.net;
@@ -779,7 +808,8 @@ impl Engine {
                 v_link,
             );
         let minor = !matches!(state, b'G' | b'M' | b'O' | b'y' | b'r' | b'u');
-        !self.junction_conflict(v, veh, link, minor, arrive, leave)
+        let can_stop = speed * speed / (2.0 * p.decel) < dist - 1.0;
+        !self.junction_conflict(v, veh, link, minor, arrive, leave, can_stop)
     }
 
     /// Whether the light (or stop sign) at `link` lets a vehicle through right now.
@@ -791,24 +821,45 @@ impl Engine {
         }
     }
 
-    /// Room for a vehicle on the lane behind the junction, counting vehicles still inside.
-    fn exit_has_room(&self, link: u32, p: &VType) -> bool {
+    /// Room for a vehicle behind the junction, counting vehicles still inside it. When the
+    /// lane behind is too short to hold the vehicle (junction clusters split by sub-metre
+    /// edges), the vehicle must also be able to cross the next junction, or it would stop
+    /// inside this one and block it.
+    fn exit_has_room(&self, link: u32, veh: &Vehicle) -> bool {
         let d = &self.net.d;
-        let to = d.link_to[link as usize] as usize;
-        let len = d.lane_length[to];
-        // Very short lanes (conversion artefacts) only need to be clear.
-        let need = (p.length + p.min_gap).min(len);
-        let back = match self.lane_vehs[to].first() {
-            Some(&u) => {
+        let p = veh.params();
+        let mut need = p.length + p.min_gap;
+        let mut link = link;
+        for route_i in (veh.route_idx + 1..).take(4) {
+            let to = d.link_to[link as usize] as usize;
+            let len = d.lane_length[to];
+            let reserved = self.lane_reserved[to];
+            if let Some(&u) = self.lane_vehs[to].first() {
                 let uv = &self.vehs[u as usize];
-                if uv.speed > 3.0 {
-                    return true;
-                }
-                uv.pos - uv.params().length
+                return uv.speed > 3.0 || uv.pos - uv.params().length - reserved >= need.min(len);
             }
-            None => len,
-        };
-        back - self.lane_reserved[to] >= need
+            if len - reserved >= need {
+                return true;
+            }
+            // A short, empty lane: the way on through the next junction must be clear too.
+            let next = self.choose_link_or_detour(to as u32, &veh.route, route_i, p.vclass);
+            if next == NONE {
+                return len - reserved >= need.min(len);
+            }
+            if !self.signal_allows(next, NONE) {
+                return false;
+            }
+            let mut via = d.link_via[next as usize];
+            while via != NONE && self.net.lane_internal[via as usize] {
+                if !self.lane_vehs[via as usize].is_empty() {
+                    return false;
+                }
+                via = d.lane_next[via as usize];
+            }
+            need -= (len - reserved).max(0.0);
+            link = next;
+        }
+        true
     }
 
     /// Vehicles inside the junction on `link`, then (if `approaching`) those about to enter.
@@ -831,6 +882,7 @@ impl Engine {
                     arrive: 0.0,
                     leave: remaining / uv.speed.max(0.5),
                     speed: uv.speed,
+                    can_stop: false,
                 };
                 n += 1;
             }
@@ -849,6 +901,7 @@ impl Engine {
                     arrive: 0.0,
                     leave: (len - uv.pos) / uv.speed.max(0.5),
                     speed: uv.speed,
+                    can_stop: false,
                 };
                 n += 1;
             }
@@ -891,6 +944,7 @@ impl Engine {
                     arrive: arrive.max(0.01),
                     leave,
                     speed: uv.speed,
+                    can_stop: uv.speed * uv.speed / (2.0 * up.decel) < dist - 1.0,
                 };
                 n += 1;
             }
@@ -898,8 +952,20 @@ impl Engine {
         n
     }
 
+    /// The vehicle stopped at the stop line of `link`, waiting to use it, if any.
+    fn waiting_at(&self, link: u32) -> Option<&Vehicle> {
+        let d = &self.net.d;
+        let from = d.link_from[link as usize] as usize;
+        let &u = self.lane_vehs[from].last()?;
+        let uv = &self.vehs[u as usize];
+        let at_line = d.lane_length[from] - uv.pos < 3.0 && uv.speed < 0.5;
+        (uv.next_link == link && at_line).then_some(uv)
+    }
+
     /// Whether entering `link` (arriving at the stop line in `arrive` s, clear of the
-    /// junction after `leave` s) would conflict with other vehicles.
+    /// junction after `leave` s) would conflict with other vehicles. `can_stop`: the vehicle
+    /// could still stop comfortably at the line, so it can let others go first.
+    #[allow(clippy::too_many_arguments)]
     fn junction_conflict(
         &self,
         v: u32,
@@ -908,6 +974,7 @@ impl Engine {
         minor: bool,
         arrive: f32,
         leave: f32,
+        can_stop: bool,
     ) -> bool {
         let net = &self.net;
         let d = &net.d;
@@ -918,17 +985,22 @@ impl Engine {
         }
         let r = r as u32;
         let mut users = [LinkUser::default(); 8];
-        // Never drive into a vehicle that is inside the junction on a crossing path.
         for f in net.foes(j, r) {
             let fl = net.request_link(j, f);
             if fl == NONE || fl == link {
                 continue;
             }
+            // Never drive into a vehicle that is inside the junction on a crossing path.
             let n = self.link_users(fl, &mut users, false);
             if users[..n]
                 .iter()
                 .any(|u| u.veh != v && u.leave > arrive - 0.2)
             {
+                return true;
+            }
+            // Courtesy: let a driver who has waited long at a crossing path go first.
+            let waited_longer = |w: &Vehicle| w.wait > PUSH_IN_WAIT && w.wait > veh.wait + 2.0;
+            if can_stop && self.waiting_at(fl).is_some_and(waited_longer) {
                 return true;
             }
         }
@@ -938,6 +1010,7 @@ impl Engine {
         // Yield: only go if we are through before a priority vehicle arrives, or after it.
         let impatient = veh.wait > 10.0;
         let margin = if impatient { 0.5 } else { YIELD_MARGIN };
+        let pushing_in = veh.wait > PUSH_IN_WAIT;
         let my_to = d.link_to[link as usize];
         for f in net.response(j, r) {
             let fl = net.request_link(j, f);
@@ -956,8 +1029,16 @@ impl Engine {
                     }
                     continue;
                 }
-                // After a long wait, go when the others are all waiting too (deadlock).
-                if veh.wait > 30.0 && u.speed < 0.5 {
+                // Stopped vehicles that waited less go after us; after a long wait, all of
+                // them (everyone waiting for everyone else is a deadlock).
+                if u.speed < 0.5
+                    && (veh.wait > 30.0
+                        || (pushing_in && self.vehs[u.veh as usize].wait < veh.wait))
+                {
+                    continue;
+                }
+                // Pushing in: whoever can still brake comfortably will.
+                if pushing_in && u.can_stop {
                     continue;
                 }
                 if u.leave < arrive {
@@ -1276,6 +1357,7 @@ impl Engine {
             if !veh.alive() {
                 continue;
             }
+            veh.reroute_timer = (veh.reroute_timer - DT).max(0.0);
             if veh.lc_timer > 0.0 {
                 veh.lc_timer -= DT;
                 continue;
@@ -1305,6 +1387,7 @@ impl Engine {
             && veh.route_idx as usize + 1 < veh.route.len()
             && dist < 5.0
             && veh.wait > 20.0
+            && veh.reroute_timer <= 0.0
         {
             return Some(LaneChange::Reroute);
         }
@@ -1523,6 +1606,7 @@ impl Engine {
                 return;
             }
         }
+        veh.reroute_timer = REROUTE_RETRY;
     }
 
     // ---- insertion --------------------------------------------------------------------------
@@ -1730,7 +1814,7 @@ impl Engine {
         if matches!(state, b's' | b'w') && veh.stop_done != link {
             return Holdup::StopSign;
         }
-        if !self.exit_has_room(link, veh.params()) {
+        if !self.exit_has_room(link, veh) {
             return Holdup::ExitFull;
         }
         let via = d.link_via[link as usize];
@@ -1749,7 +1833,7 @@ impl Engine {
         let p = veh.params();
         let arrive = travel_time(dist, veh.speed, p.accel, self.link_speed(veh, link));
         let minor = !matches!(state, b'G' | b'M' | b'O');
-        if self.junction_conflict(v, veh, link, minor, arrive, arrive + 3.0) {
+        if self.junction_conflict(v, veh, link, minor, arrive, arrive + 3.0, false) {
             return Holdup::Yielding;
         }
         Holdup::Other
@@ -1914,7 +1998,7 @@ impl Engine {
                 out += &format!(
                     " | stop line of link {link} at {dist:.1} m state '{}' go {go} exit room {} tls {}",
                     state as char,
-                    self.exit_has_room(link, p),
+                    self.exit_has_room(link, veh),
                     d.link_tls[link as usize] as i64
                 );
                 if !go {
@@ -1973,6 +2057,21 @@ impl Engine {
             }
         }
         for &(v, _) in &stuck {
+            let reason = self.diagnose(v);
+            let count = self
+                .stats
+                .teleport_reasons
+                .entry(format!("{reason:?}"))
+                .or_default();
+            *count += 1;
+            if self.debug && *count <= 4 {
+                let line = format!(
+                    "{}\n      sees:{}",
+                    self.describe(v),
+                    self.describe_ahead(v)
+                );
+                self.stats.teleport_log.push(line);
+            }
             self.remove_from_lane(v);
             self.finish(v, Finish::Teleported);
         }

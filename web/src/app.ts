@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
 
 import { CameraRig, type ViewMode } from './camera/CameraRig';
-import { attributions, loadManifest } from './manifest';
+import { type PackedIndex, type TypedArray, loadPacked } from './data/packed';
+import { DATA_URL, type DemandLayer, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
 import { STAT } from './sim/wasm';
 import { Hud } from './ui/hud';
@@ -15,23 +16,43 @@ import { VehicleLayer } from './world/vehicleLayer';
 
 const SKY = new THREE.Color(0xb9cfe0);
 
-/** Car trips per weekday: 767k residents × 1.84 trips × 46 % by car ÷ 1.3 per car. */
+/** Car trips per weekday without demand data: 767k residents × 1.84 trips × 46 % by car ÷ 1.3. */
 const DAILY_TRIPS = 500_000;
 /** The simulation starts at 07:00 after filling the streets from 06:50 at full speed. */
 const START_TIME = 6 * 3600 + 50 * 60;
 const WARM_UNTIL = 7 * 3600;
 const WASM_URL = `${import.meta.env.BASE_URL}sim/zg_sim.wasm`;
 
+/** Residents and jobs per street edge, for the simulation's trips. */
+interface Demand {
+  arrays: Record<string, TypedArray>;
+  dailyTrips: number;
+}
+
+async function loadDemand(layer: DemandLayer): Promise<Demand> {
+  const response = await fetch(DATA_URL + layer.index);
+  if (!response.ok) throw new Error(`Could not load ${layer.index} (HTTP ${response.status})`);
+  const index = (await response.json()) as PackedIndex;
+  const folder = layer.index.slice(0, layer.index.lastIndexOf('/') + 1);
+  const arrays = await loadPacked(DATA_URL + folder + index.file, index);
+  return { arrays, dailyTrips: layer.dailyCarTrips };
+}
+
 /** Start the traffic simulation in a worker on the loaded network. */
-function startSimulation(net: RoadNetwork, height: HeightFn, speed: number): SimClient {
+function startSimulation(
+  net: RoadNetwork,
+  demand: Demand | undefined,
+  height: HeightFn,
+  speed: number,
+): SimClient {
   const laneShapeY = laneShapeHeights(net, height);
   return new SimClient(
     {
       wasmUrl: new URL(WASM_URL, document.baseURI).href,
       // Views share the network's buffer, which is copied once; the heights are moved.
-      arrays: { ...net.arrays, laneShape: net.laneShape, laneShapeY },
+      arrays: { ...net.arrays, laneShape: net.laneShape, laneShapeY, ...demand?.arrays },
       seed: 1,
-      dailyTrips: DAILY_TRIPS,
+      dailyTrips: demand?.dailyTrips ?? DAILY_TRIPS,
       startTime: START_TIME,
       warmUntil: WARM_UNTIL,
       speed,
@@ -168,8 +189,16 @@ export async function startApp(container: HTMLElement): Promise<void> {
     if (networkLayer) {
       hud.setNotice('Loading road network…');
       const surface = terrain.heightfield.meshSurface(stride);
+      // Trips come from where people live and work; without that data, from the streets.
+      const demandLayer = manifest.layers.demand;
+      const demand = demandLayer
+        ? loadDemand(demandLayer).catch((error: unknown) => {
+            console.warn('Travel demand could not be loaded; using street-based demand', error);
+            return undefined;
+          })
+        : Promise.resolve(undefined);
       loadRoadNetwork(networkLayer.index)
-        .then((net) => {
+        .then(async (net) => {
           roads = new RoadLayer(net, surface);
           scene.add(roads.object);
           debug.roads = roads;
@@ -178,7 +207,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           vehicles = new VehicleLayer(surface);
           scene.add(vehicles.object);
           debug.vehicles = vehicles;
-          sim = startSimulation(net, surface, Number(params.get('speed')) || 1);
+          sim = startSimulation(net, await demand, surface, Number(params.get('speed')) || 1);
           debug.sim = sim;
           sim.onFrame = () => {
             simChanged = true;

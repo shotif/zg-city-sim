@@ -58,7 +58,10 @@ NETCONVERT_OPTIONS = [
     "--offset.disable-normalization", "true",
     "--geometry.remove",
     "--ramps.guess",
+    # Merge junction clusters (OSM nodes a few metres apart) into one junction; the default
+    # 10 m leaves thousands of sub-metre edges between them.
     "--junctions.join",
+    "--junctions.join-dist", "15",
     "--roundabouts.guess",
     "--tls.guess-signals",
     "--tls.discard-simple",
@@ -79,6 +82,9 @@ NETCONVERT_OPTIONS = [
     "--output.street-names",
     "--output.original-names",
     "--junctions.corner-detail", "5",
+    # U-turns only at dead ends: elsewhere they are rare in Zagreb, and routes full of them
+    # gridlock short stretches of dual carriageway.
+    "--no-turnarounds.except-deadend",
     "--no-warnings",
 ]  # fmt: skip
 

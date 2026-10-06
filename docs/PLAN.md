@@ -58,16 +58,22 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
 **Network.** A lane-level road network built from OpenStreetMap: lanes, turn lanes, turn restrictions, speed limits, signals, tram tracks, bus lanes. The pipeline uses SUMO's `netconvert` to build it, adds hand-made fixes at critical junctions, and exports it to the engine's own compact format. In the browser, the engine's own junction builder handles everything you build or change.
 
 **Status (M2, 2026-10-06).** The engine (`sim/`) runs the whole city in the browser:
-- About 500k car trips per weekday (767k residents × 1.84 trips × 46 % by car ÷ 1.3 per car), timed by an hourly profile, destinations by a gravity model. Placeholder origins and destinations come from the street network until the building-based demand lands.
-- IDM car following; lane changes to reach the next turn plus MOBIL overtaking; SUMO's junction right-of-way (each link yields to its `response` links and never enters while a `foes` link's vehicle is inside); no entering a junction without room behind it; stop signs.
-- Actuated signals from the SUMO programs: a green phase ends after its minimum once nobody is arriving, at its maximum otherwise.
+- **Demand from buildings** (`pipeline/demand.py`): every building gets residents and jobs from its floor area (footprint × storeys) and use. The use comes from its OSM type, else the OSM land use around it, else its shape. The City's 767,131 residents (census 2021) and about 430k jobs are spread over residential and work floor area; the towns around it inside the map get about 260k residents and 80k jobs. Each building attaches to its nearest street.
+- That makes 1.03M residents and about 669k car trips a weekday (1.84 trips per person × 46 % by car ÷ 1.3 per car), timed by an hourly profile. Destinations follow a gravity model: the mean car trip is about 7 km.
+- IDM car following; lane changes to reach the next turn plus MOBIL overtaking; SUMO's junction right-of-way (each link yields to its `response` links and never enters while a `foes` link's vehicle is inside); stop signs.
+- No entering a junction without room behind it, looking through the sub-metre edges netconvert leaves inside junction clusters.
+- Drivers who have waited 15 s push in where oncoming drivers can still brake, and drivers who could stop let long waiters go first. After a minute, drivers enter a full junction so gridlocks can unwind.
+- Actuated signals from the SUMO programs: a green phase ends after its minimum once nobody is arriving, at most 10 s after its planned length.
+- U-turns only at dead ends.
 - A* routing with landmark lower bounds (ALT), on travel times the simulation measures every minute.
-- Vehicles stuck for 3 minutes are removed, as SUMO teleports them (about 1.7 % in a 06:00–10:00 test run, mostly at short artefact edges from the OSM conversion).
-- Native speed: about 33× real time for a 06:00–10:00 morning with up to 12,700 vehicles. The browser runs the WebAssembly build in a worker.
+- Vehicles stuck for 5 minutes are removed, as SUMO teleports them: about 0.7 % of trips in a 07:00–07:30 peak test, mostly queues spilling back.
+- Native speed about 28× real time in the morning peak (14,000 vehicles). The browser runs the WebAssembly build in a worker.
 
 Known gaps:
 - Left turns wait at the stop line rather than inside the junction (SUMO's internal junctions are not exported yet).
+- Guessed signal programs at big junctions have up to 7 green phases; real timings would help a lot (M3).
 - Routing is half the engine's time; a compact routing graph or contraction hierarchies would help.
+- Commuters from outside the map and through traffic are not modelled yet (M3).
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.

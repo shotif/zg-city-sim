@@ -65,6 +65,9 @@ const FACES: { normal: [number, number, number]; corners: [number, number, numbe
   },
 ];
 
+/** Paint colour placeholder: parts in this colour take each vehicle's own paint. */
+export const PAINT = 0xffffff;
+
 /** Merge boxes into one flat-shaded, vertex-coloured geometry. */
 export function boxesGeometry(parts: Part[]): THREE.BufferGeometry {
   const positions: number[] = [];
@@ -97,7 +100,6 @@ export function boxesGeometry(parts: Part[]): THREE.BufferGeometry {
   return geometry;
 }
 
-const PAINT = 0xffffff;
 const GLASS = 0x2a3038;
 const DARK = 0x1c1d1f;
 const LIGHT_GREY = 0xd9dbdc;
@@ -153,7 +155,7 @@ const CAR_COLORS: [number, number][] = [
 ];
 const CAR_COLOR_TOTAL = CAR_COLORS.reduce((sum, [, w]) => sum + w, 0);
 
-const TRUCK_CABS = [0xf2f2ef, 0x1f3f73, 0x9c1c1c, 0xd9a521, 0x2b2d30];
+const TRUCK_CABS = [0xf2f2ef, 0xf2f2ef, 0x1f3f73, 0x9c1c1c, 0xd9a521, 0x2b2d30];
 /** ZET blue. */
 export const ZET_BLUE = 0x1d4fa0;
 

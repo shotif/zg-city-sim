@@ -46,6 +46,18 @@ export interface BuildingsLayer {
   attribution: Attribution[];
 }
 
+/** Where people live and work, per street edge (pipeline/demand.py). */
+export interface DemandLayer {
+  index: string;
+  residents: number;
+  residentsInCity: number;
+  jobs: number;
+  edges: number;
+  /** Car trips per weekday the residents make. */
+  dailyCarTrips: number;
+  attribution?: Attribution;
+}
+
 export interface WorldManifest {
   version: number;
   generated: string;
@@ -59,6 +71,7 @@ export interface WorldManifest {
     ground?: GroundLayer;
     network?: NetworkLayer;
     buildings?: BuildingsLayer;
+    demand?: DemandLayer;
   };
 }
 
@@ -82,7 +95,7 @@ export async function loadManifest(): Promise<WorldManifest> {
 /** Every source credited by the loaded layers, each once. */
 export function attributions(manifest: WorldManifest): Attribution[] {
   const all = Object.values(manifest.layers).flatMap((layer) =>
-    layer ? ([] as Attribution[]).concat(layer.attribution) : [],
+    layer?.attribution ? ([] as Attribution[]).concat(layer.attribution) : [],
   );
   return all.filter((a, i) => all.findIndex((b) => b.name === a.name) === i);
 }

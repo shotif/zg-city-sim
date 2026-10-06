@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 
 import { INFO, RENDER } from '../sim/wasm';
 import type { HeightFn } from './roadGeometry';
-import { VEHICLE_PARTS, boxesGeometry, vehicleColor } from './vehicleGeometry';
+import { PAINT, VEHICLE_PARTS, boxesGeometry, vehicleColor } from './vehicleGeometry';
 
 /** Vehicles sit on the road surface, which is drawn this far above the ground. */
 const ROAD_LIFT = 0.12;
@@ -64,12 +64,18 @@ export function interpolatePose(
   return true;
 }
 
-/** Draws the simulation's vehicles as instanced low-poly models. */
+/**
+ * Draws the simulation's vehicles as instanced low-poly models. Each vehicle type has two
+ * meshes sharing one set of instance transforms: the painted body, coloured per vehicle,
+ * and the parts that keep their own colour (glass, cargo boxes, roofs).
+ */
 export class VehicleLayer {
   readonly object = new THREE.Group();
   private readonly meshes: THREE.InstancedMesh[] = [];
-  private readonly geometries: THREE.BufferGeometry[];
-  private readonly material: THREE.MeshLambertMaterial;
+  private readonly fixedMeshes: THREE.InstancedMesh[] = [];
+  private readonly paintGeometries: THREE.BufferGeometry[];
+  private readonly fixedGeometries: THREE.BufferGeometry[];
+  private readonly material = new THREE.MeshLambertMaterial({ vertexColors: true });
   private readonly pose = new Float64Array(4);
   private readonly color = new THREE.Color();
   /** Vehicles drawn in the last update. */
@@ -77,33 +83,42 @@ export class VehicleLayer {
 
   constructor(private readonly height: HeightFn) {
     this.object.name = 'vehicles';
-    this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
-    this.geometries = VEHICLE_PARTS.map(boxesGeometry);
-    for (let type = 0; type < this.geometries.length; type++)
-      this.meshes.push(this.makeMesh(type, 256));
+    this.paintGeometries = VEHICLE_PARTS.map((parts) =>
+      boxesGeometry(parts.filter((part) => part.color === PAINT)),
+    );
+    this.fixedGeometries = VEHICLE_PARTS.map((parts) =>
+      boxesGeometry(parts.filter((part) => part.color !== PAINT)),
+    );
+    for (let type = 0; type < VEHICLE_PARTS.length; type++) this.makeMeshes(type, 256);
   }
 
-  private makeMesh(type: number, capacity: number): THREE.InstancedMesh {
-    const mesh = new THREE.InstancedMesh(this.geometries[type], this.material, capacity);
+  private makeMeshes(type: number, capacity: number): void {
+    const mesh = new THREE.InstancedMesh(this.paintGeometries[type], this.material, capacity);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-    mesh.frustumCulled = false;
-    mesh.count = 0;
-    mesh.name = `vehicles ${type}`;
-    this.object.add(mesh);
-    return mesh;
+    const fixed = new THREE.InstancedMesh(this.fixedGeometries[type], this.material, capacity);
+    fixed.instanceMatrix = mesh.instanceMatrix;
+    for (const m of [mesh, fixed]) {
+      m.frustumCulled = false;
+      m.count = 0;
+      m.name = `vehicles ${type}`;
+      this.object.add(m);
+    }
+    this.meshes[type] = mesh;
+    this.fixedMeshes[type] = fixed;
   }
 
   private ensureCapacity(type: number, needed: number): THREE.InstancedMesh {
-    let mesh = this.meshes[type];
+    const mesh = this.meshes[type];
     if (needed > mesh.instanceMatrix.count) {
-      this.object.remove(mesh);
-      mesh.dispose();
-      mesh = this.makeMesh(type, Math.ceil(needed * 1.5));
-      this.meshes[type] = mesh;
+      for (const m of [mesh, this.fixedMeshes[type]]) {
+        this.object.remove(m);
+        m.dispose();
+      }
+      this.makeMeshes(type, Math.ceil(needed * 1.5));
     }
-    return mesh;
+    return this.meshes[type];
   }
 
   /** Place every vehicle near the view between the previous and current frame. */
@@ -165,6 +180,7 @@ export class VehicleLayer {
     this.drawn = 0;
     meshes.forEach((mesh, type) => {
       mesh.count = used[type];
+      this.fixedMeshes[type].count = used[type];
       this.drawn += used[type];
       mesh.instanceMatrix.needsUpdate = true;
       mesh.instanceColor!.needsUpdate = true;
