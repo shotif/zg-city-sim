@@ -69,6 +69,7 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
 - A* routing with landmark lower bounds (ALT), on travel times the simulation measures every minute.
 - Vehicles stuck for 5 minutes are removed, as SUMO teleports them: about 0.7 % of trips in a 07:00–07:30 peak test, mostly queues spilling back.
 - Native speed about 28× real time in the morning peak (14,000 vehicles). The browser runs the WebAssembly build in a worker.
+- **Traffic map**: every road coloured by its measured mean speed as a share of the limit over the last simulated minute (flowing, slow, congested, jammed), the first analysis view.
 
 Known gaps:
 - Left turns wait at the stop line rather than inside the junction (SUMO's internal junctions are not exported yet).

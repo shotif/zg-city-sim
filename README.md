@@ -63,6 +63,7 @@ cargo run --release --example run -- ../web/public/data/network 7 30   # 07:00, 
 | Rotate isometric view | ⟲ ⟳ buttons | | `Q` / `E` |
 | Pause / resume traffic | ⏸ button | | `Space` |
 | Traffic speed | 1× 4× 16× 64× buttons | | `+` / `-` |
+| Traffic map (roads coloured by speed) | Traffic map button | | `T` |
 
 ## Data and attribution
 
