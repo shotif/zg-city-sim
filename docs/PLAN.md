@@ -131,26 +131,18 @@ Everything is generated from data, so it can be edited:
 
 ## Data sources
 
-| Source | Use | Status (2026-10-06) |
-|---|---|---|
-| Copernicus DEM GLO-30 | Terrain | ✅ in use |
-| ESA WorldCover 2021 | Land cover | ✅ in use |
-| OpenStreetMap | Roads, lanes, signals, tram tracks, POIs, land use | ✅ extract of the world area downloaded via OSM US "Slice" (Geofabrik and Overpass don't respond from the dev container) |
-| ZG3D 2022 (data.zagreb.hr) | Official 3D buildings, LoD 2.2 | reachable, inventory in progress |
-| ZET GTFS (zet.hr) | Tram and bus routes, timetables | reachable, inventory in progress |
-| HŽPP GTFS | Trains | reachable |
-| Census 2021 (DZS) | Population by district and settlement | reachable, inventory in progress |
-| Hrvatske ceste traffic counts | Calibration | reachable, inventory in progress |
-| Transport Master Plan (zagreb.hr) | Travel survey, counts, model documentation | reachable, inventory in progress |
-| Road closures feed (data.zagreb.hr) | Live closures | reachable, inventory in progress |
-| DGU orthophoto 2021–2024 | Reference overlay, validation | reachable, inventory in progress |
-| HAK traffic info, Croatian news | Incidents, congestion hotspots | reachable |
-| DHMZ (meteo.hr) | Weather | reachable |
-| Overture Maps | Backup buildings and places | reachable |
+The full inventory, with URLs, licences, formats, CORS status and gaps, is in [DATA_SOURCES.md](DATA_SOURCES.md).
 
-**OpenStreetMap in the extract (2026-10-06):** 244,305 buildings (only 7,346 tagged with levels and 1,823 with height, which is why we need ZG3D); 1,497 traffic-signal nodes; 1,503 turn restrictions; 38 tram and 440 bus route relations. Of the road ways, 10,659 are tagged with lanes, 8,461 with speed limits and 1,207 with turn lanes.
-
-Every source is credited in the app's attribution panel. Licences are checked before a source ships in the deployed app.
+- **In use:**
+  - Copernicus DEM (terrain).
+  - ESA WorldCover (ground).
+  - OpenStreetMap via OSM US Slice: the road network; buildings outside the City; building types and roof shapes.
+- **Being integrated:** ZG3D 2022, the City of Zagreb's official 3D buildings. It has 357,683 footprints with measured heights, and LoD2 models.
+- **Next, for traffic:**
+  - ZET GTFS: trams and buses.
+  - Census 2021: population.
+  - Hrvatske ceste 2025 counts and Transport Master Plan survey results: calibration.
+- **Live, via a proxy or scheduled job (the sources send no CORS headers):** road closures, ZET GTFS-RT, DHMZ weather.
 
 ## News and incidents
 
