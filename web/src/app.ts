@@ -35,9 +35,11 @@ export async function startApp(container: HTMLElement): Promise<void> {
   });
 
   try {
+    // WebGL 2 by default: it is verified in CI. WebGPU is opt-in (?webgpu) until it has been
+    // tested on real devices; three.js r186 needed a shim for some Chrome versions.
     const renderer = new THREE.WebGPURenderer({
       antialias: true,
-      forceWebGL: params.has('webgl'),
+      forceWebGL: !params.has('webgpu'),
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.NeutralToneMapping;

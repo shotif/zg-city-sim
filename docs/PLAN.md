@@ -182,6 +182,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 ## Risks and open questions
 
 - **Whole-city simulation performance in the browser.** Mitigations: simulation level of detail, and WebAssembly threads. Threads need cross-origin isolation, which GitHub Pages only gets through a service-worker shim; Cloudflare Pages supports it natively.
+- **WebGPU maturity.** The app renders with WebGL 2 by default and WebGPU is opt-in (`?webgpu`). three.js r186 needed a shim for some Chrome versions, and the WebGPU path can't be verified in the headless test environment. We switch the default once it is verified on real devices, or when we need compute shaders.
 - **Traffic-light timings are not public.** We infer them, and ask the City if possible.
 - **ZG3D is based on 2008 aerial imagery.** We merge it with OSM for newer buildings.
 - **Hosting limits** (GitHub Pages about 1 GB). Mitigations: compact binary formats; move large assets to Cloudflare R2 if needed.

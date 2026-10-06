@@ -7,8 +7,7 @@ test('renders Zagreb in the map, isometric and 3D views', async ({ page }, testI
   });
   page.on('pageerror', (error) => errors.push(error.message));
 
-  // Force the WebGL 2 backend: headless browsers have no WebGPU adapter.
-  await page.goto('./?webgl');
+  await page.goto('./');
   await page.waitForFunction(() => window.__ZG__?.ready === true, null, { timeout: 150_000 });
   await expect(page.locator('.hud-overlay-error')).toHaveCount(0);
 
