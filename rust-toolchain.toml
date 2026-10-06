@@ -1,0 +1,7 @@
+# The traffic engine (sim/) is built with this exact toolchain locally and in CI, so new
+# compiler and clippy releases don't change results or fail the build unexpectedly.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

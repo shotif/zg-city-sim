@@ -48,8 +48,7 @@ jobs:
       - name: Lint and test the traffic engine
         working-directory: sim
         run: |
-          rustup update stable --no-self-update
-          rustup target add wasm32-unknown-unknown
+          rustup toolchain install
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test

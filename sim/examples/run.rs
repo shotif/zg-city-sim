@@ -97,17 +97,14 @@ pub fn load_transit(dir: &str) -> Option<TransitData> {
         let (_, offset, length) = &arrays[name];
         blob[*offset..*offset + length * size].to_vec()
     };
-    let words = |name: &str| -> Vec<[u8; 4]> {
-        bytes(name, 4)
-            .chunks_exact(4)
-            .map(|c| c.try_into().unwrap())
-            .collect()
-    };
+    let words = |name: &str| -> Vec<[u8; 4]> { bytes(name, 4).as_chunks::<4>().0.to_vec() };
     Some(TransitData {
         trip_type: bytes("transitTripType", 1),
         trip_route: bytes("transitTripRoute", 2)
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| u16::from_le_bytes(c))
             .collect(),
         trip_stops: words("transitTripStops")
             .into_iter()
@@ -134,9 +131,9 @@ fn load_demand(dir: &str) -> Option<(Vec<u32>, Vec<f32>, Vec<f32>)> {
     let words = |name: &str| -> Vec<[u8; 4]> {
         let (_, offset, length) = &arrays[name];
         blob[*offset..*offset + length * 4]
-            .chunks_exact(4)
-            .map(|c| c.try_into().unwrap())
-            .collect()
+            .as_chunks::<4>()
+            .0
+            .to_vec()
     };
     let edges = words("demandEdge")
         .into_iter()
