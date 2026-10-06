@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from pipeline.counts import Station
-from pipeline.validate import Placement, band, geh, place_share, report
+from pipeline.validate import Placement, band, geh, place_share, report, stuck_roads
 
 
 def test_geh():
@@ -59,7 +59,23 @@ def test_report_separates_inputs_from_independent_checks():
     assert "Busiest hour: 23:00" in text
     assert "At full demand" not in text
 
+    stuck = [("Slavonska avenija", 300), ("Ulica kneza Branimira", 54)]
+    text = report(placed, [], {**day, "removed": 400}, stuck=stuck)
+    assert "account for 354 of the 400 removed" in text
+    assert "| Slavonska avenija | 300 |" in text
+
     # A run of half the demand is compared at full demand: 48,000 against 30,000.
     text = report(placed, [], {**day, "demandScale": 0.5})
     assert "| 30,000 | 24,000 | 48,000 | +60% |" in text
     assert "simulates 50% of the estimated demand" in text
+
+
+def test_stuck_roads_sums_the_edges_of_each_road():
+    net = {"edgeName": np.array([0, 1, 0, 2]), "edgeRef": np.array([5, 0, 5, 5])}
+    index = {"names": ["Slavonska avenija", "", ""], "refs": ["D1"]}
+    day = {"removedAt": [[0, 10], [1, 4], [2, 5], [3, 1]]}
+    assert stuck_roads(net, index, day) == [
+        ("Slavonska avenija", 15),
+        ("D1", 4),
+        ("unnamed road", 1),
+    ]

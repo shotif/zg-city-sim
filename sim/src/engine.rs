@@ -17,7 +17,7 @@ use std::collections::{BinaryHeap, VecDeque};
 
 use crate::demand::Demand;
 use crate::idm;
-use crate::network::{NONE, Network, dir};
+use crate::network::{NONE, Network, NetworkData, dir};
 use crate::rng::Rng;
 use crate::router::{Landmarks, Router};
 use crate::transit::{PendingRun, Transit, TransitRun};
@@ -416,23 +416,7 @@ fn retime_signals(net: &mut Network, tls_link_offsets: &[u32], tls_links: &[u32]
                 fixed += d.phase_duration[p];
                 continue;
             }
-            // Lanes this phase lets go: those with right of way fully, those that must
-            // yield (permissive turns) half.
-            lanes.clear();
-            for &l in links {
-                let idx = d.link_tls_index[l as usize] as usize;
-                let w = match states.get(idx) {
-                    Some(b'G') => 1.0,
-                    Some(b'g') => 0.5,
-                    _ => continue,
-                };
-                let from = d.link_from[l as usize];
-                match lanes.iter_mut().find(|(lane, _)| *lane == from) {
-                    Some(entry) => entry.1 = entry.1.max(w),
-                    None => lanes.push((from, w)),
-                }
-            }
-            let w: f32 = lanes.iter().map(|&(_, w)| w).sum();
+            let w = lanes_served(d, links, states, &mut lanes);
             if w == 0.0 {
                 fixed += d.phase_duration[p];
             }
@@ -460,6 +444,262 @@ fn retime_signals(net: &mut Network, tls_link_offsets: &[u32], tls_links: &[u32]
             }
         }
     }
+}
+
+/// Incoming lanes a phase lets go: those with right of way fully, those that must yield
+/// (permissive turns) half. `lanes` is scratch space.
+fn lanes_served(d: &NetworkData, links: &[u32], states: &[u8], lanes: &mut Vec<(u32, f32)>) -> f32 {
+    lanes.clear();
+    for &l in links {
+        let w = match states.get(d.link_tls_index[l as usize] as usize) {
+            Some(b'G') => 1.0,
+            Some(b'g') => 0.5,
+            _ => continue,
+        };
+        let from = d.link_from[l as usize];
+        match lanes.iter_mut().find(|(lane, _)| *lane == from) {
+            Some(entry) => entry.1 = entry.1.max(w),
+            None => lanes.push((from, w)),
+        }
+    }
+    lanes.iter().map(|&(_, w)| w).sum()
+}
+
+/// Approaches at least this far apart in heading (radians, 135°) are opposite.
+const OPPOSITE_APPROACHES: f32 = 2.356;
+
+/// One phase of a rebuilt signal program.
+struct ProgramPhase {
+    duration: f32,
+    min: f32,
+    max: f32,
+    states: Vec<u8>,
+}
+
+/// Netconvert's programs for clusters of junctions it joins can let approaches go one after
+/// another that could go together: on Slavonska avenija at Ulica Josipa Marohnića, each
+/// direction got one green phase of seven. Merge two green phases where each lets straight-on
+/// traffic go that the other holds, and every conflict between them is a turn giving way to
+/// traffic from the opposite approach (the turn then gets a permissive green, `g`). Phases
+/// that only add turns (protected turns) are kept. A merged program keeps its cycle, so the
+/// re-timing that follows shares out the time the merged phases saved.
+fn merge_signal_phases(net: &mut Network, tls_link_offsets: &[u32], tls_links: &[u32]) {
+    let n_tls = net.d.tls_offset.len();
+    let programs: Vec<Option<Vec<ProgramPhase>>> = (0..n_tls)
+        .map(|t| {
+            let links = &tls_links[tls_link_offsets[t] as usize..tls_link_offsets[t + 1] as usize];
+            merged_program(net, t, links)
+        })
+        .collect();
+    if programs.iter().all(Option::is_none) {
+        return;
+    }
+    let d = &mut net.d;
+    let mut offsets = Vec::with_capacity(n_tls + 1);
+    let (mut duration, mut min_dur, mut max_dur) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut state_offsets, mut states) = (vec![0u32], Vec::new());
+    for (t, program) in programs.into_iter().enumerate() {
+        offsets.push(duration.len() as u32);
+        let mut push = |p: ProgramPhase| {
+            duration.push(p.duration);
+            min_dur.push(p.min);
+            max_dur.push(p.max);
+            states.extend_from_slice(&p.states);
+            state_offsets.push(states.len() as u32);
+        };
+        match program {
+            Some(phases) => phases.into_iter().for_each(&mut push),
+            None => {
+                for p in d.tls_phase_offsets[t] as usize..d.tls_phase_offsets[t + 1] as usize {
+                    let (a, b) = (
+                        d.phase_state_offsets[p] as usize,
+                        d.phase_state_offsets[p + 1] as usize,
+                    );
+                    push(ProgramPhase {
+                        duration: d.phase_duration[p],
+                        min: d.phase_min_dur[p],
+                        max: d.phase_max_dur[p],
+                        states: d.phase_states[a..b].to_vec(),
+                    });
+                }
+            }
+        }
+    }
+    offsets.push(duration.len() as u32);
+    d.tls_phase_offsets = offsets;
+    d.phase_duration = duration;
+    d.phase_min_dur = min_dur;
+    d.phase_max_dur = max_dur;
+    d.phase_state_offsets = state_offsets;
+    d.phase_states = states;
+}
+
+/// Program `t` with its green phases merged (`merge_signal_phases`), or None if none merge.
+fn merged_program(net: &Network, t: usize, links: &[u32]) -> Option<Vec<ProgramPhase>> {
+    let d = &net.d;
+    let (a, b) = (
+        d.tls_phase_offsets[t] as usize,
+        d.tls_phase_offsets[t + 1] as usize,
+    );
+    let mut greens: Vec<ProgramPhase> = Vec::new();
+    let (mut cycle, mut yellow) = (0.0f32, 0.0f32);
+    let mut lanes = Vec::new();
+    for p in a..b {
+        let states = &d.phase_states
+            [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize];
+        cycle += d.phase_duration[p];
+        if states.contains(&b'y') {
+            yellow = yellow.max(d.phase_duration[p]);
+            continue;
+        }
+        // Programs with other states (all-red phases, red-yellow, blinking) stay as they are.
+        if !states.iter().all(|c| matches!(c, b'G' | b'g' | b'r'))
+            || lanes_served(d, links, states, &mut lanes) == 0.0
+        {
+            return None;
+        }
+        greens.push(ProgramPhase {
+            duration: d.phase_duration[p],
+            min: d.phase_min_dur[p],
+            max: d.phase_max_dur[p],
+            states: states.to_vec(),
+        });
+    }
+    let original = greens.len();
+    if original < 3 {
+        return None;
+    }
+    loop {
+        let mut best: Option<(f32, usize, usize, Vec<u8>)> = None;
+        for x in 0..greens.len() {
+            for y in x + 1..greens.len() {
+                if let Some(merged) =
+                    merge_phase_states(net, links, &greens[x].states, &greens[y].states)
+                {
+                    let w = lanes_served(d, links, &merged, &mut lanes);
+                    if best.as_ref().is_none_or(|b| w > b.0) {
+                        best = Some((w, x, y, merged));
+                    }
+                }
+            }
+        }
+        let Some((_, x, y, merged)) = best else {
+            break;
+        };
+        let gone = greens.remove(y);
+        let kept = &mut greens[x];
+        kept.states = merged;
+        kept.min = kept.min.max(gone.min);
+        kept.max = kept.max.max(gone.max);
+    }
+    if greens.len() == original {
+        return None;
+    }
+
+    // Each green phase is followed by a yellow for the links the next one holds.
+    let yellow = if yellow > 0.0 { yellow } else { 3.0 };
+    let n = greens.len();
+    let yellows: Vec<Option<Vec<u8>>> = (0..n)
+        .map(|i| {
+            let (now, next) = (&greens[i].states, &greens[(i + 1) % n].states);
+            let states: Vec<u8> = now
+                .iter()
+                .enumerate()
+                .map(|(k, &c)| match (c, next.get(k)) {
+                    (b'G' | b'g', Some(b'G' | b'g')) => c,
+                    (b'G' | b'g', _) => b'y',
+                    _ => b'r',
+                })
+                .collect();
+            states.contains(&b'y').then_some(states)
+        })
+        .collect();
+    // The cycle stays (with the long cycle of a big junction); re-timing splits it.
+    let cycle = if original >= 4 {
+        cycle.max(LONG_CYCLE)
+    } else {
+        cycle
+    };
+    let green_time =
+        ((cycle - yellow * yellows.iter().flatten().count() as f32) / n as f32).max(MIN_GREEN);
+    let mut program = Vec::with_capacity(2 * n);
+    for (mut phase, yellow_states) in greens.into_iter().zip(yellows) {
+        phase.duration = green_time;
+        phase.min = phase.min.min(green_time);
+        phase.max = phase.max.max(green_time);
+        program.push(phase);
+        if let Some(states) = yellow_states {
+            program.push(ProgramPhase {
+                duration: yellow,
+                min: yellow,
+                max: yellow,
+                states,
+            });
+        }
+    }
+    Some(program)
+}
+
+/// Heading of the lane a link leaves from, at its end.
+fn approach_heading(net: &Network, link: u32) -> f32 {
+    let lane = net.d.link_from[link as usize];
+    net.sample(lane, net.d.lane_length[lane as usize], 0.0)[3]
+}
+
+/// Green phases `a` and `b` of a program merged into one, if they may go together.
+fn merge_phase_states(net: &Network, links: &[u32], a: &[u8], b: &[u8]) -> Option<Vec<u8>> {
+    let d = &net.d;
+    let index = |l: u32| d.link_tls_index[l as usize] as usize;
+    let green = |states: &[u8], l: u32| matches!(states.get(index(l)), Some(b'G' | b'g'));
+    // Each must let straight-on traffic go that the other holds.
+    let own_straight = |x: &[u8], y: &[u8]| {
+        links.iter().any(|&l| {
+            d.link_dir[l as usize] == dir::STRAIGHT
+                && x.get(index(l)) == Some(&b'G')
+                && !green(y, l)
+        })
+    };
+    if a.len() != b.len() || !own_straight(a, b) || !own_straight(b, a) {
+        return None;
+    }
+    let mut merged = a.to_vec();
+    for &l in links {
+        if green(b, l) && !green(a, l) {
+            merged[index(l)] = b[index(l)];
+        }
+    }
+    for &la in links {
+        if !green(a, la) || green(b, la) {
+            continue;
+        }
+        for &lb in links {
+            let j = d.link_junction[la as usize];
+            if !green(b, lb) || green(a, lb) || d.link_junction[lb as usize] != j {
+                continue;
+            }
+            let (ra, rb) = (
+                d.link_request[la as usize] as u32,
+                d.link_request[lb as usize] as u32,
+            );
+            if !net.foes(j, ra).any(|r| r == rb) && !net.foes(j, rb).any(|r| r == ra) {
+                continue;
+            }
+            let turn = |l: u32| d.link_dir[l as usize] != dir::STRAIGHT;
+            let apart = (approach_heading(net, la) - approach_heading(net, lb)).abs()
+                % std::f32::consts::TAU;
+            if apart.min(std::f32::consts::TAU - apart) < OPPOSITE_APPROACHES {
+                return None;
+            }
+            if turn(la) && net.response(j, ra).any(|r| r == rb) {
+                merged[index(la)] = b'g';
+            } else if turn(lb) && net.response(j, rb).any(|r| r == ra) {
+                merged[index(lb)] = b'g';
+            } else {
+                return None;
+            }
+        }
+    }
+    Some(merged)
 }
 
 /// Seconds to cover `d` metres from speed `v`, accelerating at `a` up to `vmax`.
@@ -520,6 +760,7 @@ impl Engine {
             }
         }
 
+        merge_signal_phases(&mut net, &tls_link_offsets, &tls_links);
         retime_signals(&mut net, &tls_link_offsets, &tls_links);
 
         let free_time: Vec<f32> = (0..n_edges)

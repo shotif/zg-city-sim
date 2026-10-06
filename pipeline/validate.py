@@ -175,11 +175,24 @@ def fmt(n: float) -> str:
     return f"{n:,.0f}"
 
 
+def stuck_roads(net: dict[str, np.ndarray], index: dict, day: dict) -> list[tuple[str, int]]:
+    """Roads vehicles were most often removed from (the run's top edges, by road name)."""
+    names, refs = index["names"], index["refs"]
+    by_road: dict[str, int] = {}
+    for edge, n in day.get("removedAt", []):
+        name_i, ref_i = int(net["edgeName"][edge]), int(net["edgeRef"][edge])
+        road = names[name_i] if name_i < len(names) else ""
+        road = road or (refs[ref_i] if ref_i < len(refs) else "") or "unnamed road"
+        by_road[road] = by_road.get(road, 0) + int(n)
+    return sorted(by_road.items(), key=lambda item: -item[1])
+
+
 def report(
     placements: list[Placement],
     unplaced: list[Station],
     day: dict,
     hotspots: tuple[list[dict], dict[str, float]] | None = None,
+    stuck: list[tuple[str, int]] | None = None,
 ) -> str:
     """docs/VALIDATION.md."""
     placed = [p for p in placements if p.hourly is not None]
@@ -347,6 +360,20 @@ def report(
             f"{h['meanSpeedKmh']:.0f} | {fmt(h['stopped'])} | {fmt(h['departed'])} | "
             f"{h['tripMinutes']:.1f} | {h['tripKm']:.1f} |"
         )
+    if stuck:
+        top = sum(n for _, n in stuck)
+        lines += [
+            "",
+            "## Where vehicles get stuck",
+            "",
+            "Vehicles that stand still for 5 minutes are removed, as SUMO teleports them. "
+            f"The 25 road sections that lost the most account for {fmt(top)} of the "
+            f"{fmt(day['removed'])} removed; by road:",
+            "",
+            "| Road | Vehicles removed |",
+            "|---|---:|",
+            *(f"| {road} | {fmt(n)} |" for road, n in stuck[:10]),
+        ]
     if hotspots:
         rows, baseline = hotspots
         congested = [r for r in rows if any(not math.isnan(r[k]) and r[k] < 0.45 for k in PEAKS)]
@@ -437,7 +464,8 @@ def main(argv: list[str] | None = None) -> None:
         placements.append(p)
     speeds = read_speeds(args.run_dir)
     hotspots = hotspot_rows(net, index, speeds) if speeds is not None else None
-    args.out.write_text(report(placements, unplaced, day, hotspots))
+    stuck = stuck_roads(net, index, day)
+    args.out.write_text(report(placements, unplaced, day, hotspots, stuck))
     for p in placements:
         print(
             f"{p.station.id} {p.station.name:24s} {p.station.road:5s} counted {p.station.aadt:7,d}"

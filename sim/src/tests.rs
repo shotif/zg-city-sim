@@ -885,3 +885,98 @@ fn a_queue_leaves_a_green_light_at_a_realistic_saturation_flow() {
         crossed[0]
     );
 }
+
+/// Crossroads with two-lane east-west approaches (straight, left) and one-lane north-south
+/// ones (straight), under a signal program of the given phases.
+fn signalled_crossroads(phases: &[(f32, &str)]) -> Engine {
+    let mut b = Builder::default();
+    let jw = b.junction(0.0, 0.0);
+    let j = b.junction(300.0, 0.0);
+    let je = b.junction(600.0, 0.0);
+    let jn = b.junction(300.0, -300.0);
+    let js = b.junction(300.0, 300.0);
+    let eb_in = b.road(jw, j, 2, 13.9);
+    let eb_out = b.road(j, je, 1, 13.9);
+    let wb_in = b.road(je, j, 2, 13.9);
+    let wb_out = b.road(j, jw, 1, 13.9);
+    let nb_in = b.road(js, j, 1, 13.9);
+    let nb_out = b.road(j, jn, 1, 13.9);
+    let sb_in = b.road(jn, j, 1, 13.9);
+    let sb_out = b.road(j, js, 1, 13.9);
+    let mut links = Vec::new();
+    for (from, to, direction) in [
+        (b.lane(eb_in, 0), b.lane(eb_out, 0), dir::STRAIGHT),
+        (b.lane(eb_in, 1), b.lane(nb_out, 0), dir::LEFT),
+        (b.lane(wb_in, 0), b.lane(wb_out, 0), dir::STRAIGHT),
+        (b.lane(wb_in, 1), b.lane(sb_out, 0), dir::LEFT),
+        (b.lane(nb_in, 0), b.lane(nb_out, 0), dir::STRAIGHT),
+        (b.lane(sb_in, 0), b.lane(sb_out, 0), dir::STRAIGHT),
+    ] {
+        links.push(b.connect(from, to, j, direction, b'O'));
+    }
+    // (response, foes) per request: left turns give way to oncoming straight traffic; the
+    // north-south road crosses the east-west one.
+    b.set_logic(
+        j,
+        &[
+            (0, 0b111000),
+            (0b000100, 0b110100),
+            (0, 0b110010),
+            (0b000001, 0b110001),
+            (0, 0b001111),
+            (0, 0b001111),
+        ],
+    );
+    b.signal(&links, phases);
+    Engine::new(b.build(), 1)
+}
+
+fn program(engine: &Engine) -> Vec<(String, f32)> {
+    let d = &engine.net.d;
+    (0..d.phase_duration.len())
+        .map(|p| {
+            let (a, b) = (
+                d.phase_state_offsets[p] as usize,
+                d.phase_state_offsets[p + 1] as usize,
+            );
+            let states = String::from_utf8(d.phase_states[a..b].to_vec()).unwrap();
+            (states, d.phase_duration[p])
+        })
+        .collect()
+}
+
+#[test]
+fn split_signal_phases_of_opposite_approaches_go_together() {
+    // Eastbound, westbound and the north-south road each on their own.
+    let engine = signalled_crossroads(&[
+        (20.0, "GGrrrr"),
+        (3.0, "yyrrrr"),
+        (20.0, "rrGGrr"),
+        (3.0, "rryyrr"),
+        (20.0, "rrrrGG"),
+        (3.0, "rrrryy"),
+    ]);
+    let phases = program(&engine);
+    let states: Vec<&str> = phases.iter().map(|(s, _)| s.as_str()).collect();
+    // Both directions together, turning left on a permissive green.
+    assert_eq!(states, ["GgGgrr", "yyyyrr", "rrrrGG", "rrrryy"]);
+    // Same 69 s cycle, split 3 lanes' worth to 2.
+    let cycle: f32 = phases.iter().map(|(_, t)| t).sum();
+    assert!((cycle - 69.0).abs() < 0.01, "cycle {cycle}");
+    assert!((phases[0].1 - 36.6).abs() < 0.01 && (phases[2].1 - 26.4).abs() < 0.01);
+
+    // A protected left-turn phase stays.
+    let engine = signalled_crossroads(&[
+        (20.0, "GgGgrr"),
+        (3.0, "yGyGrr"),
+        (10.0, "rGrGrr"),
+        (3.0, "ryryrr"),
+        (20.0, "rrrrGG"),
+        (3.0, "rrrryy"),
+    ]);
+    let states: Vec<String> = program(&engine).into_iter().map(|(s, _)| s).collect();
+    assert_eq!(
+        states,
+        ["GgGgrr", "yGyGrr", "rGrGrr", "ryryrr", "rrrrGG", "rrrryy"]
+    );
+}

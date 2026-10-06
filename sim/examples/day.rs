@@ -126,10 +126,18 @@ fn main() {
     }
     std::fs::write(format!("{out}/edge_speeds.bin"), bytes).expect("write speeds");
     let s = &engine.stats;
+    // The edges vehicles were most often removed from, as [edge, vehicles].
+    let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
+    places.sort_unstable_by(|a, b| b.cmp(a));
+    let removed_at: Vec<String> = places
+        .iter()
+        .take(25)
+        .map(|(n, e)| format!("[{e}, {n}]"))
+        .collect();
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"removedBecause\": {:?}, \
-         \"hours\": [\n  {}\n]}}\n",
+         \"removedAt\": [{}], \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
         s.departed,
@@ -138,6 +146,7 @@ fn main() {
         s.no_route,
         s.insert_failed,
         s.teleport_reasons,
+        removed_at.join(", "),
         hours.join(",\n  "),
     );
     std::fs::write(format!("{out}/day.json"), summary).expect("write summary");
