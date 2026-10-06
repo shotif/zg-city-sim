@@ -22,9 +22,10 @@ pub mod edge_flag {
 }
 
 /// Seconds drivers count for each metre of tolled motorway: Croatian motorway tolls are about
-/// €0.08 a kilometre for cars, and drivers value their time at about €8 an hour. Routes
-/// avoid tolls where a free road is not much slower, as drivers do.
-pub const TOLL_TIME: f32 = 0.036;
+/// €0.08 a kilometre for cars, so 18 s a kilometre values drivers' time at about €16 an hour.
+/// Routes avoid tolls where a free road is not much slower, as drivers do. Calibrated on the
+/// A11's toll counts (docs/VALIDATION.md): at 36 s a kilometre it carried half of them.
+pub const TOLL_TIME: f32 = 0.018;
 
 /// Link directions (pipeline/simnet.py LINK_DIRS).
 pub mod dir {

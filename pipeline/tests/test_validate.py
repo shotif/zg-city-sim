@@ -25,9 +25,23 @@ def test_place_share_weights_by_length_and_skips_empty_edges():
 
 def test_report_separates_inputs_from_independent_checks():
     hourly = np.full(24, 1000.0)
+    # A working day of 30,000 (1,250 an hour on weekdays), spread evenly over the hours.
+    week = (1250.0,) * 5 + (900.0, 700.0)
     placed = [
-        Placement(Station(1, "Edge", "A1", 20_000, (15.8, 45.7), (15.7, 45.6)), [1, 2], 30.0),
-        Placement(Station(2, "Inside", "D1", 30_000, (15.9, 45.8)), [3, 4], 12.0),
+        Placement(Station(1, "Edge", "A1", 20_000, (15.8, 45.7)), [1, 2], 30.0),
+        Placement(
+            Station(
+                2,
+                "Inside",
+                "D1",
+                28_000,
+                (15.9, 45.8),
+                hourly_rest=(1100.0,) * 24,
+                weekday_rest=week,
+            ),
+            [3, 4],
+            12.0,
+        ),
     ]
     for p in placed:
         p.hourly = hourly
@@ -51,11 +65,13 @@ def test_report_separates_inputs_from_independent_checks():
             for h in range(24)
         ],
     }
-    text = report(placed, [], day)
+    text = report(placed, [], day, inputs={1})
     independent = text.split("### Independent checks")[1].split("### Roads that leave")[0]
     assert "2 Inside" in independent and "1 Edge" not in independent
-    # 24,000 simulated against 30,000 counted.
-    assert "| 30,000 | 24,000 | -20% |" in independent
+    # 24,000 simulated against 30,000 on a working day; 1,000 an hour against 1,250 is GEH
+    # 7.5, so no hour is within GEH 5.
+    assert "| 28,000 | 30,000 | 24,000 | -20% | 37 | 0/24 | 12 m |" in independent
+    assert "0% of the station-hours have GEH below 5" in text
     assert "Busiest hour: 23:00" in text
     assert "At full demand" not in text
 
@@ -64,10 +80,11 @@ def test_report_separates_inputs_from_independent_checks():
     assert "account for 354 of the 400 removed" in text
     assert "| Slavonska avenija | 300 |" in text
 
-    # A run of half the demand is compared at full demand: 48,000 against 30,000.
-    text = report(placed, [], {**day, "demandScale": 0.5})
-    assert "| 30,000 | 24,000 | 48,000 | +60% |" in text
-    assert "simulates 50% of the estimated demand" in text
+    # A run of 80 % of the demand is compared at full demand: 30,000 against 30,000, and
+    # every hour within GEH 5.
+    text = report(placed, [], {**day, "demandScale": 0.8}, inputs={1})
+    assert "| 30,000 | 24,000 | 30,000 | +0% | 0 | 24/24 |" in text
+    assert "simulates 80% of the estimated demand" in text
 
 
 def test_stuck_places_name_each_road_by_the_junction_it_leads_to():

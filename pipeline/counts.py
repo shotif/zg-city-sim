@@ -1,22 +1,36 @@
-"""Traffic counts: Hrvatske ceste "Brojenje prometa na cestama Republike Hrvatske 2025".
+"""Traffic counts: Hrvatske ceste, "Brojenje prometa na cestama Republike Hrvatske 2025".
 
-The published tables have no coordinates, so the stations around Zagreb are placed here by
-hand from their road and section names: `at` is a point on the counted section between the
-two interchanges or places the station is named after (good to a few hundred metres).
-Stations on motorways and main roads that go on beyond the map also give the volume of
-traffic crossing the map's edge there (`leaves_map`: about where it does), less what leaves
-or joins at interchanges between the station and the edge (`beyond`: the share estimated to
-carry on, from the towns those interchanges serve).
+The stations in and around the map, placed on their roads by pipeline/hc.py from the
+published tables (which give no coordinates) and stored in pipeline/data/hc_counts_2025.json
+with the hourly and weekday profiles read from the publication's charts.
+
+The simulation runs a typical working day, so each station's count is also estimated for an
+average working day (Monday to Friday) outside July and August (`Station.workday`):
+- stations with charts: 24 times their average hourly traffic on working days outside the
+  summer;
+- the others: the average day outside the summer, from PGDP and PLDP, times the median
+  ratio of working days to all days at the stations with charts (`WORKDAY_FACTOR`).
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from functools import cached_property
+
+import numpy as np
+
+from .config import PIPELINE_DIR
+
+SOURCE = PIPELINE_DIR / "data" / "hc_counts_2025.json"
+# July and August, PLDP's months.
+SUMMER_DAYS = 62
 
 ATTRIBUTION = {
     "name": "Hrvatske ceste, Brojenje prometa 2025",
     "text": "Traffic counts: Hrvatske ceste d.o.o., Brojenje prometa na cestama Republike "
-    "Hrvatske godine 2025 (PGDP, average annual daily traffic).",
+    "Hrvatske godine 2025 (PGDP, average annual daily traffic; hourly profiles read from the "
+    "publication's charts). Stations placed on OpenStreetMap roads by zg-city-sim.",
     "url": "https://hrvatske-ceste.hr/hr/stranice/promet-i-sigurnost/dokumenti/14-brojenje-prometa",
 }
 
@@ -25,37 +39,100 @@ ATTRIBUTION = {
 class Station:
     id: int
     name: str
-    #: Road number as signposted; Slovenia's A2 continues Croatia's A3 west of Bregana.
+    #: Road number as OpenStreetMap tags it: "A3", "D1", county and local roads by number
+    #: alone ("3063"); "" for an unnumbered road, found by `road_names` instead.
     road: str
     #: PGDP 2025: average annual daily traffic, both directions (vehicles per day).
     aadt: int
-    #: (lon, lat) on the counted section.
+    #: (lon, lat) of the station on its counted section.
     at: tuple[float, float]
-    #: (lon, lat) where the counted road leaves the map, for stations that measure the
-    #: traffic crossing the map's edge.
-    leaves_map: tuple[float, float] | None = None
-    #: Share of the counted traffic that crosses the map's edge.
-    beyond: float = 1.0
+    #: Whether the station is inside the map.
+    inside: bool = True
+    #: PLDP: average daily traffic in July and August, if counted.
+    summer: int | None = None
+    #: NAB continuous automatic count, PAB periodic, NB toll count.
+    method: str = ""
+    #: The counted section's ends, as the tables name them, and its length.
+    section: tuple[str, str] = ("", "")
+    length_km: float = 0.0
+    #: How the station was placed.
+    placed: str = ""
+    #: The counted section, (lon, lat) points.
+    path: tuple[tuple[float, float], ...] = ()
+    road_names: tuple[str, ...] = ()
+    #: Average vehicles per hour in each hour of the day outside the summer (all days).
+    hourly_rest: tuple[float, ...] | None = None
+    #: Average vehicles per hour on each day of the week outside the summer, Monday first.
+    weekday_rest: tuple[float, ...] | None = None
+
+    @property
+    def rest_day(self) -> float:
+        """Average daily traffic outside July and August."""
+        if self.hourly_rest is not None:
+            return float(sum(self.hourly_rest))
+        if self.summer is None:
+            return float(self.aadt)
+        return (365 * self.aadt - SUMMER_DAYS * self.summer) / (365 - SUMMER_DAYS)
+
+    @property
+    def workday(self) -> float:
+        """Estimated traffic on an average working day outside the summer (vehicles)."""
+        if self.weekday_rest is not None:
+            return 24 * float(np.mean(self.weekday_rest[:5]))
+        return self.rest_day * WORKDAY_FACTOR
+
+    @property
+    def workday_hourly(self) -> np.ndarray | None:
+        """Estimated vehicles in each hour of a working day outside the summer: the hourly
+        profile of all days outside the summer, scaled to `workday`."""
+        if self.hourly_rest is None:
+            return None
+        h = np.asarray(self.hourly_rest, np.float64)
+        return h * self.workday / h.sum()
+
+    @cached_property
+    def label(self) -> str:
+        return f"{self.id} {self.name}"
 
 
-STATIONS = [
-    # Motorways: each measures traffic to and from one direction beyond the map.
-    # Past Zdenčina.
-    Station(1916, "Lučko – jug", "A1", 49_357, (15.80, 45.695), (15.684, 45.648), 0.85),
-    Station(2027, "Zagreb (istok) – istok", "A3", 37_638, (16.33, 45.73), (16.383, 45.688)),
-    # Past Luka and Zabok.
-    Station(1904, "Zaprešić – sjever", "A2", 27_397, (15.83, 45.89), (15.913, 46.025), 0.7),
-    # Bregana, the border with Slovenia.
-    Station(1910, "Bobovica – zapad", "A3", 18_415, (15.71, 45.837), (15.682, 45.859)),
-    # Past Komin.
-    Station(2002, "Sveta Helena – sjever", "A4", 17_586, (16.28, 45.95), (16.297, 46.05), 0.9),
-    # Past Buševec and Lekenik.
-    Station(2031, "Mraclin – jug", "A11", 12_422, (16.13, 45.605), (16.301, 45.501), 0.65),
-    # State roads; those inside the map without `leaves_map` are independent checks.
-    Station(1937, "Pojatno", "D1", 17_459, (15.818, 45.90), (15.892, 46.017), 0.85),
-    # Past Buševec and Lekenik, towards Sisak and Petrinja.
-    Station(2043, "Petina", "D30", 30_419, (16.117, 45.68), (16.237, 45.537), 0.6),
-    Station(1933, "Sveta Nedelja", "D231", 22_764, (15.775, 45.80)),
-    Station(1925, "Zaprešić – istok", "D225", 21_161, (15.826, 45.842)),
-    Station(2063, "Popovec", "D3", 16_743, (16.15, 45.86)),
-]
+def load_stations() -> list[Station]:
+    data = json.loads(SOURCE.read_text())
+    out = []
+    for s in data["stations"]:
+        hourly = s.get("hourly", {}).get("rest")
+        weekday = (s.get("weekday") or {}).get("rest")
+        out.append(
+            Station(
+                id=s["id"],
+                name=s["name"],
+                road=s["road"] or "",
+                aadt=s["pgdp"],
+                at=tuple(s["at"]),
+                inside=s["inside"],
+                summer=s.get("pldp"),
+                method=s.get("method", ""),
+                section=tuple(s.get("section", ("", ""))),
+                length_km=s.get("length_km", 0.0),
+                placed=s.get("placed", ""),
+                path=tuple(tuple(p) for p in s.get("path", ())),
+                road_names=tuple(s.get("road_names", ())),
+                hourly_rest=tuple(hourly) if hourly else None,
+                weekday_rest=tuple(weekday) if weekday else None,
+            )
+        )
+    return out
+
+
+def workday_factor(stations: list[Station]) -> float:
+    """Median ratio of a working day's traffic to the average day's, outside the summer, at
+    the stations with charts."""
+    ratios = [
+        24 * float(np.mean(s.weekday_rest[:5])) / s.rest_day
+        for s in stations
+        if s.weekday_rest is not None and s.rest_day > 0
+    ]
+    return float(np.median(ratios)) if ratios else 1.0
+
+
+STATIONS = load_stations()
+WORKDAY_FACTOR = workday_factor(STATIONS)

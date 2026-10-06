@@ -12,8 +12,8 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | ZG3D 2022, City of Zagreb | Buildings: 357,683 footprints with measured heights; LoD2 3D models | Otvorena dozvola | ✅ in use (footprints, heights, roof type from volume); LoD2 roofs later |
 | ZET GTFS static | Tram and bus routes, stops, timetables | Otvorena dozvola | ✅ in use: weekday timetable on the network |
 | ZET GTFS-RT | Live tram and bus positions | Otvorena dozvola, "test purpose only" | M6 (needs a proxy) |
-| DZS Census 2021 | Population by district and settlement, commuters | attribution requested | ✅ population of each of the 17 districts in use for demand |
-| Hrvatske ceste counts 2025 | Calibration (AADT at counting stations) | page says Otvorena dozvola, PDF says all rights reserved | ✅ 11 stations around Zagreb (`pipeline/counts.py`): traffic across the map's edge and [validation](VALIDATION.md) |
+| DZS Census 2021 | Population by district and settlement, commuters | attribution requested | ✅ population of each of the 17 districts and of 384 settlements around the City in use for demand (`pipeline/data/census_2021_settlements.json`) |
+| Hrvatske ceste counts 2025 | Calibration (AADT and hourly profiles at counting stations) | page says Otvorena dozvola, PDF says all rights reserved | ✅ 156 stations in and around the map, 90 with hourly profiles (`pipeline/data/hc_counts_2025.json`): traffic across the map's edge, the hourly demand profile and [validation](VALIDATION.md) |
 | Transport Master Plan (2020) | Calibration targets: trip rates, modal split | reports, no licence | M3 |
 | City road closures feed | Live closures | Otvorena dozvola | ✅ copied every 15 min to the `live-data` branch (`.github/workflows/live-data.yml`); drawn in the app, routed around |
 | Croatian online news | Congestion hotspots | headlines and links only | ✅ 107 reports at 39 places (`pipeline/data/news.json`) |
@@ -171,44 +171,32 @@ The national access point also lists ZET and HŽ GTFS, but under a contract with
   | Trešnjevka–sjever | 52,974 |
   | Trnje | 40,539 |
 
-**Commuters:** 70,566 Zagreb residents commute daily. No municipality-to-municipality origin–destination matrix is published.
+- **Settlements** (`pipeline/census.py` → `pipeline/data/census_2021_settlements.json`): 2,287 settlements in the five counties the map covers. Around the City, each settlement's population is spread over the homes inside its OpenStreetMap boundary (admin level 8); 384 settlements match by name and town (or by a name used once in these counties, or the town of the nearest matched settlement), 2 do not.
+
+**Commuters** (sheet 18 of the towns workbook): 70,566 Zagreb residents commute daily. From the towns around the City, daily commuters to another county (for Zagreb County, the City) number 14,760 from Velika Gorica, 6,904 from Samobor, 6,251 from Zaprešić, 4,488 from Sveta Nedelja, 4,472 from Dugo Selo, 2,725 from Sveti Ivan Zelina and 2,557 from Brdovec. No municipality-to-municipality origin–destination matrix is published.
 
 **Licence:** not stated explicitly. The workbooks ask users to cite DZS.
 
 ## 4. Traffic counts: Hrvatske ceste "Brojenje prometa" 2025
 
-- **Page:** <https://hrvatske-ceste.hr/hr/stranice/promet-i-sigurnost/dokumenti/14-brojenje-prometa>. It needs a browser User-Agent and returns 422 to plain curl.
-- **CSV:** `…/2016/Promet_na_cestama_Republike_Hrvatske_2025.csv`.
-  - 914 stations: road, station ID and name, PGDP (AADT), PLDP (average summer daily traffic), segment.
-  - Encoding cp1250, separator `;`, decimal comma.
-  - **No coordinates:** stations must be placed by hand from road and segment names.
-- **911-page PDF:** per-station hourly and daily profiles (chapter 7). Parseable with `pdftotext -layout`.
-- **Vehicle-class CSVs:** include PGDP history for 2021–2024.
-- **Licence conflict:** the page says Otvorena dozvola; the PDF says all rights reserved. Cite the source either way.
+- **Page:** <https://hrvatske-ceste.hr/hr/stranice/promet-i-sigurnost/dokumenti/14-brojenje-prometa>. It refuses plain clients (HTTP 422), but the files it links download with one.
+- **CSV:** `…/2016/Promet_na_cestama_Republike_Hrvatske_2025.csv`, 48 kB.
+  - 914 stations (912 with a count): road number, station ID and name, PGDP (AADT), PLDP (average daily traffic in July and August), counting method (NAB continuous automatic, PAB periodic automatic, NB toll), and the counted section: the roads or interchanges at its ends and its length.
+  - Encoding cp1250, separator `;`, decimal comma. Road numbers: motorways `A1`; state roads as a bare number of up to three digits (`1` is the D1); county roads four digits (`3063`, Ž3063); local roads five (`31102`, L31102); `ner.` an unnumbered road.
+  - Legend: `…/2021/Objasnjenja_kratica_i_oznaka.csv`.
+  - **No coordinates.**
+- **PDF:** `…/2010/Brojenje_prometa_na_cestama_Republike_Hrvatske_godine_2025.pdf`, 911 pages, 77 MB. Chapter 7 has a page of charts for each of 305 stations counted all year: daily traffic over the year, the average traffic in each hour of the day (for the year, the summer and the rest of the year) and on each day of the week, and the 200 busiest hours. The charts are vector drawings with axis labels, so their values can be read exactly; the hourly line averaged over the year sums to the station's PGDP within 1 %.
+- **Vehicle-class CSVs** (with PGDP history for 2021–2024): linked only from the page, which refuses plain clients; not downloaded.
+- **Licence conflict:** the page says Otvorena dozvola; the PDF says all rights reserved. The project commits only data derived from them, with attribution.
 
-Selected stations around Zagreb (2025 PGDP, vehicles per day):
+**In use** (`pipeline/hc.py` → `pipeline/data/hc_counts_2025.json` → `pipeline/counts.py`):
+- 156 stations in and around the map (about 20 km beyond its edge), 54 of them inside it, placed on OpenStreetMap roads: OSM tags Croatian roads with the same numbers (`D1`, `3063`, `31102`), so each station's section is found between the junctions with the roads it is named by, as the pair of junctions whose distance along the road best matches the section's length. Interchanges come from OSM's motorway junction names. The Velika Mlaka station, on an unnumbered road, is placed by hand on Zagrebačka cesta.
+- 90 of them have hourly and weekday profiles read from the charts.
+- Counts are compared for an average working day outside the summer: 7.6 % above PGDP at the median charted station.
+- Where a counted section crosses the map's edge (or ends within 2.5 km of it), the gateway there carries its count (`pipeline/gateways.py`).
+- The other stations inside the map are independent checks ([VALIDATION.md](VALIDATION.md)).
 
-| Station | Road | Segment | PGDP |
-|---|---|---|---|
-| 1916 Lučko–jug | A1 | Lučko–Zdenčina | 49,357 |
-| 2027 Zagreb (istok)–istok | A3 | Rugvica–Ivanić Grad | 37,638 |
-| 1904 Zaprešić–sjever | A2 | | 27,397 |
-| 1910 Bobovica–zapad | A3 | | 18,415 |
-| 2002 Sveta Helena–sjever | A4 | | 17,586 |
-| 2031 Mraclin–jug | A11 | | 12,422 |
-| 2043 Petina | D30 | | 30,419 |
-| 1933 Sveta Nedelja | D231 | | 22,764 |
-| 1925 Zaprešić–istok | D225 | | 21,161 |
-| 2063 Popovec | D3 | | 16,743 |
-| 1937 Pojatno | D1 | | 17,459 |
-| 2014 Velika Mlaka | unclassified | | 27,614 |
-
-The city street network and the toll-free Zagreb bypass (A3 Jankomir–Lučko–Ivanja Reka) have **no** stations.
-
-**In use** (`pipeline/counts.py`): 11 of these stations, placed by hand on the network from their road number and section name (Velika Mlaka's road has no number and is left out).
-- The motorway stations, Pojatno (D1) and Petina (D30) also set the traffic crossing the map's edge on their road. A share is taken off where interchanges lie between the station and the edge.
-- The three other state-road stations inside the map (Sveta Nedelja D231, Zaprešić – istok D225, Popovec D3) are independent checks.
-- Results: [VALIDATION.md](VALIDATION.md).
+The city street network has no stations; the toll-free Zagreb bypass (A3 Jankomir–Lučko–Ivanja Reka) has none either.
 
 ## 5. Transport Master Plan (2020)
 
@@ -225,6 +213,9 @@ The city street network and the toll-free Zagreb bypass (A3 Jankomir–Lučko–
 - 1.84 trips per person per day.
 - Modal split: more than 46 % car, 40 % public transport (55 % of it tram, 36 % bus, 4 % rail), 11 % walk, 3 % bike.
 - Boardings: tram 513,810 per day; ZET bus 343,549 per day.
+
+- By county (Phase I final report, tables 2-1, 2-2 and 3-3): cars per household 1.2 in the City, 1.5 in Zagreb County, 1.4 in Krapina-Zagorje County; trips per person 1.84, 1.90 and 1.84; car's share of trips other than walking 52.2 %, 67.3 % and 80.3 %. The demand uses these ratios for car trips per resident around the City (`CAR_TRIP_RATE` in `pipeline/demand.py`).
+- 2.2 million person trips and almost 1.3 million vehicle trips per weekday in the Master Plan area (the City and the two counties), 1.1 million of them by car.
 
 **Model:**
 

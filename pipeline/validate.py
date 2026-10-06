@@ -5,9 +5,10 @@
     python -m pipeline.validate <run_dir>
 
 The day runner records how many vehicles drove onto every road in every hour. Each count
-station is placed on the edges of its road nearest to the station's point, one per
-direction, and the simulated vehicles on them are compared with the station's average
-annual daily traffic (PGDP).
+station inside the map is placed on the edges of its road nearest to the station's point,
+one per direction, and the simulated vehicles on them are compared with the station's
+count, estimated for a working day outside the summer (pipeline/counts.py): over the day,
+and hour by hour where the publication charts the station's hourly traffic.
 """
 
 from __future__ import annotations
@@ -22,13 +23,16 @@ import numpy as np
 import shapely
 
 from .config import OUTPUT_DIR, REPO_ROOT
-from .counts import STATIONS, Station
-from .gateways import to_scene
+from .counts import STATIONS, WORKDAY_FACTOR, Station
+from .gateways import road_refs, to_scene
 from .packed import read_packed
 
 # The opposite carriageway is at most this much further from the station's point (m).
 OPPOSITE_SLACK = 150.0
 PASSENGER = 1
+# Transport models aim for GEH below this on hourly flows, at 85 % of count locations.
+GEH_TARGET = 5.0
+GEH_SHARE = 0.85
 
 
 @dataclass
@@ -73,16 +77,25 @@ def heading_at(line: shapely.LineString, point: shapely.Point) -> np.ndarray:
     return v / max(float(np.hypot(*v)), 1e-9)
 
 
-def place(net: dict[str, np.ndarray], index: dict, station: Station) -> Placement | None:
-    """The station's counted edges: the nearest edge of its road, and the nearest one
-    running the other way (the opposite direction or carriageway), if any."""
-    refs = index["refs"]
-    if station.road not in refs:
-        return None
+def road_edges(net: dict[str, np.ndarray], index: dict, station: Station) -> np.ndarray:
+    """Drivable edges of the station's road: by number, or by street name for an
+    unnumbered road."""
     internal = (net["edgeFlags"] & index["flags"]["internal"]) != 0
     lane0 = net["edgeLaneStart"]
     drivable = (net["laneAllow"][lane0] & PASSENGER) != 0
-    candidates = np.flatnonzero((net["edgeRef"] == refs.index(station.road)) & ~internal & drivable)
+    if station.road:
+        refs = [i for i, r in enumerate(index["refs"]) if station.road in road_refs(r)]
+        on_road = np.isin(net["edgeRef"], refs)
+    else:
+        names = [i for i, n in enumerate(index["names"]) if n in station.road_names]
+        on_road = np.isin(net["edgeName"], names)
+    return np.flatnonzero(on_road & ~internal & drivable)
+
+
+def place(net: dict[str, np.ndarray], index: dict, station: Station) -> Placement | None:
+    """The station's counted edges: the nearest edge of its road, and the nearest one
+    running the other way (the opposite direction or carriageway), if any."""
+    candidates = road_edges(net, index, station)
     if len(candidates) == 0:
         return None
     x, z = to_scene(*station.at)
@@ -220,17 +233,38 @@ def stuck_places(net: dict[str, np.ndarray], index: dict, day: dict) -> list[tup
     return sorted(by_place.items(), key=lambda item: -item[1])
 
 
+def road_group(station: Station) -> str:
+    if station.road.startswith("A"):
+        return "motorways"
+    if station.road.startswith("D"):
+        return "state roads"
+    return "county, local and unnumbered roads"
+
+
+def hourly_geh(p: Placement, scale: float) -> np.ndarray | None:
+    """GEH of the simulated (at full demand) and counted flow in each hour, if counted."""
+    counted = p.station.workday_hourly
+    if counted is None or p.hourly is None:
+        return None
+    return np.array([geh(m / scale, c) for m, c in zip(p.hourly, counted, strict=True)])
+
+
 def report(
     placements: list[Placement],
     unplaced: list[Station],
     day: dict,
     hotspots: tuple[list[dict], dict[str, float]] | None = None,
     stuck: list[tuple[str, int]] | None = None,
+    inputs: set[int] | None = None,
 ) -> str:
-    """docs/VALIDATION.md."""
-    placed = [p for p in placements if p.hourly is not None]
-    inputs = [p for p in placed if p.station.leaves_map is not None]
-    checks = [p for p in placed if p.station.leaves_map is None]
+    """docs/VALIDATION.md. `inputs`: stations whose counts set traffic across the map's
+    edge."""
+    inputs = inputs or set()
+    placed = sorted(
+        (p for p in placements if p.hourly is not None), key=lambda p: -p.station.workday
+    )
+    used = [p for p in placed if p.station.id in inputs]
+    checks = [p for p in placed if p.station.id not in inputs]
 
     # The run's volumes are compared at full demand: divided by the share it simulates.
     scale = float(day.get("demandScale", 1.0))
@@ -239,23 +273,25 @@ def report(
         out = []
         for p in group:
             s = p.station
-            sim = p.simulated
-            full = sim / scale
-            diff = (full - s.aadt) / s.aadt
+            full = p.simulated / scale
+            diff = (full - s.workday) / s.workday
             scaled = f" {fmt(full)} |" if scale != 1 else ""
+            g = hourly_geh(p, scale)
+            hours = f"{int((g < GEH_TARGET).sum())}/24" if g is not None else ""
             out.append(
-                f"| {s.id} {s.name} | {s.road} | {fmt(s.aadt)} | {fmt(sim)} |{scaled} "
-                f"{diff:+.0%} | {geh(full, s.aadt):.0f} | {p.distance:.0f} m |"
+                f"| {s.id} {s.name} | {s.road or 'none'} | {s.method} | {fmt(s.aadt)} | "
+                f"{fmt(s.workday)} | {fmt(p.simulated)} |{scaled} {diff:+.0%} | "
+                f"{geh(full, s.workday):.0f} | {hours} | {p.distance:.0f} m |"
             )
         return out
 
     def summary(group: list[Placement]) -> str:
         if not group:
             return "no stations"
-        ratios = np.array([p.simulated / scale / p.station.aadt for p in group])
+        ratios = np.array([p.simulated / scale / p.station.workday for p in group])
         within = int(np.sum(np.abs(ratios - 1) <= 0.25))
         mape = float(np.mean(np.abs(ratios - 1)))
-        total = sum(p.simulated / scale for p in group) / sum(p.station.aadt for p in group)
+        total = sum(p.simulated / scale for p in group) / sum(p.station.workday for p in group)
         return (
             f"{within} of {len(group)} within ±25 %, mean absolute difference {mape:.0%}, "
             f"total simulated / counted {total:.2f}"
@@ -264,18 +300,12 @@ def report(
     hours = sorted(day["hours"], key=lambda h: h["hour"])
     peak = max(hours, key=lambda h: h["running"])
     departed = day["departed"]
-    if scale != 1:
-        head = [
-            f"| Station | Road | Counted (PGDP 2025) | Simulated ({scale:.0%} demand) | "
-            "At full demand | Difference | GEH | Placed within |",
-            "|---|---|---:|---:|---:|---:|---:|---:|",
-        ]
-    else:
-        head = [
-            "| Station | Road | Counted (PGDP 2025) | Simulated | Difference | GEH | "
-            "Placed within |",
-            "|---|---|---:|---:|---:|---:|---:|",
-        ]
+    sim_col = f"Simulated ({scale:.0%} demand) | At full demand" if scale != 1 else "Simulated"
+    head = [
+        f"| Station | Road | Count | PGDP | Working day | {sim_col} | Difference | GEH | "
+        "Hours GEH < 5 | Placed within |",
+        "|---|---|---|---:|---:|---:|" + ("---:|" if scale != 1 else "") + "---:|---:|---:|---:|",
+    ]
     scaled_note = (
         [
             f"The run simulates {scale:.0%} of the estimated demand (see What was calibrated), "
@@ -287,6 +317,8 @@ def report(
         if scale != 1
         else []
     )
+    charted = [p for p in placed if p.station.workday_hourly is not None]
+    groups = ["motorways", "state roads", "county, local and unnumbered roads"]
     lines = [
         "# Validation: a simulated weekday against traffic counts",
         "",
@@ -295,28 +327,42 @@ def report(
         "",
         "## What is compared",
         "",
-        "Hrvatske ceste counts traffic on state roads and motorways and publishes each "
-        "station's PGDP: the average number of vehicles per day over the year, both "
-        "directions together. The simulation runs one weekday (from 03:00 to 03:00) with "
-        "everything it has: car and truck trips between homes and jobs, trips to, from and "
-        "through places beyond the map, and ZET's trams and buses. Every vehicle that drives "
-        "onto a road is counted, hour by hour; a station's simulated volume is the day's "
-        "count on its road's edges nearest to the station, both directions.",
+        "Hrvatske ceste publishes a count for each of 914 stations on state, county and "
+        "local roads and motorways: the PGDP, the average number of vehicles per day over the "
+        "year, both directions together. For the stations it counts all year it also charts "
+        "the average traffic in each hour of the day and on each day of the week. The "
+        f"{len(placements) + len(unplaced)} stations inside the map are compared here, "
+        f"{len(charted)} of them hour by hour.",
         "",
-        "The published tables have no coordinates, so each station was placed by hand from "
-        "its road number and section name (`pipeline/counts.py`). The last column shows how "
-        "far the nearest edge of that road is from the point chosen.",
+        "The simulation runs one working day (from 03:00 to 03:00) with everything it has: "
+        "car and truck trips between homes and jobs, trips to, from and through places "
+        "beyond the map, and ZET's trams and buses. Every vehicle that drives onto a road is "
+        "counted, hour by hour; a station's simulated volume is the count on its road's "
+        "edges nearest to the station, both directions.",
+        "",
+        "Counts are compared for an average working day outside July and August "
+        '("Working day"), estimated from the charts: 24 times the average hourly traffic '
+        "on Mondays to Fridays outside the summer. Stations without charts take the average "
+        "day outside the summer (from PGDP and PLDP, the July and August average) times "
+        f"{WORKDAY_FACTOR:.3f}, the median ratio of working days to all days at the charted "
+        "stations. Hourly counts are the hourly chart outside the summer, scaled to the "
+        "working day: the charts average all days of the week, so their peaks are a little "
+        "flatter than a working day's.",
+        "",
+        "The tables give no coordinates. Each station is placed on its road between the "
+        "junctions its section is named by (`pipeline/hc.py`, which reads the tables and "
+        "the charts into `pipeline/data/hc_counts_2025.json`); the last column shows how far "
+        "the nearest edge of that road is from the point chosen.",
         "",
         *scaled_note,
-        "Two caveats about what agreement means:",
+        "Stations whose counts set the traffic crossing the map's edge are listed apart: "
+        "matching them shows the model carries those volumes in and out along the right "
+        "roads, not that it predicts them.",
         "",
-        "- Stations on roads that leave the map (the motorways, the D1 north and the D30 "
-        "south-east) also set how much traffic crosses the map's edge there. Matching them "
-        "shows the model carries those volumes in and out along the right roads, not that it "
-        "predicts them.",
-        "- PGDP averages all days of the year, including weekends and the summer season, "
-        "which raise traffic on the motorways to the coast and lower it in the city. A typical "
-        "working day is within about ±15 % of it on most roads.",
+        "GEH compares a modelled flow M with a count C: √(2(M−C)²/(M+C)). Transport models "
+        f"aim for GEH below {GEH_TARGET:g} on hourly flows at {GEH_SHARE:.0%} of count "
+        "locations; on daily flows, about 15 times larger, the same relative error gives a "
+        "GEH about 4 times higher.",
         "",
         "## What was calibrated",
         "",
@@ -333,16 +379,21 @@ def report(
         "phases get a 120 s cycle (`retime_signals`). Green phases stretch up to 20 s while "
         "traffic keeps arriving.",
         "- **Tolls**: routes count each kilometre of tolled motorway (OpenStreetMap's toll "
-        "tag) as 36 s, about €0.08 at €8 an hour, so short trips take the free road beside a "
-        "tolled motorway where it is not much slower. Drivers who cross the map's edge on a "
-        "tolled motorway stay on it: they pay the toll anyway.",
-        "- **Traffic across the map's edge**: the motorway stations, the D1 at Pojatno and "
-        "the D30 at Petina set the volume where their road leaves the map, less the share "
-        "estimated to leave at interchanges before the edge; uncounted roads get a typical "
-        "volume for their class (`pipeline/gateways.py`).",
-        "- **Demand**: 0.65 car trips per resident a day (Transport Master Plan survey), "
-        "spread over the hours of a weekday. Traffic coming in crosses the map's edge 45 "
-        "minutes ahead of the city's own trips. "
+        "tag) as 18 s, about €0.08 at €16 an hour, so short trips take the free road beside "
+        "a tolled motorway where it is not much slower. Drivers who cross the map's edge on a "
+        "tolled motorway stay on it: they pay the toll anyway. At 36 s a kilometre the A11 "
+        "carried half its toll counts and the D30 at Lekenik over twice its count.",
+        "- **Traffic across the map's edge**: where a road's counted section crosses the "
+        "map's edge, or ends within 2.5 km of it, the gateway there carries that station's "
+        "working-day count; uncounted roads get a typical volume for their class "
+        "(`pipeline/gateways.py`).",
+        "- **Demand**: 0.65 car trips per resident of the City a day (Transport Master Plan "
+        "survey), more in the towns around it, where more trips are by car (0.87 in Zagreb "
+        "County and the others, 1.0 in Krapina-Zagorje); towns get their census population by "
+        "settlement. "
+        "Trips are spread over the hours of a weekday by the hourly profile measured at the "
+        "charted stations. Traffic coming in crosses the map's edge 45 minutes ahead of the "
+        "city's own trips. "
         + (
             f"This run simulates {scale:.0%} of that demand and of the traffic across the "
             "map's edge (`DEMAND_SCALE` in `pipeline/demand.py`): the simulated junctions "
@@ -354,31 +405,76 @@ def report(
         "",
         "## Results",
         "",
-        "### Independent checks: state roads inside the map",
+        "### Independent checks",
         "",
         *head,
         *rows(checks),
         "",
         f"Summary: {summary(checks)}.",
         "",
-        "### Roads that leave the map (volumes used as inputs)",
+        *(
+            f"- {name.capitalize()}: {summary(group)}."
+            for name in groups
+            if (group := [p for p in checks if road_group(p.station) == name])
+        ),
+        "",
+        "### Roads that leave the map (counts used as inputs)",
         "",
         *head,
-        *rows(inputs),
+        *rows(used),
         "",
-        f"Summary: {summary(inputs)}.",
-        "",
-        "GEH compares a modelled flow M with a count C: √(2(M−C)²/(M+C)). Transport models "
-        "aim for GEH below 5 on hourly flows; on daily flows, which are about 15 times "
-        "larger, the same relative error gives a GEH about 4 times higher.",
+        f"Summary: {summary(used)}.",
     ]
     if unplaced:
         lines += [
             "",
-            "Not placed: "
+            "Not placed on the network: "
             + ", ".join(f"{s.id} {s.name} ({s.road or 'unnumbered road'})" for s in unplaced)
             + ".",
         ]
+    if charted:
+        gehs = np.array([hourly_geh(p, scale) for p in charted])
+        counted = np.array([p.station.workday_hourly for p in charted])
+        simulated = np.array([p.hourly / scale for p in charted])
+        ok = gehs < GEH_TARGET
+        good_hours = int((ok.mean(axis=0) >= GEH_SHARE).sum())
+        lines += [
+            "",
+            "### Hour by hour",
+            "",
+            f"At the {len(charted)} stations with hourly charts, {ok.mean():.0%} of the "
+            f"station-hours have GEH below {GEH_TARGET:g}; the target of {GEH_SHARE:.0%} of "
+            f"stations is met in {good_hours} of 24 hours. All stations together, vehicles per "
+            "hour and each hour's share of the day:",
+            "",
+            "| Hour | Counted | Simulated (full demand) | Counted share | Simulated share | "
+            "Stations GEH < 5 |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+        c_tot, s_tot = counted.sum(axis=0), simulated.sum(axis=0)
+        for h in range(24):
+            lines.append(
+                f"| {h:02d}:00 | {fmt(c_tot[h])} | {fmt(s_tot[h])} | "
+                f"{c_tot[h] / c_tot.sum():.1%} | {s_tot[h] / s_tot.sum():.1%} | "
+                f"{ok[:, h].mean():.0%} |"
+            )
+        lines += [
+            "",
+            "Each station's busiest morning and afternoon hours, counted and simulated "
+            "(full demand):",
+            "",
+            "| Station | Road | Morning peak counted | simulated | Afternoon peak counted | "
+            "simulated | Hours GEH < 5 |",
+            "|---|---|---|---:|---|---:|---:|",
+        ]
+        for p, g, c, m in zip(charted, gehs, counted, simulated, strict=True):
+            am = 5 + int(np.argmax(c[5:11]))
+            pm = 12 + int(np.argmax(c[12:20]))
+            lines.append(
+                f"| {p.station.id} {p.station.name} | {p.station.road or 'none'} | "
+                f"{am:02d}:00 {fmt(c[am])} | {fmt(m[am])} | {pm:02d}:00 {fmt(c[pm])} | "
+                f"{fmt(m[pm])} | {int((g < GEH_TARGET).sum())} |"
+            )
     lines += [
         "",
         "## The simulated day",
@@ -417,8 +513,11 @@ def report(
             *(f"| {road} | {fmt(n)} |" for road, n in stuck[:10]),
         ]
     if hotspots:
-        rows, baseline = hotspots
-        congested = [r for r in rows if any(not math.isnan(r[k]) and r[k] < 0.45 for k in PEAKS)]
+        hot_rows, baseline = hotspots
+        congested = [
+            r for r in hot_rows if any(not math.isnan(r[k]) and r[k] < 0.45 for k in PEAKS)
+        ]
+        names = list(PEAKS)
         lines += [
             "",
             "## Places the news reports jams at",
@@ -430,39 +529,26 @@ def report(
             "limit in the busiest hours (bands as on the traffic map: below 45 % is "
             "congested):",
             "",
-            "| Place | Reports | 07:00-08:00 | 16:00-17:00 |",
+            f"| Place | Reports | {names[0].replace('-', ':00-')}:00 | "
+            f"{names[1].replace('-', ':00-')}:00 |",
             "|---|---:|---:|---:|",
         ]
 
         def cell(share: float) -> str:
             return "no traffic" if math.isnan(share) else f"{share:.0%} {band(share)}"
 
-        for r in rows:
+        for r in hot_rows:
             lines.append(
-                f"| {r['name']} | {r['reports']} | {cell(r['07-08'])} | {cell(r['16-17'])} |"
+                f"| {r['name']} | {r['reports']} | {cell(r[names[0]])} | {cell(r[names[1]])} |"
             )
         lines += [
             "",
-            f"{len(congested)} of {len(rows)} places are congested in at least one peak. "
+            f"{len(congested)} of {len(hot_rows)} places are congested in at least one peak. "
             "On all main roads (motorways, trunk, primary and secondary roads), "
-            f"{baseline['07-08']:.0%} of the length is congested at 07:00-08:00 and "
-            f"{baseline['16-17']:.0%} at 16:00-17:00.",
+            f"{baseline[names[0]]:.0%} of the length is congested at "
+            f"{names[0].replace('-', ':00-')}:00 and {baseline[names[1]]:.0%} at "
+            f"{names[1].replace('-', ':00-')}:00.",
         ]
-    lines += [
-        "",
-        "## Hourly profiles at the stations",
-        "",
-        "Simulated vehicles per hour, both directions:",
-        "",
-        "| Station | " + " | ".join(f"{h:02d}" for h in range(24)) + " |",
-        "|---|" + "---:|" * 24,
-    ]
-    for p in placed:
-        lines.append(
-            f"| {p.station.name} ({p.station.road}) | "
-            + " | ".join(fmt(v) for v in p.hourly)
-            + " |"
-        )
     lines += [
         "",
         "## How to repeat",
@@ -473,6 +559,9 @@ def report(
         "(cd sim && cargo run --release --example day -- ../web/public/data /tmp/day)",
         "python -m pipeline.validate /tmp/day",
         "```",
+        "",
+        "The stations come from `pipeline/data/hc_counts_2025.json`, written by "
+        "`pipeline/hc.py` from the published tables (see its docstring to rebuild it).",
         "",
     ]
     return "\n".join(lines)
@@ -496,8 +585,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.demand_scale is not None:
         day.setdefault("demandScale", args.demand_scale)
 
+    gateways = json.loads((OUTPUT_DIR / "demand" / "demand.json").read_text())["gatewayList"]
+    inputs = {sid for g in gateways for sid in g.get("stations", [])}
     placements, unplaced = [], []
     for station in STATIONS:
+        if not station.inside:
+            continue
         p = place(net, index, station)
         if p is None:
             unplaced.append(station)
@@ -507,11 +600,13 @@ def main(argv: list[str] | None = None) -> None:
     speeds = read_speeds(args.run_dir)
     hotspots = hotspot_rows(net, index, speeds) if speeds is not None else None
     stuck = stuck_places(net, index, day)
-    args.out.write_text(report(placements, unplaced, day, hotspots, stuck))
+    args.out.write_text(report(placements, unplaced, day, hotspots, stuck, inputs))
+    scale = float(day.get("demandScale", 1.0))
     for p in placements:
+        s = p.station
         print(
-            f"{p.station.id} {p.station.name:24s} {p.station.road:5s} counted {p.station.aadt:7,d}"
-            f" simulated {p.simulated:9,.0f}  edges {p.edges} ({p.distance:.0f} m)"
+            f"{s.id} {s.name:26s} {s.road or '-':5s} working day {s.workday:7,.0f}"
+            f" simulated {p.simulated / scale:9,.0f}  edges {p.edges} ({p.distance:.0f} m)"
         )
 
 

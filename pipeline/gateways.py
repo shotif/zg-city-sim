@@ -5,8 +5,10 @@ leaving the map ends at its last node beyond the outline. Those road ends are th
 trips to, from and through places beyond the map enter and leave there (sim/src/demand.rs).
 A dual carriageway ends twice, once each way; the two ends make one gateway.
 
-Traffic per day comes from Hrvatske ceste counts where a counted road leaves the map, and
-from typical volumes for the class of road everywhere else.
+Traffic per day comes from Hrvatske ceste counts where a counted road leaves the map: the
+count of the road's section that crosses the map's edge, else of its nearest counted section
+within NEAREST_COUNT, estimated for a working day outside the summer (pipeline/counts.py).
+Everywhere else it is a typical volume for the class of road.
 """
 
 from __future__ import annotations
@@ -39,9 +41,12 @@ CLASS_DAILY = {
 THROUGH_SHARE = {"motorway": 0.35, "trunk": 0.15, "primary": 0.08, "secondary": 0.03}
 # One-way road ends at most this far apart (m) are the two carriageways of one road.
 PAIR_DISTANCE = 300.0
-# A counted road leaves the map at the gateway nearest to where the station says, if
-# within this distance (m).
-STATION_GATEWAY_DISTANCE = 2_000.0
+# A counted section crossing the map's edge this close (m) to a gateway's road end is its
+# road leaving the map (road ends can lie a few kilometres beyond the edge).
+CROSSING_MATCH = 10_000.0
+# Failing that, a gateway takes the count of the nearest counted section of its road this
+# close (m) to the edge where the road leaves.
+NEAREST_COUNT = 2_500.0
 PASSENGER = 1
 NONE = 0xFFFFFFFF
 
@@ -176,38 +181,79 @@ def pair_carriageways(ends: list[Gateway]) -> list[Gateway]:
     return merged + rest
 
 
-def assign_volumes(gateways: list[Gateway], stations: list[Station]) -> None:
-    """Daily traffic and through share of each gateway: counted where a station measures
-    the road leaving the map, typical for the road's class elsewhere."""
+def road_refs(ref: str) -> list[str]:
+    """The road numbers in an OpenStreetMap ref ("D1;E59" -> ["D1", "E59"])."""
+    return [r.strip().replace(" ", "") for r in ref.split(";") if r.strip()]
+
+
+def station_lines(stations: list[Station]) -> dict[str, list[tuple[Station, shapely.Geometry]]]:
+    """Each numbered road's counted sections, in scene coordinates."""
+    out: dict[str, list[tuple[Station, shapely.Geometry]]] = {}
+    for s in stations:
+        if not s.road:
+            continue
+        points = [to_scene(*p) for p in (s.path or (s.at,))]
+        line = shapely.LineString(points) if len(points) > 1 else shapely.Point(points[0])
+        out.setdefault(s.road, []).append((s, line))
+    return out
+
+
+def assign_volumes(
+    gateways: list[Gateway], stations: list[Station], outline: shapely.Polygon
+) -> None:
+    """Daily traffic and through share of each gateway: the count of its road's counted
+    section that crosses the map's edge there, else of the nearest one near the edge;
+    typical for the road's class elsewhere. Motorways match any motorway's sections, as
+    Slovenia's A2 continues Croatia's A3 at Bregana."""
     for g in gateways:
         g.daily = float(CLASS_DAILY[g.road_class])
         g.through = THROUGH_SHARE.get(g.road_class, 0.0)
         g.source = f"typical for {g.road_class} roads"
-    if not gateways:
-        return
-    xs = np.array([g.x for g in gateways])
-    zs = np.array([g.z for g in gateways])
-    for s in stations:
-        if s.leaves_map is None:
-            continue
-        x, z = to_scene(*s.leaves_map)
-        d = np.hypot(xs - x, zs - z)
-        k = int(np.argmin(d))
-        if d[k] > STATION_GATEWAY_DISTANCE:
-            continue
-        g = gateways[k]
-        g.daily = float(s.aadt) * s.beyond
-        share = "" if s.beyond == 1 else f", {s.beyond:.0%} of it"
-        g.source = f"Hrvatske ceste count {s.id} {s.name} ({s.road}, 2025{share})"
-        g.stations.append(s.id)
+    sections = station_lines(stations)
+    edge = outline.exterior
+    by_id = {s.id: s for s in stations}
+    chosen: dict[int, list[tuple[Gateway, str]]] = {}
+    for g in gateways:
+        refs = road_refs(g.ref)
+        if g.road_class == "motorway":
+            refs = [r for r in sections if r.startswith("A")]
+        mine = [(s, line) for r in refs for s, line in sections.get(r, [])]
+        end = shapely.Point(g.x, g.z)
+        crossing = edge.interpolate(edge.project(end))
+        best = None
+        for s, line in mine:
+            cut = line.intersection(edge)
+            if not cut.is_empty and cut.distance(end) <= CROSSING_MATCH:
+                d = float(cut.distance(end))
+                if best is None or d < best[0]:
+                    best = (d, s.id, "its counted section crosses the map's edge")
+        if best is None:
+            for s, line in mine:
+                d = float(line.distance(crossing))
+                if d <= NEAREST_COUNT and (best is None or d < best[0]):
+                    best = (d, s.id, f"nearest counted section, {d / 1000:.1f} km from the edge")
+        if best is not None:
+            chosen.setdefault(best[1], []).append((g, best[2]))
+    for sid, users in chosen.items():
+        s = by_id[sid]
+        for g, where in users:
+            # Two one-way road ends (a dual carriageway) share their road's count.
+            g.daily = s.workday / len(users)
+            share = "" if len(users) == 1 else f", 1/{len(users)} of it"
+            g.source = (
+                f"Hrvatske ceste count {s.id} {s.name} ({s.road}, 2025, working day{share}; "
+                f"{where})"
+            )
+            g.stations.append(s.id)
 
 
 def build_gateways(
     net: dict[str, np.ndarray], index: dict
 ) -> tuple[dict[str, np.ndarray], list[dict]]:
     """Arrays for the engine and a description of each gateway."""
-    gateways = pair_carriageways(road_ends(net, index, map_outline()))
-    assign_volumes(gateways, STATIONS)
+    outline = map_outline()
+    gateways = pair_carriageways(road_ends(net, index, outline))
+    assign_volumes(gateways, STATIONS, outline)
     gateways.sort(key=lambda g: -g.daily)
     arrays = {
         "gatewayEntry": np.array([g.entry for g in gateways], np.uint32),
@@ -226,6 +272,7 @@ def build_gateways(
             "daily": round(g.daily),
             "through": g.through,
             "source": g.source,
+            "stations": g.stations,
         }
         for g in gateways
     ]

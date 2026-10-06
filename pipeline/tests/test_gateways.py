@@ -1,6 +1,8 @@
 import numpy as np
 import shapely
+from pyproj import Transformer
 
+from pipeline.config import CRS, ORIGIN_E, ORIGIN_N
 from pipeline.counts import Station
 from pipeline.gateways import (
     CLASS_DAILY,
@@ -10,11 +12,18 @@ from pipeline.gateways import (
     pair_carriageways,
     road_class,
     road_ends,
-    to_scene,
 )
 
 TYPES = ["internal", "highway.primary", "highway.motorway", "highway.service", "railway.rail"]
 INDEX = {"flags": {"internal": 16}, "types": TYPES, "refs": ["D1", "A3"]}
+
+
+LONLAT = Transformer.from_crs(CRS, "EPSG:4326", always_xy=True)
+
+
+def ll(x: float, z: float) -> tuple[float, float]:
+    """(lon, lat) of a point in scene coordinates."""
+    return LONLAT.transform(x + ORIGIN_E, ORIGIN_N - z)
 
 
 def network() -> dict[str, np.ndarray]:
@@ -75,19 +84,21 @@ def test_carriageways_too_far_apart_stay_separate():
 
 
 def test_counted_roads_get_their_count():
-    x, z = to_scene(15.684, 45.648)
-    counted = Gateway(x=x + 300, z=z, road_class="motorway", ref="A1", entry=1, exit=2)
-    other = Gateway(x=x + 9000, z=z, road_class="secondary", ref="", entry=3, exit=4)
+    # The map is a 20 km box; an A1 section crosses its west edge, a D1 section lies 2 km
+    # inside the map from where the D1 leaves it, and another 8 km inside.
+    outline = shapely.box(-10_000, -10_000, 10_000, 10_000)
+    a1 = Gateway(x=-12_000, z=0, road_class="motorway", ref="A1", entry=1, exit=2)
+    d1 = Gateway(x=0, z=11_000, road_class="primary", ref="D1", entry=3, exit=4)
+    d3 = Gateway(x=11_000, z=0, road_class="primary", ref="D3", entry=5, exit=6)
+    other = Gateway(x=0, z=-11_000, road_class="secondary", ref="", entry=7, exit=8)
     stations = [
-        Station(1, "here", "A1", 49_000, (15.8, 45.7), (15.684, 45.648)),
-        Station(2, "inside", "D1", 9_000, (15.8, 45.7)),
+        Station(1, "crossing", "A1", 49_000, ll(-10_000, 0), path=(ll(-15_000, 0), ll(-5_000, 0))),
+        Station(2, "near", "D1", 9_000, ll(0, 8_000), path=(ll(0, 7_000), ll(0, 8_500))),
+        Station(3, "far inside", "D3", 9_000, ll(2_000, 0), path=(ll(1_000, 0), ll(2_000, 0))),
     ]
-    assign_volumes([counted, other], stations)
-    assert counted.daily == 49_000 and counted.stations == [1]
-    assign_volumes(
-        [counted],
-        [Station(3, "before a junction", "A1", 40_000, (15.8, 45.7), (15.684, 45.648), 0.75)],
-    )
-    assert counted.daily == 30_000
-    assert counted.through > 0.2
+    assign_volumes([a1, d1, d3, other], stations, outline)
+    assert a1.stations == [1] and a1.daily == stations[0].workday
+    assert d1.stations == [2] and d1.daily == stations[1].workday
+    assert d1.daily > stations[1].aadt  # a working day carries more than the year's average
+    assert d3.stations == [] and d3.daily == CLASS_DAILY["primary"]
     assert other.daily == CLASS_DAILY["secondary"] and other.stations == []

@@ -22,8 +22,10 @@ Read these before changing anything:
 | Path | What |
 |---|---|
 | `pipeline/` | Python data pipeline (`python -m pipeline <steps>`). Steps, in order: `terrain`, `ground`, `network` (OSM → SUMO netconvert → packed arrays, `simnet.py`), `buildings`, `demand` (residents, jobs, gateways), `transit` (ZET GTFS), `news`. Output goes to `web/public/data/`. |
-| `pipeline/counts.py` | Hrvatske ceste count stations, placed by hand. |
-| `pipeline/gateways.py` | Traffic across the map's edge. |
+| `pipeline/counts.py` | Hrvatske ceste count stations (2025), read from `pipeline/data/hc_counts_2025.json`, with working-day estimates. |
+| `pipeline/hc.py` | Tool, run by hand: downloads Hrvatske ceste's tables and PDF, places the stations on OSM roads by road number and section, reads the hourly and weekday charts, and writes `hc_counts_2025.json`. Never commit the PDF. |
+| `pipeline/census.py` | Tool, run by hand: DZS 2021 population by settlement for the counties around the City (`pipeline/data/census_2021_settlements.json`). |
+| `pipeline/gateways.py` | Traffic across the map's edge: counted sections crossing it, else typical volumes. |
 | `pipeline/validate.py` | Writes `docs/VALIDATION.md` from a day run. |
 | `pipeline/data/news.json` | Curated news reports of jams (39 places). |
 | `sim/` | Rust traffic engine, compiled to WebAssembly (C ABI in `ffi.rs`) and run natively. |
@@ -82,12 +84,12 @@ Environment variables for the native runs:
 | Knob | Where | Now |
 |---|---|---|
 | Share of estimated demand simulated (`DEMAND_SCALE`) | `pipeline/demand.py` | 0.6 |
-| Car trips per resident | `pipeline/demand.py` | 0.65 |
-| Hourly profile and trip purposes (`HOURLY`, `purposes`) | `sim/src/demand.rs` | |
+| Car trips per resident (`CAR_TRIP_RATE`) | `pipeline/demand.py` | 0.65 in the City, 0.87 in the counties around it, 1.0 in Krapina-Zagorje |
+| Hourly profile and trip purposes (`HOURLY`, `purposes`) | `sim/src/demand.rs` | measured at 33 count stations (2025) |
 | Gravity decay | `sim/src/demand.rs` | 4 km |
 | Gateway decay | `sim/src/demand.rs` | 12 km |
 | Inbound lead | `sim/src/demand.rs` | 45 min |
-| Toll time (`TOLL_TIME`) | `sim/src/network.rs` | 0.036 s/m |
+| Toll time (`TOLL_TIME`) | `sim/src/network.rs` | 0.018 s/m |
 | Signal re-timing (`MIN_GREEN`, `LONG_CYCLE`, `MAX_EXTENSION`, `TRAM_TRACK_SHARE`) | `sim/src/engine.rs` | 6 s, 120 s, 20 s, 0.25 |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
 | Driver parameters | `sim/src/vtype.rs` | |

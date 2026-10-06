@@ -31,10 +31,13 @@ ATTRIBUTION = {
 }
 
 
-def world_polygon() -> dict:
-    west, south, east, north = lonlat_bounds(WORLD, margin_deg=0.01)
+def box_polygon(west: float, south: float, east: float, north: float) -> dict:
     ring = [[west, south], [east, south], [east, north], [west, north], [west, south]]
     return {"type": "Polygon", "coordinates": [[[round(x, 5), round(y, 5)] for x, y in ring]]}
+
+
+def world_polygon() -> dict:
+    return box_polygon(*lonlat_bounds(WORLD, margin_deg=0.01))
 
 
 def _request(url: str, data: bytes | None = None) -> tuple[int, bytes]:
@@ -43,11 +46,14 @@ def _request(url: str, data: bytes | None = None) -> tuple[int, bytes]:
         return response.status, response.read()
 
 
-def fetch_osm(max_age_days: float = MAX_AGE_DAYS) -> Path:
-    """Path to a cached .osm.pbf of the world area, fetched again when older than max_age_days."""
-    polygon = world_polygon()
+def fetch_osm(
+    max_age_days: float = MAX_AGE_DAYS, polygon: dict | None = None, name: str = "world"
+) -> Path:
+    """Path to a cached .osm.pbf of the world area (or of `polygon`), fetched again when
+    older than max_age_days."""
+    polygon = polygon or world_polygon()
     key = hashlib.sha1(json.dumps(polygon, sort_keys=True).encode()).hexdigest()[:8]
-    out = CACHE_DIR / "osm" / f"world_{key}.osm.pbf"
+    out = CACHE_DIR / "osm" / f"{name}_{key}.osm.pbf"
     if out.exists() and time.time() - out.stat().st_mtime < max_age_days * 86400:
         return out
 

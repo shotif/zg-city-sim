@@ -12,21 +12,26 @@ use crate::network::{NONE, Network, vclass};
 use crate::rng::Rng;
 use crate::vtype;
 
-/// Share of a weekday's car trips starting in each hour (typical European city profile:
-/// morning and afternoon peaks, the afternoon one longer).
+/// Share of a weekday's car trips starting in each hour (%): the mean hourly profile of the
+/// 33 Hrvatske ceste stations inside the map that are counted all year (2025, days outside
+/// July and August; pipeline/data/hc_counts_2025.json). Traffic starts early, the morning
+/// is flat from 06:00 to 08:00 and the afternoon peaks at 15:00, as Zagreb's working day
+/// ends at 15:00-16:00. The charts average all days of the week, so a working day's peaks
+/// are a little sharper.
 pub const HOURLY: [f32; 24] = [
-    0.6, 0.3, 0.2, 0.2, 0.4, 1.2, 3.5, 7.5, 7.0, 5.0, 4.6, 4.8, 5.2, 5.6, 6.6, 8.0, 8.2, 7.8, 6.4,
-    4.8, 3.4, 2.6, 1.9, 1.2,
+    0.50, 0.34, 0.32, 0.54, 1.60, 3.99, 5.92, 5.92, 5.38, 5.56, 5.80, 6.11, 6.45, 6.77, 7.46, 7.81,
+    7.04, 5.85, 4.94, 4.06, 3.06, 2.19, 1.49, 0.90,
 ];
 
 /// Shares of an hour's trips going from home to work and from work to home; the rest are
-/// other errands.
+/// other errands. Over the day about 20 % of trips go to work and 22 % home.
 fn purposes(hour: usize) -> (f32, f32) {
     match hour {
-        5..=9 => (0.55, 0.05),
-        10..=13 => (0.15, 0.15),
-        14..=18 => (0.08, 0.5),
-        _ => (0.05, 0.25),
+        4..=8 => (0.6, 0.05),
+        9..=12 => (0.15, 0.1),
+        13 => (0.1, 0.3),
+        14..=17 => (0.05, 0.5),
+        _ => (0.05, 0.15),
     }
 }
 

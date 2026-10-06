@@ -3,10 +3,13 @@
 Every building gets residents and jobs from its floor area and use. The use comes from its
 OpenStreetMap type, else from the OpenStreetMap land use around it, else from its shape.
 Each of the City's 17 districts has its census population spread over the residential floor
-area inside it, and the City's jobs are spread over work floor area; the towns around it get
-their estimated totals the same way. Each building is attached to the
-nearest street a car can use, and the engine draws trips between street edges weighted by
-these numbers (sim/src/demand.rs).
+area inside it, and each settlement (naselje) around the City has its census population
+spread over the residential floor area inside its OpenStreetMap boundary. Jobs are spread
+over work floor area. Each building is attached to the nearest street a car can use, and the
+engine draws trips between street edges weighted by these numbers (sim/src/demand.rs).
+
+Residents outside the City make more car trips than the City's: the home weights the engine
+gets are residents times their car-trip rate relative to the City's (CAR_TRIP_RATE).
 """
 
 from __future__ import annotations
@@ -22,9 +25,10 @@ import shapely
 from pyproj import Transformer
 
 from .buildings import city_boundary, city_districts
-from .config import CRS, ORIGIN_E, ORIGIN_N, OUTPUT_DIR
+from .census import ATTRIBUTION as SETTLEMENTS_ATTRIBUTION
+from .config import CRS, ORIGIN_E, ORIGIN_N, OUTPUT_DIR, PIPELINE_DIR
 from .counts import ATTRIBUTION as COUNTS_ATTRIBUTION
-from .gateways import build_gateways
+from .gateways import build_gateways, map_outline
 from .osm import fetch_osm
 from .packed import read_packed, write_packed
 
@@ -69,13 +73,23 @@ DISTRICT_POPULATION = {
 POPULATION = sum(DISTRICT_POPULATION.values())
 # Persons working in the City (DZS employment by place of work, about 430k).
 JOBS = 430_000
-# The towns and municipalities around the City inside the map (Velika Gorica, Samobor,
-# Zaprešić, Sveta Nedelja, Dugo Selo and smaller ones; census 2021, rounded).
-OUTSIDE_POPULATION = 260_000
+# Jobs in the towns and municipalities around the City inside the map (Velika Gorica,
+# Samobor, Zaprešić, Sveta Nedelja, Dugo Selo and smaller ones).
 OUTSIDE_JOBS = 80_000
-# Car trips per resident and day: 1.84 trips per person (Master Plan survey), 46 % by car,
-# 1.3 people per car.
+# Car trips per resident and day in the City: 1.84 trips per person (Master Plan survey),
+# 46 % by car, 1.3 people per car.
 CAR_TRIPS_PER_RESIDENT = 1.84 * 0.46 / 1.3
+# Car trips per resident and day by county. The Master Plan's model has 1.84 trips per
+# person in the City and in Krapina-Zagorje County and 1.90 in Zagreb County, of which (not
+# walking) 52.2 %, 80.3 % and 67.3 % by car; scaled from the City's survey rate by those
+# ratios. Counties outside the Master Plan area take Zagreb County's rate.
+COUNTY_RATE = CAR_TRIPS_PER_RESIDENT * 1.90 / 1.84 * 67.3 / 52.2
+CAR_TRIP_RATE = {
+    "Grad Zagreb": CAR_TRIPS_PER_RESIDENT,
+    "Zagrebačka": COUNTY_RATE,
+    "Krapinsko-zagorska": CAR_TRIPS_PER_RESIDENT * 80.3 / 52.2,
+}
+SETTLEMENTS = PIPELINE_DIR / "data" / "census_2021_settlements.json"
 # Share of the estimated demand the simulation runs (docs/VALIDATION.md). The simulated
 # junctions carry less than Zagreb's real ones: at full demand the morning queues never
 # clear, and at 70 % they still lock up by 10:00. Until junctions and signals are calibrated,
@@ -288,6 +302,107 @@ def read_landuse() -> tuple[list[shapely.Polygon], list[int]]:
     return geoms, classes
 
 
+def read_boundaries() -> tuple[
+    list[tuple[str, shapely.Geometry]], list[tuple[str, shapely.Geometry]]
+]:
+    """OpenStreetMap outlines (scene coordinates) of settlements (admin level 8) and of towns
+    and municipalities (level 7), with their names."""
+    to_crs = Transformer.from_crs("EPSG:4326", CRS, always_xy=True)
+    out: dict[str, list[tuple[str, shapely.Geometry]]] = {"7": [], "8": []}
+    for area in osmium.FileProcessor(str(fetch_osm())).with_areas():
+        tags = area.tags
+        if not area.is_area() or tags.get("boundary") != "administrative":
+            continue
+        level = tags.get("admin_level")
+        if level not in out or not tags.get("name"):
+            continue
+        polys = []
+        for outer in area.outer_rings():
+            rings = []
+            for ring in [outer, *area.inner_rings(outer)]:
+                lon = np.fromiter((n.lon for n in ring), float)
+                lat = np.fromiter((n.lat for n in ring), float)
+                e, n = to_crs.transform(lon, lat)
+                if len(e) >= 4:
+                    rings.append(np.column_stack([e - ORIGIN_E, ORIGIN_N - n]))
+            if rings:
+                polys.append(shapely.Polygon(rings[0], rings[1:]))
+        if polys:
+            out[level].append((tags["name"], shapely.make_valid(shapely.MultiPolygon(polys))))
+    return out["8"], out["7"]
+
+
+def settlement_zones(
+    x: np.ndarray, z: np.ndarray, outside: np.ndarray
+) -> tuple[np.ndarray, list[float], list[float], dict]:
+    """Census settlement of each building outside the City: (zone index per building, -1
+    for none; the population of each zone inside the map; each zone's car trips per
+    resident; statistics). A settlement's population is matched by its name and its town
+    or municipality, and cut to the share of its outline inside the map."""
+    census = json.loads(SETTLEMENTS.read_text())["settlements"]
+    by_key = {
+        (normalize_name(r["municipality"]), normalize_name(r["settlement"])): r for r in census
+    }
+    by_name: dict[str, list[dict]] = {}
+    for r in census:
+        by_name.setdefault(normalize_name(r["settlement"]), []).append(r)
+    settlements, municipalities = read_boundaries()
+    town_tree = shapely.STRtree([g for _, g in municipalities]) if municipalities else None
+    world = map_outline()
+
+    def town_of(geom: shapely.Geometry) -> str | None:
+        if town_tree is None:
+            return None
+        hits = town_tree.query(geom.representative_point(), predicate="within")
+        return (
+            re.sub(r"^(Grad|Općina)\s+", "", municipalities[int(hits[0])][0]) if len(hits) else None
+        )
+
+    # By name and town where the town's outline is complete in the extract, else by a name
+    # used once in these counties; names used more than once take the town of the nearest
+    # settlement matched so far.
+    rows: list[dict | None] = []
+    for name, geom in settlements:
+        town = town_of(geom)
+        row = by_key.get((normalize_name(town), normalize_name(name))) if town else None
+        if row is None and len(by_name.get(normalize_name(name), [])) == 1:
+            row = by_name[normalize_name(name)][0]
+        rows.append(row)
+    matched = [i for i, r in enumerate(rows) if r is not None]
+    if matched:
+        near_tree = shapely.STRtree([settlements[i][1] for i in matched])
+        for i, r in enumerate(rows):
+            if r is not None:
+                continue
+            name, geom = settlements[i]
+            j = matched[int(near_tree.nearest(geom.representative_point()))]
+            town = rows[j]["municipality"]
+            rows[i] = by_key.get((normalize_name(town), normalize_name(name)))
+    zone = np.full(len(x), -1, np.int64)
+    totals: list[float] = []
+    rates: list[float] = []
+    geoms = []
+    unmatched = [settlements[i][0] for i, r in enumerate(rows) if r is None]
+    for (_, geom), row in zip(settlements, rows, strict=True):
+        if row is None or row["county"] == "Grad Zagreb":
+            continue  # the City's districts have their own census population
+        share = float(geom.intersection(world).area / max(geom.area, 1.0))
+        totals.append(row["population"] * share)
+        rates.append(CAR_TRIP_RATE.get(row["county"], COUNTY_RATE))
+        geoms.append(geom)
+    if geoms:
+        tree = shapely.STRtree(geoms)
+        idx = np.flatnonzero(outside)
+        points, polys = tree.query(shapely.points(x[idx], z[idx]), predicate="within")
+        zone[idx[points]] = polys
+    stats = {
+        "settlements": len(geoms),
+        "settlementPopulation": round(sum(totals)),
+        "settlementsUnmatched": len(unmatched),
+    }
+    return zone, totals, rates, stats
+
+
 def classify_landuse(x: np.ndarray, z: np.ndarray, geoms: list, classes: list[int]) -> np.ndarray:
     """Index in LANDUSE_CLASSES of the land use at each point (-1 if none); the class
     earliest in LANDUSE_CLASSES wins where areas overlap."""
@@ -376,14 +491,30 @@ def build_demand() -> dict:
     home_share, work_share = use_shares(
         b_index["kinds"], b["kind"], landuse, area, b["eave"], centre
     )
-    residents = spread(floor_area * home_share, district, [*population, OUTSIDE_POPULATION])
+    home_area = floor_area * home_share
+    residents = spread(home_area, district, [*population, 0.0])
+    # Around the City: each settlement's census population over its homes; homes in no
+    # matched settlement (Slovenia, gaps between outlines) at the settlements' mean density.
+    zone, totals, zone_rates, settlement_stats = settlement_zones(x, z, ~inside)
+    zoned = zone >= 0
+    residents[zoned] = spread(home_area[zoned], zone[zoned], totals)
+    density = sum(totals) / max(float(home_area[zoned].sum()), 1.0)
+    rest = ~inside & ~zoned
+    residents[rest] = home_area[rest] * density
+    rate = np.full(len(x), CAR_TRIPS_PER_RESIDENT)
+    rate[zoned] = np.asarray(zone_rates)[zone[zoned]]
+    rate[rest] = COUNTY_RATE
     jobs = spread(floor_area * work_share, (~inside).astype(np.int64), [JOBS, OUTSIDE_JOBS])
 
     edges, lines, local = street_lines(net, n_index)
     edge_of = attach(x, z, edges, lines, local)
     attached = edge_of >= 0
     n_edges = len(net["edgeFlags"])
-    home = np.bincount(edge_of[attached], residents[attached], n_edges)
+    people = np.bincount(edge_of[attached], residents[attached], n_edges)
+    # The engine draws trips in proportion to these weights, and the runners take the day's
+    # trips as the weights times the City's rate.
+    trip_weight = residents * rate / CAR_TRIPS_PER_RESIDENT
+    home = np.bincount(edge_of[attached], trip_weight[attached], n_edges)
     work = np.bincount(edge_of[attached], jobs[attached], n_edges)
     used = np.flatnonzero((home > 0) | (work > 0))
     gateway_arrays, gateways = build_gateways(net, n_index)
@@ -398,15 +529,15 @@ def build_demand() -> dict:
             **gateway_arrays,
         },
     )
-    total_residents = float(home.sum())
     stats = {
-        "residents": round(total_residents),
+        "residents": round(float(people.sum())),
         "residentsInCity": round(float(residents[inside & attached].sum())),
         "jobs": round(float(work.sum())),
         "edges": len(used),
         "buildingsAttached": int(attached.sum()),
         "buildingsUnattached": int((~attached).sum()),
-        "dailyCarTrips": round(total_residents * CAR_TRIPS_PER_RESIDENT),
+        "dailyCarTrips": round(float(home.sum()) * CAR_TRIPS_PER_RESIDENT),
+        **settlement_stats,
         "gateways": len(gateways),
         "gatewayDaily": round(sum(g["daily"] for g in gateways)),
         "demandScale": DEMAND_SCALE,
@@ -432,5 +563,10 @@ def build_demand() -> dict:
     return {
         "index": "demand/demand.json",
         **stats,
-        "attribution": [ATTRIBUTION, DISTRICTS_ATTRIBUTION, COUNTS_ATTRIBUTION],
+        "attribution": [
+            ATTRIBUTION,
+            DISTRICTS_ATTRIBUTION,
+            SETTLEMENTS_ATTRIBUTION,
+            COUNTS_ATTRIBUTION,
+        ],
     }
