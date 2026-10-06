@@ -3,6 +3,7 @@ import * as THREE from 'three/webgpu';
 import { CameraRig, type ViewMode } from './camera/CameraRig';
 import { attributions, loadManifest } from './manifest';
 import { Hud } from './ui/hud';
+import { BuildingLayer, loadBuildings } from './world/buildingLayer';
 import { WorldFrame } from './world/frame';
 import { RoadLayer } from './world/roadLayer';
 import { loadRoadNetwork } from './world/roadNetwork';
@@ -21,6 +22,9 @@ export interface DebugApi {
   lookAt(x: number, z: number, viewHeight: number): void;
   rig?: CameraRig;
   roads?: RoadLayer;
+  buildings?: BuildingLayer;
+  /** True once buildings are loaded (or known to be missing). */
+  buildingsReady: boolean;
 }
 
 declare global {
@@ -34,6 +38,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
   const debug: DebugApi = {
     ready: false,
     roadsReady: false,
+    buildingsReady: false,
     backend: 'none',
     setView: () => {},
     lookAt: () => {},
@@ -143,6 +148,25 @@ export async function startApp(container: HTMLElement): Promise<void> {
       debug.roadsReady = true;
     }
 
+    let buildings: BuildingLayer | undefined;
+    const buildingLayer = manifest.layers.buildings;
+    if (buildingLayer) {
+      const surface = terrain.heightfield.meshSurface(stride);
+      loadBuildings(buildingLayer.index)
+        .then((data) => {
+          buildings = new BuildingLayer(data, surface);
+          scene.add(buildings.object);
+          debug.buildings = buildings;
+          invalidate();
+        })
+        .catch((error: unknown) => console.error(error))
+        .finally(() => {
+          debug.buildingsReady = true;
+        });
+    } else {
+      debug.buildingsReady = true;
+    }
+
     const fog = new THREE.Fog(SKY, 1, 2);
     renderer.setAnimationLoop((time: number) => {
       const moving = activeRig.update(time);
@@ -157,7 +181,18 @@ export async function startApp(container: HTMLElement): Promise<void> {
           distance: camera instanceof THREE.PerspectiveCamera ? distance : 0,
           aspect: container.clientWidth / Math.max(1, container.clientHeight),
         }) ?? false;
-      if (!moving && !dirty && !roadsChanged) return;
+      const buildingsChanged =
+        buildings?.update(
+          {
+            target: view.target,
+            viewHeight: view.viewHeight,
+            distance,
+            aspect: container.clientWidth / Math.max(1, container.clientHeight),
+            perspective: camera instanceof THREE.PerspectiveCamera,
+          },
+          5,
+        ) ?? false;
+      if (!moving && !dirty && !roadsChanged && !buildingsChanged) return;
       dirty = false;
 
       if (camera instanceof THREE.PerspectiveCamera) {

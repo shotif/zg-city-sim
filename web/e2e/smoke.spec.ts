@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('renders Zagreb terrain and roads in the map, isometric and 3D views', async ({
+test('renders Zagreb terrain, roads and buildings in the map, isometric and 3D views', async ({
   page,
 }, testInfo) => {
   const errors: string[] = [];
@@ -12,9 +12,11 @@ test('renders Zagreb terrain and roads in the map, isometric and 3D views', asyn
   await page.goto('./');
   await page.waitForFunction(() => window.__ZG__?.ready === true, null, { timeout: 150_000 });
   await expect(page.locator('.hud-overlay-error')).toHaveCount(0);
-  await page.waitForFunction(() => window.__ZG__?.roadsReady === true, null, {
-    timeout: 150_000,
-  });
+  await page.waitForFunction(
+    () => window.__ZG__?.roadsReady === true && window.__ZG__?.buildingsReady === true,
+    null,
+    { timeout: 150_000 },
+  );
   await page.waitForTimeout(1000);
   await page.screenshot({ path: testInfo.outputPath('city.png') });
 
@@ -35,8 +37,12 @@ test('renders Zagreb terrain and roads in the map, isometric and 3D views', asyn
     await page.screenshot({ path: testInfo.outputPath(`${mode}.png`) });
     await expect(page.locator(`.hud-button[aria-pressed="true"]`)).toHaveCount(1);
   }
-  const chunks = await page.evaluate(() => window.__ZG__?.roads?.builtChunks ?? 0);
-  expect(chunks).toBeGreaterThan(0);
+  const chunks = await page.evaluate(() => [
+    window.__ZG__?.roads?.builtChunks ?? 0,
+    window.__ZG__?.buildings?.builtChunks ?? 0,
+  ]);
+  expect(chunks[0]).toBeGreaterThan(0);
+  expect(chunks[1]).toBeGreaterThan(0);
 
   expect(errors).toEqual([]);
 });

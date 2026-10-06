@@ -40,6 +40,12 @@ export interface NetworkLayer {
   attribution: Attribution;
 }
 
+export interface BuildingsLayer {
+  index: string;
+  counts: { buildings: number; measuredHeights: number };
+  attribution: Attribution;
+}
+
 export interface WorldManifest {
   version: number;
   generated: string;
@@ -52,6 +58,7 @@ export interface WorldManifest {
     terrain?: TerrainLayer;
     ground?: GroundLayer;
     network?: NetworkLayer;
+    buildings?: BuildingsLayer;
   };
 }
 
