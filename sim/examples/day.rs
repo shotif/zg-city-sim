@@ -39,6 +39,7 @@ fn main() {
         _ => println!("transit: none"),
     }
     engine.demand = Some(demand);
+    engine.demand_scale = run::demand_scale();
     engine.set_time((START_HOUR * 3600) as f64);
 
     let n = engine.net.edge_count();

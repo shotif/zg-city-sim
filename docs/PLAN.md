@@ -86,8 +86,9 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
 
 Known gaps:
 - Left turns wait at the stop line rather than inside the junction (SUMO's internal junctions are not exported yet).
-- Guessed signal programs at big junctions have up to 7 green phases; real timings would help a lot.
-- The morning peak is heavier than the real one: queues on the main corridors grow through 8:00 and 1-2 % of trips are removed from gridlocks (see VALIDATION.md).
+- Guessed signal programs at big junctions have up to 7 green phases. Where netconvert joined a cluster of nodes into one program (Slavonska avenija at Savska cesta, for one), a main road can get 8 s of green in a 90 s cycle and drivers get stuck waiting for each other. Real timings, or re-timing the guessed programs by the lanes each phase serves, would help a lot.
+- The morning peak is heavier than the real one: queues on the main corridors grow through 8:00 and about 1.5 % of trips are removed from gridlocks (see VALIDATION.md).
+- The app starts at 06:50 and fills the streets for ten minutes, but trips from beyond the map take 20-30 minutes to arrive, so the first half hour has fewer vehicles than a steady 07:00.
 - Count stations are placed by hand from their names: the published tables have no coordinates.
 - Routing is a third of the engine's time in the peak; a compact routing graph or contraction hierarchies would help.
 - Buses stop in whatever lane they are in, not at the kerb; one bus terminal (Črnomerec) is unreachable in the converted network, so its stop is skipped.

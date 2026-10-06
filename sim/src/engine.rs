@@ -379,6 +379,87 @@ pub struct Engine {
     pub debug: bool,
 }
 
+/// Shortest green a re-timed phase gets (s).
+const MIN_GREEN: f32 = 6.0;
+/// Cycle of programs with four or more green phases (s): Zagreb's big junctions run cycles
+/// of 90-120 s.
+const LONG_CYCLE: f32 = 120.0;
+
+/// Netconvert's guessed signal programs give every phase about the same green, so a
+/// six-lane avenue gets as long as a side street, and programs it joins for clusters of
+/// junctions lose a third of the cycle to yellow. Split each cycle's green time between its
+/// phases by the incoming lanes they let go (at least `MIN_GREEN` each), with a longer cycle
+/// for programs with four or more green phases. Yellow and all-red phases keep their length.
+fn retime_signals(net: &mut Network, tls_link_offsets: &[u32], tls_links: &[u32]) {
+    let d = &mut net.d;
+    for t in 0..d.tls_offset.len() {
+        let (a, b) = (
+            d.tls_phase_offsets[t] as usize,
+            d.tls_phase_offsets[t + 1] as usize,
+        );
+        if b <= a + 1 {
+            continue;
+        }
+        let links = &tls_links[tls_link_offsets[t] as usize..tls_link_offsets[t + 1] as usize];
+        let mut weights = vec![0f32; b - a];
+        let mut cycle = 0.0;
+        let mut fixed = 0.0;
+        let mut lanes: Vec<(u32, f32)> = Vec::new();
+        for p in a..b {
+            cycle += d.phase_duration[p];
+            let off = d.phase_state_offsets[p] as usize;
+            let len = d.phase_state_offsets[p + 1] as usize - off;
+            let states = &d.phase_states[off..off + len];
+            if states.iter().any(|&c| matches!(c, b'y' | b'Y')) {
+                fixed += d.phase_duration[p];
+                continue;
+            }
+            // Lanes this phase lets go: those with right of way fully, those that must
+            // yield (permissive turns) half.
+            lanes.clear();
+            for &l in links {
+                let idx = d.link_tls_index[l as usize] as usize;
+                let w = match states.get(idx) {
+                    Some(b'G') => 1.0,
+                    Some(b'g') => 0.5,
+                    _ => continue,
+                };
+                let from = d.link_from[l as usize];
+                match lanes.iter_mut().find(|(lane, _)| *lane == from) {
+                    Some(entry) => entry.1 = entry.1.max(w),
+                    None => lanes.push((from, w)),
+                }
+            }
+            let w: f32 = lanes.iter().map(|&(_, w)| w).sum();
+            if w == 0.0 {
+                fixed += d.phase_duration[p];
+            }
+            weights[p - a] = w;
+        }
+        let greens = weights.iter().filter(|&&w| w > 0.0).count();
+        if greens < 2 {
+            continue;
+        }
+        let cycle = if greens >= 4 {
+            cycle.max(LONG_CYCLE)
+        } else {
+            cycle
+        };
+        let floor = MIN_GREEN * greens as f32;
+        let spare = (cycle - fixed - floor).max(0.0);
+        let total: f32 = weights.iter().sum();
+        for (k, &w) in weights.iter().enumerate() {
+            if w > 0.0 {
+                let p = a + k;
+                let green = MIN_GREEN + spare * w / total;
+                d.phase_duration[p] = green;
+                d.phase_min_dur[p] = d.phase_min_dur[p].min(green);
+                d.phase_max_dur[p] = d.phase_max_dur[p].max(green);
+            }
+        }
+    }
+}
+
 /// Seconds to cover `d` metres from speed `v`, accelerating at `a` up to `vmax`.
 pub fn travel_time(d: f32, v: f32, a: f32, vmax: f32) -> f32 {
     if d <= 0.0 {
@@ -411,7 +492,7 @@ fn is_right(direction: u8) -> bool {
 }
 
 impl Engine {
-    pub fn new(net: Network, seed: u64) -> Engine {
+    pub fn new(mut net: Network, seed: u64) -> Engine {
         let n_lanes = net.lane_count();
         let n_edges = net.edge_count();
         let n_tls = net.d.tls_offset.len();
@@ -436,6 +517,8 @@ impl Engine {
                 fill[t as usize] += 1;
             }
         }
+
+        retime_signals(&mut net, &tls_link_offsets, &tls_links);
 
         let free_time: Vec<f32> = (0..n_edges)
             .map(|e| net.edge_length[e] / net.edge_speed[e].max(1.0))

@@ -808,3 +808,33 @@ fn closed_roads_are_avoided_where_there_is_another_way() {
     engine.set_closed(&[]);
     assert!(engine.closed().is_empty());
 }
+
+#[test]
+fn guessed_signal_programs_give_green_by_the_lanes_served() {
+    // A three-lane main road and a one-lane side road into one junction, with equal greens.
+    let mut b = Builder::default();
+    let j0 = b.junction(0.0, 0.0);
+    let j1 = b.junction(300.0, 0.0);
+    let j2 = b.junction(600.0, 0.0);
+    let js = b.junction(300.0, -300.0);
+    let main_in = b.road(j0, j1, 3, 13.9);
+    let main_out = b.road(j1, j2, 3, 13.9);
+    let side_in = b.road(js, j1, 1, 13.9);
+    let mut links: Vec<u32> = (0..3)
+        .map(|k| {
+            let (from, to) = (b.lane(main_in, k), b.lane(main_out, k));
+            b.connect(from, to, j1, dir::STRAIGHT, b'O')
+        })
+        .collect();
+    let (from, to) = (b.lane(side_in, 0), b.lane(main_out, 0));
+    links.push(b.connect(from, to, j1, dir::RIGHT, b'O'));
+    b.signal(
+        &links,
+        &[(30.0, "GGGr"), (3.0, "yyyr"), (30.0, "rrrG"), (3.0, "rrry")],
+    );
+    let engine = Engine::new(b.build(), 1);
+    let d = &engine.net.d;
+    // 60 s of green: 6 s each, the other 48 s by lanes (3 to 1); yellow unchanged.
+    let durations: Vec<f32> = (0..4).map(|p| d.phase_duration[p]).collect();
+    assert_eq!(durations, vec![42.0, 3.0, 18.0, 3.0]);
+}

@@ -205,6 +205,14 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
     }
 }
 
+/// Share of the day's demand to simulate (DEMAND_SCALE, default 1).
+pub fn demand_scale() -> f32 {
+    std::env::var("DEMAND_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = args
@@ -241,6 +249,7 @@ fn main() {
         t0.elapsed().as_secs_f64() * 1e3
     );
     engine.demand = Some(demand);
+    engine.demand_scale = demand_scale();
     engine.set_time(start * 3600.0);
 
     let steps_per_minute = (60.0 / DT) as u32;
