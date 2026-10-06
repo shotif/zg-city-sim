@@ -73,7 +73,7 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
 
 **Status (M3, 2026-10-06).**
 - **Census population per district**: each of the City's 17 districts has its 2021 census population spread over the homes inside it (district outlines from the City's register of spatial units).
-- **Traffic beyond the map** (`pipeline/gateways.py`, `sim/src/demand.rs`): the 223 places where roads leave the map are gateways. Where a Hrvatske ceste station counts the road (the six motorways and the D1 north), the gateway carries the counted traffic, less what leaves at interchanges before the edge; other roads get typical volumes for their class. About 287,000 vehicles a day cross the map's edge:
+- **Traffic beyond the map** (`pipeline/gateways.py`, `sim/src/demand.rs`): the 223 places where roads leave the map are gateways. Where a Hrvatske ceste station counts the road (the six motorways, the D1 north and the D30 south-east), the gateway carries the counted traffic, less what leaves at interchanges before the edge; other roads get typical volumes for their class. About 300,000 vehicles a day cross the map's edge:
   - commuters coming in to work in the morning and going home in the afternoon;
   - residents commuting out, the other way round;
   - errands both ways;
@@ -175,11 +175,13 @@ The full inventory, with URLs, licences, formats, CORS status and gaps, is in [D
   - ESA WorldCover (ground).
   - OpenStreetMap via OSM US Slice: the road network; buildings outside the City; building types and roof shapes.
 - **In use since 2026-10-06:** ZG3D 2022, the City of Zagreb's official 3D buildings. Its 341k footprints provide measured roof heights, and wall/eave heights inferred from each building's volume. LoD2 roofs are a later step.
-- **Next, for traffic:**
+- **In use for traffic (M2–M3):**
   - ZET GTFS: trams and buses.
-  - Census 2021: population.
-  - Hrvatske ceste 2025 counts and Transport Master Plan survey results: calibration.
-- **Live, via a proxy or scheduled job (the sources send no CORS headers):** road closures, ZET GTFS-RT, DHMZ weather.
+  - Census 2021: population per city district.
+  - Transport Master Plan survey results: trip rates and modal split.
+  - Hrvatske ceste 2025 counts: traffic across the map's edge, and the validation report.
+  - The City's road closures, live, copied by a scheduled GitHub Action (the feed sends no CORS headers).
+- **Next, live via a proxy or scheduled job:** ZET GTFS-RT, DHMZ weather.
 
 ## News and incidents
 
