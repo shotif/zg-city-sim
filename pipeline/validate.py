@@ -1,6 +1,6 @@
 """Compare a simulated weekday with traffic counts and write docs/VALIDATION.md.
 
-    gunzip -k web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
+    gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
     (cd sim && cargo run --release --example day -- ../web/public/data <run_dir>)
     python -m pipeline.validate <run_dir>
 
@@ -188,21 +188,36 @@ UNNAMED = {
 }
 
 
-def stuck_roads(net: dict[str, np.ndarray], index: dict, day: dict) -> list[tuple[str, int]]:
-    """Roads vehicles were most often removed from (the run's top edges, by road name;
-    unnamed ones by road number or type)."""
+def stuck_places(net: dict[str, np.ndarray], index: dict, day: dict) -> list[tuple[str, int]]:
+    """Places vehicles were most often removed from (the run's top edges): each edge's road
+    (by name, else number, else type) at the junction it leads to, named by the other roads
+    meeting there."""
     names, refs, types = index["names"], index["refs"], index.get("types", [])
-    by_road: dict[str, int] = {}
-    for edge, n in day.get("removedAt", []):
+
+    def road(edge: int) -> str:
         name_i, ref_i = int(net["edgeName"][edge]), int(net["edgeRef"][edge])
-        road = names[name_i] if name_i < len(names) else ""
-        road = road or (refs[ref_i] if ref_i < len(refs) else "")
-        if not road:
-            type_i = int(net["edgeType"][edge]) if "edgeType" in net else len(types)
+        name = names[name_i] if name_i < len(names) else ""
+        name = name or (refs[ref_i] if ref_i < len(refs) else "")
+        if not name:
+            type_i = int(net["edgeType"][edge])
             kind = types[type_i].split("|")[0] if type_i < len(types) else ""
-            road = UNNAMED.get(kind, "unnamed streets")
-        by_road[road] = by_road.get(road, 0) + int(n)
-    return sorted(by_road.items(), key=lambda item: -item[1])
+            name = UNNAMED.get(kind, "unnamed streets")
+        return name
+
+    by_place: dict[str, int] = {}
+    for edge, n in day.get("removedAt", []):
+        here = road(edge)
+        junction = net["edgeTo"][edge]
+        others: list[str] = []
+        for link in np.flatnonzero(net["linkJunction"] == junction):
+            e = int(net["laneEdge"][net["linkFrom"][link]])
+            name_i = int(net["edgeName"][e])
+            other = names[name_i] if name_i < len(names) else ""
+            if other and other != here and other not in others:
+                others.append(other)
+        place = f"{here} at {' / '.join(sorted(others)[:2])}" if others else here
+        by_place[place] = by_place.get(place, 0) + int(n)
+    return sorted(by_place.items(), key=lambda item: -item[1])
 
 
 def report(
@@ -395,9 +410,9 @@ def report(
             "",
             "Vehicles that stand still for 5 minutes are removed, as SUMO teleports them. "
             f"The 25 road sections that lost the most account for {fmt(top)} of the "
-            f"{fmt(day['removed'])} removed; by road:",
+            f"{fmt(day['removed'])} removed; by place:",
             "",
-            "| Road | Vehicles removed |",
+            "| Place | Vehicles removed |",
             "|---|---:|",
             *(f"| {road} | {fmt(n)} |" for road, n in stuck[:10]),
         ]
@@ -454,7 +469,7 @@ def report(
         "",
         "```sh",
         "python -m pipeline all",
-        "gunzip -k web/public/data/{network/net,demand/demand,transit/transit}.bin.gz",
+        "gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz",
         "(cd sim && cargo run --release --example day -- ../web/public/data /tmp/day)",
         "python -m pipeline.validate /tmp/day",
         "```",
@@ -491,7 +506,7 @@ def main(argv: list[str] | None = None) -> None:
         placements.append(p)
     speeds = read_speeds(args.run_dir)
     hotspots = hotspot_rows(net, index, speeds) if speeds is not None else None
-    stuck = stuck_roads(net, index, day)
+    stuck = stuck_places(net, index, day)
     args.out.write_text(report(placements, unplaced, day, hotspots, stuck))
     for p in placements:
         print(

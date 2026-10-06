@@ -49,7 +49,7 @@ To run the engine natively on the same data (faster to iterate on, with a breakd
 vehicles are held up):
 
 ```bash
-gunzip -k web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
+gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
 cd sim
 cargo test
 cargo run --release --example run -- ../web/public/data/network 7 30   # 07:00, 30 minutes

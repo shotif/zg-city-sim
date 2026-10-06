@@ -1,7 +1,7 @@
 //! Run the engine natively on the network the pipeline exported, reporting traffic and
 //! why vehicles are held up.
 //!
-//!   gunzip -k web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
+//!   gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
 //!   cargo run --release --example run -- web/public/data/network [start_hour] [minutes] [daily_trips]
 
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ fn elem_size(t: &str) -> usize {
 /// Network arrays from `dir/net.*`, with lane shapes decoded like the app does.
 pub fn load(dir: &str) -> NetworkData {
     let (decoded, blob) =
-        read_packed(dir, "net").expect("net.json and net.bin (gunzip -k net.bin.gz)");
+        read_packed(dir, "net").expect("net.json and net.bin (gunzip -kf net.bin.gz)");
     let mut data = NetworkData::default();
     for (name, (ty, offset, length)) in &decoded {
         let es = elem_size(ty);

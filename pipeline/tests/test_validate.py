@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from pipeline.counts import Station
-from pipeline.validate import Placement, band, geh, place_share, report, stuck_roads
+from pipeline.validate import Placement, band, geh, place_share, report, stuck_places
 
 
 def test_geh():
@@ -70,21 +70,26 @@ def test_report_separates_inputs_from_independent_checks():
     assert "simulates 50% of the estimated demand" in text
 
 
-def test_stuck_roads_sums_the_edges_of_each_road():
+def test_stuck_places_name_each_road_by_the_junction_it_leads_to():
+    # Edges 0-2 lead to junction 0, where edge 3 (Savska) also comes in; edge 4 to junction 1.
     net = {
-        "edgeName": np.array([0, 1, 0, 2, 2]),
+        "edgeName": np.array([0, 1, 0, 3, 2]),
         "edgeRef": np.array([5, 0, 5, 5, 5]),
-        "edgeType": np.array([0, 0, 0, 1, 0]),
+        "edgeType": np.array([0, 0, 0, 0, 1]),
+        "edgeTo": np.array([0, 0, 0, 0, 1]),
+        "edgeLaneStart": np.arange(5),
+        "laneEdge": np.arange(5),
+        "linkFrom": np.array([0, 1, 2, 3, 4]),
+        "linkJunction": np.array([0, 0, 0, 0, 1]),
     }
     index = {
-        "names": ["Slavonska avenija", "", ""],
+        "names": ["Ulica Isidora Kršnjavoga", "", "", "Savska cesta"],
         "refs": ["D1"],
         "types": ["highway.secondary", "railway.tram"],
     }
-    day = {"removedAt": [[0, 10], [1, 4], [2, 5], [3, 3], [4, 1]]}
-    assert stuck_roads(net, index, day) == [
-        ("Slavonska avenija", 15),
-        ("D1", 4),
+    day = {"removedAt": [[0, 10], [1, 4], [2, 5], [4, 3]]}
+    assert stuck_places(net, index, day) == [
+        ("Ulica Isidora Kršnjavoga at Savska cesta", 15),
+        ("D1 at Savska cesta / Ulica Isidora Kršnjavoga", 4),
         ("tram tracks", 3),
-        ("unnamed streets", 1),
     ]

@@ -1,7 +1,7 @@
 //! Simulate a whole weekday and record how many vehicles drove onto each road in each hour,
 //! for comparison with traffic counts (pipeline/validate.py).
 //!
-//!   gunzip -k web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
+//!   gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
 //!   cargo run --release --example day -- web/public/data <out_dir>
 //!
 //! Writes `<out_dir>/edge_counts.bin` (u32 edge count, then for each hour of the day from 0
