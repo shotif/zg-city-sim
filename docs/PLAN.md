@@ -137,7 +137,7 @@ The full inventory, with URLs, licences, formats, CORS status and gaps, is in [D
   - Copernicus DEM (terrain).
   - ESA WorldCover (ground).
   - OpenStreetMap via OSM US Slice: the road network; buildings outside the City; building types and roof shapes.
-- **Being integrated:** ZG3D 2022, the City of Zagreb's official 3D buildings. It has 357,683 footprints with measured heights, and LoD2 models.
+- **In use since 2026-10-06:** ZG3D 2022, the City of Zagreb's official 3D buildings. Its 341k footprints provide measured roof heights, and wall/eave heights inferred from each building's volume. LoD2 roofs are a later step.
 - **Next, for traffic:**
   - ZET GTFS: trams and buses.
   - Census 2021: population.

@@ -42,8 +42,8 @@ export interface NetworkLayer {
 
 export interface BuildingsLayer {
   index: string;
-  counts: { buildings: number; measuredHeights: number };
-  attribution: Attribution;
+  counts: { buildings: number; zg3d: number; measuredHeights: number };
+  attribution: Attribution[];
 }
 
 export interface WorldManifest {
@@ -79,8 +79,10 @@ export async function loadManifest(): Promise<WorldManifest> {
   return manifest;
 }
 
+/** Every source credited by the loaded layers, each once. */
 export function attributions(manifest: WorldManifest): Attribution[] {
-  return Object.values(manifest.layers)
-    .map((layer) => layer?.attribution)
-    .filter((a): a is Attribution => a !== undefined);
+  const all = Object.values(manifest.layers).flatMap((layer) =>
+    layer ? ([] as Attribution[]).concat(layer.attribution) : [],
+  );
+  return all.filter((a, i) => all.findIndex((b) => b.name === a.name) === i);
 }

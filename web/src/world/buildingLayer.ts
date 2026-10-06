@@ -5,8 +5,30 @@ import { DATA_URL } from '../manifest';
 import type { HeightFn } from './roadGeometry';
 
 export interface BuildingIndex extends PackedIndex {
+  /** "delta-cm": ring origins in centimetres (int32) plus int16 centimetre steps. */
+  encoding: 'delta-cm';
   kinds: string[];
   roofShapes: string[];
+}
+
+/** Decode delta-encoded rings into scene metres (x, z pairs). */
+export function decodeRings(
+  ringOrigin: ArrayLike<number>,
+  ringOffsets: ArrayLike<number>,
+  deltas: ArrayLike<number>,
+): Float32Array {
+  const points = new Float32Array(deltas.length);
+  for (let r = 0; r < ringOffsets.length - 1; r++) {
+    let x = ringOrigin[r * 2];
+    let z = ringOrigin[r * 2 + 1];
+    for (let p = ringOffsets[r]; p < ringOffsets[r + 1]; p++) {
+      x += deltas[p * 2];
+      z += deltas[p * 2 + 1];
+      points[p * 2] = x / 100;
+      points[p * 2 + 1] = z / 100;
+    }
+  }
+  return points;
 }
 
 /** Building footprints (scene x, z) with heights and roof shapes. */
@@ -14,7 +36,10 @@ export class Buildings {
   readonly points: Float32Array;
   readonly ringOffsets: Uint32Array;
   readonly buildingRings: Uint32Array;
+  /** Top of the roof above the lowest ground point. */
   readonly height: Float32Array;
+  /** Top of the walls (eaves); equals `height` for flat roofs. */
+  readonly eave: Float32Array;
   readonly minHeight: Float32Array;
   readonly kind: Uint8Array;
   readonly roofShape: Uint8Array;
@@ -23,10 +48,11 @@ export class Buildings {
     readonly index: BuildingIndex,
     arrays: Record<string, ArrayLike<number>>,
   ) {
-    this.points = arrays.points as Float32Array;
     this.ringOffsets = arrays.ringOffsets as Uint32Array;
+    this.points = decodeRings(arrays.ringOrigin, this.ringOffsets, arrays.deltas);
     this.buildingRings = arrays.buildingRings as Uint32Array;
     this.height = arrays.height as Float32Array;
+    this.eave = arrays.eave as Float32Array;
     this.minHeight = arrays.minHeight as Float32Array;
     this.kind = arrays.kind as Uint8Array;
     this.roofShape = arrays.roofShape as Uint8Array;
@@ -393,25 +419,25 @@ export class BuildingLayer {
       const walls = WALL_COLORS[kind] ?? WALL_COLORS.other;
       const wall = walls[Math.floor(variation * walls.length)];
 
-      const pitched = PITCHED.has(shape) && outline.length === 4 && holes.length === 0;
-      const roofHeight = pitched ? Math.min(4, Math.max(2, data.height[b] * 0.3)) : 0;
-      const eaves = top - roofHeight;
+      const pitchedShape = PITCHED.has(shape);
+      const eaves = ground + Math.min(data.eave[b], data.height[b]);
+      // Gables on simple four-cornered outlines; other pitched roofs are drawn flat at
+      // mid-roof height, which keeps the building's volume.
+      const gable = pitchedShape && outline.length === 4 && holes.length === 0 && top > eaves;
+      const wallTop = gable ? eaves : pitchedShape ? (eaves + top) / 2 : top;
       for (const ring of [outline, ...holes]) {
         for (let i = 0; i < ring.length; i++) {
           const p = ring[i];
           const q = ring[(i + 1) % ring.length];
-          builder.wall(p.x, p.y, q.x, q.y, base, eaves, wall);
+          builder.wall(p.x, p.y, q.x, q.y, base, wallTop, wall);
         }
       }
-      if (pitched) {
-        const roof = TILE_COLORS[Math.floor(hash(b + 7) * TILE_COLORS.length)];
-        builder.gabledRoof(outline, eaves, top, roof, wall);
+      const tiles = TILE_COLORS[Math.floor(hash(b + 7) * TILE_COLORS.length)];
+      if (gable) {
+        builder.gabledRoof(outline, eaves, top, tiles, wall);
       } else {
-        const roof =
-          PITCHED.has(shape) && kind !== 'industrial'
-            ? TILE_COLORS[Math.floor(hash(b + 7) * TILE_COLORS.length)]
-            : FLAT_COLORS[Math.floor(hash(b + 3) * FLAT_COLORS.length)];
-        builder.flatRoof(outline, holes, top, roof);
+        const flat = FLAT_COLORS[Math.floor(hash(b + 3) * FLAT_COLORS.length)];
+        builder.flatRoof(outline, holes, wallTop, pitchedShape ? tiles : flat);
       }
     }
     const geometry = builder.toGeometry();

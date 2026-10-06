@@ -21,8 +21,9 @@ See [docs/PLAN.md](docs/PLAN.md) for the vision, architecture and roadmap.
 Requirements: Node.js 22+, Python 3.12+.
 
 ```bash
-# 1. Build the data (downloads ~150 MB on first run, cached in pipeline/.cache):
-#    terrain + ground (elevation, land cover) and network (OpenStreetMap -> SUMO road network)
+# 1. Build the data (downloads ~400 MB on first run, cached in pipeline/.cache):
+#    terrain + ground (elevation, land cover), network (OpenStreetMap -> SUMO road network),
+#    buildings (City of Zagreb ZG3D model inside the City, OpenStreetMap outside)
 python -m venv .venv && . .venv/bin/activate
 pip install -r pipeline/requirements.txt
 python -m pipeline all
