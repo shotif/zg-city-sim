@@ -980,3 +980,54 @@ fn split_signal_phases_of_opposite_approaches_go_together() {
         ["GgGgrr", "yGyGrr", "rGrGrr", "ryryrr", "rrrrGG", "rrrryy"]
     );
 }
+
+#[test]
+fn routes_avoid_tolls_where_a_free_road_is_not_much_slower() {
+    // From A to D over 10.2 km: a tolled motorway at 130 km/h or a free road at 80 km/h.
+    let mut b = Builder::default();
+    let s = b.junction(-500.0, 0.0);
+    let a = b.junction(0.0, 0.0);
+    let m = b.junction(5000.0, -1000.0);
+    let f = b.junction(5000.0, 1000.0);
+    let dj = b.junction(10_000.0, 0.0);
+    let ej = b.junction(10_500.0, 0.0);
+    let start = b.road(s, a, 1, 13.9);
+    let am = b.road(a, m, 2, 36.1);
+    let md = b.road(m, dj, 2, 36.1);
+    let af = b.road(a, f, 1, 22.2);
+    let fd = b.road(f, dj, 1, 22.2);
+    let exit = b.road(dj, ej, 1, 13.9);
+    for e in [am, md] {
+        b.d.edge_flags[e as usize] |= edge_flag::TOLL;
+    }
+    for (from, to, j) in [
+        (start, am, a),
+        (start, af, a),
+        (am, md, m),
+        (af, fd, f),
+        (md, exit, dj),
+        (fd, exit, dj),
+    ] {
+        let (fl, tl) = (b.lane(from, 0), b.lane(to, 0));
+        b.connect(fl, tl, j, dir::STRAIGHT, b'M');
+    }
+    let net = b.build();
+    let tt: Vec<f32> = (0..net.edge_count())
+        .map(|e| net.edge_length[e] / net.edge_speed[e])
+        .collect();
+    let mut router = Router::new(net.edge_count());
+    let car = crate::network::vclass::PASSENGER;
+    // 282 s on the motorway plus 367 s for the toll, against 459 s on the free road.
+    assert_eq!(
+        router.route(&net, &tt, start, exit, car),
+        Some(vec![start, af, fd, exit])
+    );
+    // A jam on the free road makes the toll worth paying.
+    let mut jammed = tt.clone();
+    jammed[af as usize] *= 2.0;
+    jammed[fd as usize] *= 2.0;
+    assert_eq!(
+        router.route(&net, &jammed, start, exit, car),
+        Some(vec![start, am, md, exit])
+    );
+}

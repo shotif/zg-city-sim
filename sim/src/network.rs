@@ -17,7 +17,14 @@ pub mod vclass {
 pub mod edge_flag {
     pub const BRIDGE: u8 = 1;
     pub const INTERNAL: u8 = 16;
+    /// Tolled motorway (OSM `toll=yes`).
+    pub const TOLL: u8 = 32;
 }
+
+/// Seconds drivers count for each metre of tolled motorway: Croatian motorway tolls are about
+/// €0.08 a kilometre for cars, and drivers value their time at about €8 an hour. Routes
+/// avoid tolls where a free road is not much slower, as drivers do.
+pub const TOLL_TIME: f32 = 0.036;
 
 /// Link directions (pipeline/simnet.py LINK_DIRS).
 pub mod dir {
@@ -153,7 +160,8 @@ pub struct Successor {
     pub edge: u32,
     /// Vehicle classes that can make this move.
     pub allow: u16,
-    /// Extra seconds for the turn (left turns and U-turns are slower).
+    /// Extra seconds for the turn (left turns and U-turns are slower) and for the toll on
+    /// the edge it leads to.
     pub penalty: f32,
 }
 
@@ -312,12 +320,17 @@ impl Network {
             if d.link_dir[l] == dir::TURN {
                 allow &= !onward[d.lane_edge[from] as usize] | vclass::BUS | vclass::TRAM;
             }
-            let penalty = match d.link_dir[l] {
+            let turn = match d.link_dir[l] {
                 dir::LEFT | dir::PARTLEFT => 4.0,
                 dir::TURN => 60.0,
                 _ => 0.0,
             };
-            pairs.push((d.lane_edge[from], d.lane_edge[to], allow, penalty));
+            let toll = if d.edge_flags[d.lane_edge[to] as usize] & edge_flag::TOLL != 0 {
+                TOLL_TIME * d.lane_length[to]
+            } else {
+                0.0
+            };
+            pairs.push((d.lane_edge[from], d.lane_edge[to], allow, turn + toll));
         }
         pairs.sort_unstable_by_key(|p| (p.0, p.1));
         let mut succ_offset = vec![0u32; n_edges + 1];

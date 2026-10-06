@@ -72,6 +72,8 @@ FLAG_TUNNEL = 2
 FLAG_HAS_OPPOSITE = 4
 FLAG_ROUNDABOUT = 8
 FLAG_INTERNAL = 16
+# Tolled motorway (OSM toll=yes): routing counts the toll as time.
+FLAG_TOLL = 32
 
 LINK_DIRS = ["s", "l", "r", "t", "L", "R", "invalid"]
 # Static link states (connection `state`) and signal states (phase characters).
@@ -363,6 +365,8 @@ def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
             flags |= FLAG_BRIDGE
         if e.params.get("tunnel", "no") not in ("no", ""):
             flags |= FLAG_TUNNEL
+        if e.params.get("toll", "no") == "yes":
+            flags |= FLAG_TOLL
         if not e.internal:
             opposite = e.id[1:] if e.id.startswith("-") else "-" + e.id
             if opposite in edge_ids:
@@ -552,6 +556,7 @@ def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
             "hasOpposite": FLAG_HAS_OPPOSITE,
             "roundabout": FLAG_ROUNDABOUT,
             "internal": FLAG_INTERNAL,
+            "toll": FLAG_TOLL,
         },
         "none": NONE,
     }

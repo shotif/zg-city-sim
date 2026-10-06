@@ -51,9 +51,10 @@ STATIONS = [
     Station(2002, "Sveta Helena – sjever", "A4", 17_586, (16.28, 45.95), (16.297, 46.05), 0.9),
     # Past Buševec and Lekenik.
     Station(2031, "Mraclin – jug", "A11", 12_422, (16.13, 45.605), (16.301, 45.501), 0.65),
-    # State roads.
+    # State roads; those inside the map without `leaves_map` are independent checks.
     Station(1937, "Pojatno", "D1", 17_459, (15.818, 45.90), (15.892, 46.017), 0.85),
-    Station(2043, "Petina", "D30", 30_419, (16.117, 45.68)),
+    # Past Buševec and Lekenik, towards Sisak and Petrinja.
+    Station(2043, "Petina", "D30", 30_419, (16.117, 45.68), (16.237, 45.537), 0.6),
     Station(1933, "Sveta Nedelja", "D231", 22_764, (15.775, 45.80)),
     Station(1925, "Zaprešić – istok", "D225", 21_161, (15.826, 45.842)),
     Station(2063, "Popovec", "D3", 16_743, (16.15, 45.86)),

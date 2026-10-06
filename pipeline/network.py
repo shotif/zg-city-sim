@@ -75,7 +75,7 @@ NETCONVERT_OPTIONS = [
     "--osm.layer-elevation", "6",
     "--osm.all-attributes", "true",
     # Road numbers (A1, D1, Ž1035): where roads leave the map and where traffic is counted.
-    "--osm.extra-attributes", "bridge,tunnel,layer,ref",
+    "--osm.extra-attributes", "bridge,tunnel,layer,ref,toll",
     # Tram tracks stay edges of their own: joining them into street lanes
     # (--edges.join-tram-dist) loses tram connections wherever the tracks leave the street.
     # Repair track topology: some OSM tracks are mapped against their direction, leaving
