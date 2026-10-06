@@ -175,14 +175,32 @@ def fmt(n: float) -> str:
     return f"{n:,.0f}"
 
 
+# What to call an unnamed edge, by its type.
+UNNAMED = {
+    "internal": "inside junctions",
+    "highway.service": "service roads",
+    "railway.tram": "tram tracks",
+    "highway.motorway_link": "motorway ramps",
+    "highway.trunk_link": "expressway ramps",
+    "highway.primary_link": "slip roads",
+    "highway.secondary_link": "slip roads",
+    "highway.tertiary_link": "slip roads",
+}
+
+
 def stuck_roads(net: dict[str, np.ndarray], index: dict, day: dict) -> list[tuple[str, int]]:
-    """Roads vehicles were most often removed from (the run's top edges, by road name)."""
-    names, refs = index["names"], index["refs"]
+    """Roads vehicles were most often removed from (the run's top edges, by road name;
+    unnamed ones by road number or type)."""
+    names, refs, types = index["names"], index["refs"], index.get("types", [])
     by_road: dict[str, int] = {}
     for edge, n in day.get("removedAt", []):
         name_i, ref_i = int(net["edgeName"][edge]), int(net["edgeRef"][edge])
         road = names[name_i] if name_i < len(names) else ""
-        road = road or (refs[ref_i] if ref_i < len(refs) else "") or "unnamed road"
+        road = road or (refs[ref_i] if ref_i < len(refs) else "")
+        if not road:
+            type_i = int(net["edgeType"][edge]) if "edgeType" in net else len(types)
+            kind = types[type_i].split("|")[0] if type_i < len(types) else ""
+            road = UNNAMED.get(kind, "unnamed streets")
         by_road[road] = by_road.get(road, 0) + int(n)
     return sorted(by_road.items(), key=lambda item: -item[1])
 
@@ -277,9 +295,10 @@ def report(
         *scaled_note,
         "Two caveats about what agreement means:",
         "",
-        "- Stations on roads that leave the map (the motorways and the D1 north) also set "
-        "how much traffic crosses the map's edge there. Matching them shows the model carries "
-        "those volumes in and out correctly, not that it predicts them.",
+        "- Stations on roads that leave the map (the motorways, the D1 north and the D30 "
+        "south-east) also set how much traffic crosses the map's edge there. Matching them "
+        "shows the model carries those volumes in and out along the right roads, not that it "
+        "predicts them.",
         "- PGDP averages all days of the year, including weekends and the summer season, "
         "which raise traffic on the motorways to the coast and lower it in the city. A typical "
         "working day is within about ±15 % of it on most roads.",
@@ -290,22 +309,30 @@ def report(
         "queue leaves a green light at about 1,970 cars per lane per hour (the Highway "
         "Capacity Manual's base saturation flow is 1,900; a test in `sim/src/tests.rs` "
         "keeps it between 1,700 and 2,100).",
-        "- **Signals**: netconvert guesses the programs. The engine splits each cycle's green "
-        "time by the incoming lanes each phase lets go, and gives programs with four or more "
-        "green phases a 120 s cycle (`retime_signals` in `sim/src/engine.rs`). Green phases "
-        "stretch up to 20 s while traffic keeps arriving.",
-        "- **Traffic across the map's edge**: the motorway stations (and the D1 at Pojatno) "
-        "set the volume where their road leaves the map, less the share estimated to leave "
-        "at interchanges before the edge; uncounted roads get a typical volume for their "
-        "class (`pipeline/gateways.py`).",
+        "- **Signals**: netconvert guesses the programs, and the engine reworks them "
+        "(`sim/src/engine.rs`). Where a program lets opposite approaches go one after "
+        "another, their phases are merged, with turns giving way to oncoming traffic "
+        "(`merge_signal_phases`; ten programs, all at clusters of junctions netconvert "
+        "joined). Each cycle's green time is split by the incoming lanes each phase lets go, "
+        "tram tracks counting a quarter of a lane, and programs with four or more green "
+        "phases get a 120 s cycle (`retime_signals`). Green phases stretch up to 20 s while "
+        "traffic keeps arriving.",
+        "- **Tolls**: routes count each kilometre of tolled motorway (OpenStreetMap's toll "
+        "tag) as 36 s, about €0.08 at €8 an hour, so short trips take the free road beside a "
+        "tolled motorway where it is not much slower. Drivers who cross the map's edge on a "
+        "tolled motorway stay on it: they pay the toll anyway.",
+        "- **Traffic across the map's edge**: the motorway stations, the D1 at Pojatno and "
+        "the D30 at Petina set the volume where their road leaves the map, less the share "
+        "estimated to leave at interchanges before the edge; uncounted roads get a typical "
+        "volume for their class (`pipeline/gateways.py`).",
         "- **Demand**: 0.65 car trips per resident a day (Transport Master Plan survey), "
         "spread over the hours of a weekday. Traffic coming in crosses the map's edge 45 "
         "minutes ahead of the city's own trips. "
         + (
             f"This run simulates {scale:.0%} of that demand and of the traffic across the "
-            "map's edge (`DEMAND_SCALE` in `pipeline/demand.py`): at full demand the "
-            "simulated junctions carry less than Zagreb's real ones and the network gridlocks "
-            "after 8:00 (known gaps in [PLAN.md](PLAN.md))."
+            "map's edge (`DEMAND_SCALE` in `pipeline/demand.py`): the simulated junctions "
+            "carry less than Zagreb's real ones, and with more the evening peak locks up "
+            "(known gaps in [PLAN.md](PLAN.md))."
             if scale != 1
             else "This run simulates all of it."
         ),

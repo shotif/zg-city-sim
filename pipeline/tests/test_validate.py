@@ -71,11 +71,20 @@ def test_report_separates_inputs_from_independent_checks():
 
 
 def test_stuck_roads_sums_the_edges_of_each_road():
-    net = {"edgeName": np.array([0, 1, 0, 2]), "edgeRef": np.array([5, 0, 5, 5])}
-    index = {"names": ["Slavonska avenija", "", ""], "refs": ["D1"]}
-    day = {"removedAt": [[0, 10], [1, 4], [2, 5], [3, 1]]}
+    net = {
+        "edgeName": np.array([0, 1, 0, 2, 2]),
+        "edgeRef": np.array([5, 0, 5, 5, 5]),
+        "edgeType": np.array([0, 0, 0, 1, 0]),
+    }
+    index = {
+        "names": ["Slavonska avenija", "", ""],
+        "refs": ["D1"],
+        "types": ["highway.secondary", "railway.tram"],
+    }
+    day = {"removedAt": [[0, 10], [1, 4], [2, 5], [3, 3], [4, 1]]}
     assert stuck_roads(net, index, day) == [
         ("Slavonska avenija", 15),
         ("D1", 4),
-        ("unnamed road", 1),
+        ("tram tracks", 3),
+        ("unnamed streets", 1),
     ]
