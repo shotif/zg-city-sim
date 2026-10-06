@@ -61,6 +61,7 @@ export class SimClient {
         this.prev = this.cur;
         this.cur = { time: message.time, render: message.render, received: performance.now() };
         this.stats = message.stats;
+        this.recordMinute(message.time, message.stats);
         this.rate = message.rate;
         this.warming = message.warming;
         this.onFrame?.();
@@ -69,9 +70,25 @@ export class SimClient {
         this.edgeSpeeds = message.speeds;
         this.onEdgeSpeeds?.(message.speeds);
         break;
+      case 'routeTimes':
+      case 'volumes': {
+        const resolve = this.waiting.get(message.id);
+        this.waiting.delete(message.id);
+        resolve?.(message);
+        break;
+      }
       case 'error':
         this.onError?.(message.message);
         break;
+    }
+  }
+
+  private recordMinute(time: number, stats: Float64Array): void {
+    const minute = Math.floor(time / 60);
+    if (this.minutes.has(minute)) return;
+    this.minutes.set(minute, stats);
+    for (const old of this.minutes.keys()) {
+      if (old < minute - 30) this.minutes.delete(old);
     }
   }
 
@@ -100,6 +117,15 @@ export class SimClient {
     this.send({ type: 'pause', paused });
   }
 
+  private held = false;
+
+  /** Hold the simulation where it is, or let it go on (pausing stays as the player set it). */
+  setHeld(held: boolean): void {
+    if (held === this.held) return;
+    this.held = held;
+    this.send({ type: 'hold', held });
+  }
+
   setDemandScale(scale: number): void {
     this.send({ type: 'demand', scale });
   }
@@ -108,6 +134,39 @@ export class SimClient {
   setClosures(edges: Uint32Array): void {
     this.send({ type: 'closures', edges });
   }
+
+  private requestId = 0;
+  private readonly waiting = new Map<number, (message: FromWorker) => void>();
+
+  private ask<T extends FromWorker>(message: ToWorker & { id: number }): Promise<T> {
+    return new Promise((resolve) => {
+      this.waiting.set(message.id, (reply) => resolve(reply as T));
+      this.send(message);
+    });
+  }
+
+  /** Travel times by car (s, -1: no route) between pairs of edges, on the travel times
+   * the simulation measures now; and the simulated time they were measured at. */
+  routeTimes(pairs: Uint32Array): Promise<{ time: number; times: Float64Array }> {
+    return this.ask<Extract<FromWorker, { type: 'routeTimes' }>>({
+      type: 'routeTimes',
+      id: ++this.requestId,
+      pairs,
+    });
+  }
+
+  /** Vehicles that have driven onto each edge since the start, when the simulation
+   * reaches simulated time `at` (s), and the time it answered at. */
+  volumes(at: number): Promise<{ time: number; counts: Uint32Array }> {
+    return this.ask<Extract<FromWorker, { type: 'volumes' }>>({
+      type: 'volumes',
+      id: ++this.requestId,
+      at,
+    });
+  }
+
+  /** Statistics as of each simulated minute (the first frame at or past it), recent ones. */
+  readonly minutes = new Map<number, Float64Array>();
 
   private editsId = 0;
 

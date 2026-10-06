@@ -1,6 +1,8 @@
 import { type Edit, type ResolvedEdit, describeEdit, withEdit, sameTarget } from '../edit/edits';
+import { type CompareRow, DIFF_BANDS, type TravelTimeSummary, change } from '../edit/compare';
 import type { RoadIndex } from '../edit/roadIndex';
 import type { SignalPrograms } from '../sim/wasm';
+import { formatClock } from './hud';
 
 /** Speed limits on offer (km/h). */
 export const SPEED_LIMITS = [30, 40, 50, 60, 70, 80, 90, 100, 110, 130];
@@ -59,7 +61,22 @@ export interface BuildPanelCallbacks {
   importFile(file: File): Promise<Edit[]>;
   /** Save the edits as a file. */
   exportFile(edits: Edit[]): void;
+  /** Start or stop comparing with today's roads. */
+  onCompare(on: boolean): void;
+  /** Show or hide the difference map. */
+  onDiffMap(on: boolean): void;
 }
+
+const fmt = (n: number, digits: number) =>
+  n.toLocaleString('en-GB', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+function percent(rel: number): string {
+  if (!Number.isFinite(rel)) return '';
+  const p = Math.round(rel * 1000) / 10;
+  return `${p > 0 ? '+' : ''}${p.toLocaleString('en-GB')} %`;
+}
+
+const minutes = (s: number) => fmt(s / 60, 1);
 
 /**
  * The Build panel (key B): pick a road on the map to close it or its lanes, change its
@@ -82,6 +99,13 @@ export class BuildPanel {
   private readonly inForce: HTMLElement;
   private readonly status: HTMLElement;
   private readonly fileInput: HTMLInputElement;
+  private readonly compareButton: HTMLButtonElement;
+  private readonly compareNote: HTMLElement;
+  private readonly compareTable: HTMLTableElement;
+  private readonly travel: HTMLElement;
+  private readonly diffToggle: HTMLInputElement;
+  private readonly diffLegend: HTMLElement;
+  private comparing = false;
   private edits: Edit[] = [];
   private resolved: ResolvedEdit[] = [];
   private signals?: SignalPrograms;
@@ -144,6 +168,41 @@ export class BuildPanel {
     this.status.setAttribute('role', 'status');
     this.renderList();
 
+    const compare = el('section', 'build-compare', this.panel);
+    const compareTitle = el('h3', 'build-count', compare);
+    compareTitle.textContent = 'Before and after';
+    this.compareNote = el('p', 'build-note', compare);
+    this.compareNote.textContent =
+      "Run the day again from 06:50 with your edits, next to today's roads with the same trips.";
+    const compareRow = el('div', 'build-row', compare);
+    this.compareButton = button(
+      "Compare with today's roads",
+      compareRow,
+      () => callbacks.onCompare(!this.comparing),
+      'Simulate the edited and the unedited network side by side',
+    );
+    const diff = el('label', 'build-check', compareRow);
+    this.diffToggle = el('input', '', diff);
+    this.diffToggle.type = 'checkbox';
+    this.diffToggle.disabled = true;
+    diff.append(' Difference map');
+    this.diffToggle.addEventListener('change', () => {
+      this.diffLegend.hidden = !this.diffToggle.checked;
+      callbacks.onDiffMap(this.diffToggle.checked);
+    });
+    this.diffLegend = el('div', 'hud-legend build-legend', compare);
+    this.diffLegend.hidden = true;
+    for (const band of DIFF_BANDS) {
+      if (band.color === 0) continue;
+      const item = el('span', '', this.diffLegend);
+      const swatch = el('i', '', item);
+      swatch.style.background = `#${band.color.toString(16).padStart(6, '0')}`;
+      item.append(`traffic ${band.label}`);
+    }
+    this.compareTable = el('table', 'build-table', compare);
+    this.compareTable.hidden = true;
+    this.travel = el('div', 'build-travel', compare);
+
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && this.shown && this.selectedEdge !== undefined) {
         this.select(undefined);
@@ -183,6 +242,67 @@ export class BuildPanel {
 
   setStatus(text: string): void {
     this.status.textContent = text;
+  }
+
+  /** Whether the edited and today's networks are being compared. */
+  setComparing(on: boolean): void {
+    this.comparing = on;
+    this.compareButton.textContent = on ? 'Stop comparing' : "Compare with today's roads";
+    this.compareButton.setAttribute('aria-pressed', String(on));
+    this.diffToggle.disabled = !on;
+    if (!on) {
+      this.diffToggle.checked = false;
+      this.diffLegend.hidden = true;
+      this.compareTable.hidden = true;
+      this.travel.replaceChildren();
+    }
+  }
+
+  /** Measures of both simulations at simulated time `time`. */
+  setComparison(time: number, rows: readonly CompareRow[]): void {
+    this.compareTable.hidden = false;
+    const head = `<thead><tr><th>At ${formatClock(time)}</th><th>Today</th><th>With edits</th><th>Change</th></tr></thead>`;
+    this.compareTable.innerHTML = head;
+    const body = el('tbody', '', this.compareTable);
+    for (const row of rows) {
+      const tr = el('tr', '', body);
+      const label = el('th', '', tr);
+      label.textContent = row.unit ? `${row.label} (${row.unit})` : row.label;
+      el('td', '', tr).textContent = fmt(row.today, row.digits);
+      el('td', '', tr).textContent = fmt(row.edited, row.digits);
+      const rel = change(row.today, row.edited);
+      const cell = el('td', '', tr);
+      cell.textContent = percent(rel);
+      if (Math.abs(rel) >= 0.005 && Number.isFinite(rel)) {
+        cell.className = rel > 0 === row.moreIsBetter ? 'build-better' : 'build-worse';
+      }
+    }
+  }
+
+  /** Travel times between places, today and with the edits. */
+  setTravelTimes(time: number, summary: TravelTimeSummary): void {
+    const lines: string[] = [
+      `Travel times by car between the City's districts and four nearby towns, at ${formatClock(time)}: ` +
+        `${percent(summary.mean) || 'no change'} on average over ${summary.pairs} trips.`,
+    ];
+    for (const [title, list] of [
+      ['Slower', summary.slower],
+      ['Faster', summary.faster],
+    ] as const) {
+      for (const c of list) {
+        lines.push(
+          `${title}: ${c.from} → ${c.to}, ${minutes(c.today)} → ${minutes(c.edited)} min ` +
+            `(${percent(change(c.today, c.edited))})`,
+        );
+      }
+    }
+    this.travel.replaceChildren(
+      ...lines.map((text, i) => {
+        const p = el('p', i === 0 ? 'build-travel-summary' : 'build-travel-pair');
+        p.textContent = text;
+        return p;
+      }),
+    );
   }
 
   /** How many edits the simulation has in force. */

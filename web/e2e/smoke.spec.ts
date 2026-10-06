@@ -241,3 +241,69 @@ test('edits roads with the Build tools, keeps them and shares them', async ({
 
   expect(errors).toEqual([]);
 });
+
+test("compares edited roads with today's", async ({ page }, testInfo) => {
+  test.setTimeout(480_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.goto('./');
+  await page.waitForFunction(
+    () => window.__ZG__?.sim?.ready === true && window.__ZG__?.build !== undefined,
+    null,
+    { timeout: 150_000 },
+  );
+  // Close a stretch of Savska cesta near the centre.
+  const edge = await page.evaluate(() => {
+    const index = window.__ZG__!.roadIndex!;
+    const net = index.net;
+    for (let e = 0; e < net.edgeCount; e++) {
+      if (net.nameOf(e) !== 'Savska cesta' || net.edgeLaneCount[e] < 2 || !index.editable(e)) {
+        continue;
+      }
+      const ref = index.ref(e);
+      if (Math.hypot(ref.x, ref.z) < 3000) return e;
+    }
+    return -1;
+  });
+  expect(edge).toBeGreaterThanOrEqual(0);
+  await page.keyboard.press('b');
+  await page.evaluate((e) => window.__ZG__!.build!.select(e), edge);
+  await page.getByRole('button', { name: 'Close road' }).click();
+  await expect(page.locator('.build-list li')).toHaveCount(1);
+
+  // Both simulations start again at 06:50 with the same trips, today's without the edit.
+  await page.getByRole('button', { name: "Compare with today's roads" }).click();
+  await expect(page.getByRole('button', { name: 'Stop comparing' })).toBeVisible();
+  await page.waitForFunction(
+    () =>
+      window.__ZG__?.baseline?.ready === true && window.__ZG__?.sim?.editsApplied?.applied === 1,
+    null,
+    { timeout: 150_000 },
+  );
+  await expect(page.locator('.build-table tbody tr')).toHaveCount(6, { timeout: 120_000 });
+  await expect(page.locator('.build-travel-summary')).toContainText('on average over', {
+    timeout: 120_000,
+  });
+  await page.getByLabel('Difference map').check();
+  await page.waitForFunction(() => (window.__ZG__?.compared?.diff ?? -Infinity) > 0, null, {
+    timeout: 120_000,
+  });
+  const ref = await page.evaluate((e) => window.__ZG__!.roadIndex!.ref(e), edge);
+  await page.evaluate(({ x, z }) => {
+    window.__ZG__?.setView('map');
+    window.__ZG__?.lookAt(x, z, 3000);
+  }, ref);
+  await page.waitForTimeout(2000);
+  await page.locator('.build-travel').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('compare.png') });
+
+  await page.getByRole('button', { name: 'Stop comparing' }).click();
+  await expect(page.locator('.build-table')).toBeHidden();
+  expect(await page.evaluate(() => window.__ZG__?.baseline)).toBeUndefined();
+
+  expect(errors).toEqual([]);
+});

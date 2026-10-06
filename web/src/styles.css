@@ -557,6 +557,7 @@ a.news-headline:hover {
 }
 
 .build-hint,
+.build-note,
 .build-road-info,
 .build-missing,
 .build-force,
@@ -631,6 +632,55 @@ a.news-headline:hover {
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
+}
+
+.build-compare {
+  margin-top: 10px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.build-table {
+  width: 100%;
+  margin: 6px 0;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.build-table th,
+.build-table td {
+  padding: 2px 4px;
+  text-align: right;
+  font-weight: normal;
+}
+
+.build-table th:first-child {
+  text-align: left;
+}
+
+.build-table thead th {
+  color: var(--text-dim);
+}
+
+.build-better {
+  color: #6fd08c;
+}
+
+.build-worse {
+  color: #ff8a80;
+}
+
+.build-travel p {
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.build-travel-pair {
+  color: var(--text-dim);
+}
+
+.build-legend {
+  flex-wrap: wrap;
+  margin: 6px 0;
 }
 
 .build-item {

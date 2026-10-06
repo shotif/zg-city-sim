@@ -1365,3 +1365,37 @@ fn removing_edits_restores_the_network_as_loaded() {
     ];
     assert_eq!(engine.set_edits(&bad), 0);
 }
+
+#[test]
+fn delay_counts_time_lost_against_the_speed_limit() {
+    // One car on a free road loses little time; a car that reaches a red light after about
+    // 35 s and waits until it turns green at 100 s loses those 65 s and a little braking.
+    for (red, min_delay, max_delay) in [(0.0, 0.0, 15.0), (100.0, 62.0, 85.0)] {
+        let mut b = Builder::default();
+        let j0 = b.junction(0.0, 0.0);
+        let j1 = b.junction(500.0, 0.0);
+        let j2 = b.junction(1000.0, 0.0);
+        let e0 = b.road(j0, j1, 1, 13.9);
+        let e1 = b.road(j1, j2, 1, 13.9);
+        let link = b.connect(b.lane(e0, 0), b.lane(e1, 0), j1, dir::STRAIGHT, b'O');
+        if red > 0.0 {
+            b.signal(&[link], &[(red, "r"), (200.0, "G")]);
+        }
+        let mut engine = Engine::new(b.build(), 3);
+        let lane0 = engine.net.edge_lanes(e0).start;
+        engine.insert_at(vtype::CAR, vec![e0, e1], lane0, 0.0, 13.9);
+        // Free-flow time from the start of e0 to the end of e1, as routing estimates it.
+        let free = engine.route_time(e0, e1).unwrap();
+        assert!((free - engine.net.edge_length[e1 as usize] / 13.9).abs() < 0.5);
+        run_until(&mut engine, 300.0, |_| {});
+        let s = &engine.stats;
+        assert_eq!(s.arrived, 1);
+        let delay = s.delay_seconds;
+        assert!(
+            (min_delay..max_delay).contains(&delay),
+            "red {red}: delay {delay}"
+        );
+        let km = engine.stats_array()[stat::VEHICLE_KM];
+        assert!((0.9..1.1).contains(&km), "driven {km} km");
+    }
+}

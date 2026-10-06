@@ -17,17 +17,26 @@ export interface InitMessage {
   /** Run as fast as possible until this time, so the city fills with traffic. */
   warmUntil: number;
   speed: number;
+  /** Post vehicle positions with each frame (false for a simulation only compared). */
+  render?: boolean;
 }
 
 export type ToWorker =
   | InitMessage
   | { type: 'speed'; speed: number }
   | { type: 'pause'; paused: boolean }
+  /** Wait (even while filling the streets): keeps two compared simulations in step. */
+  | { type: 'hold'; held: boolean }
   | { type: 'demand'; scale: number }
   /** Close these edges to routing (live road closures), replacing earlier ones. */
   | { type: 'closures'; edges: Uint32Array }
   /** Replace the network edits in force: four words per edit (edit/edits.ts). */
-  | { type: 'edits'; id: number; words: Uint32Array };
+  | { type: 'edits'; id: number; words: Uint32Array }
+  /** Travel times by car between pairs of edges (from, to, from, to, ...). */
+  | { type: 'routeTimes'; id: number; pairs: Uint32Array }
+  /** Vehicles that have driven onto each edge since the start, once the simulation has
+   * reached simulated time `at` (s). */
+  | { type: 'volumes'; id: number; at: number };
 
 export interface FrameMessage {
   type: 'frame';
@@ -47,4 +56,7 @@ export type FromWorker =
   | { type: 'edited'; id: number; applied: number; signals: SignalPrograms }
   | FrameMessage
   | { type: 'edgeSpeeds'; time: number; speeds: Uint8Array }
+  /** Seconds per pair asked for (-1: no route), at simulated time `time`. */
+  | { type: 'routeTimes'; id: number; time: number; times: Float64Array }
+  | { type: 'volumes'; id: number; time: number; counts: Uint32Array }
   | { type: 'error'; message: string };

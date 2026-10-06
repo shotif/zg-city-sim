@@ -19,6 +19,7 @@ const EDGE_SPEED_INTERVAL = 60;
 let engine: TrafficEngine | undefined;
 let speed = 1;
 let paused = false;
+let held = false;
 let warmUntil = 0;
 let owed = 0;
 let last = 0;
@@ -28,6 +29,12 @@ let lastEdgeSpeeds = -Infinity;
 /** Closed edges and edits, kept until the engine is built. */
 let closed: Uint32Array | undefined;
 let edits: { id: number; words: Uint32Array } | undefined;
+let render = true;
+/** Travel-time queries being answered a few per batch, so frames keep coming. */
+let routeJob: { id: number; pairs: Uint32Array; times: Float64Array; next: number } | undefined;
+const ROUTES_PER_BATCH = 24;
+/** Volume requests waiting for their simulated time. */
+let volumeAsks: { id: number; at: number }[] = [];
 
 const post = (message: FromWorker, transfer: Transferable[] = []) =>
   self.postMessage(message, transfer);
@@ -44,6 +51,7 @@ async function init(message: InitMessage): Promise<void> {
   if (closed) engine.setClosed(closed);
   speed = message.speed;
   warmUntil = message.warmUntil;
+  render = message.render ?? true;
   post({ type: 'ready', buildMs: performance.now() - t0, signals: engine.signalPrograms() });
   if (edits) applyEdits(engine, edits);
   last = performance.now();
@@ -63,7 +71,9 @@ function tick(): void {
   last = start;
   const warming = sim.stats()[0] < warmUntil;
   let steps = 0;
-  if (warming) {
+  if (held) {
+    owed = 0;
+  } else if (warming) {
     steps = Math.max(1, Math.floor(BUDGET_MS / msPerStep));
   } else if (!paused) {
     owed += elapsed * speed;
@@ -81,13 +91,36 @@ function tick(): void {
     const ms = performance.now() - t0;
     msPerStep = 0.7 * msPerStep + 0.3 * (ms / steps);
     if (!warming) owed -= steps * sim.dt;
-    const render = sim.render();
+    const frame = render ? sim.render() : new Uint32Array(0);
     rate = 0.8 * rate + 0.2 * ((steps * sim.dt) / Math.max(elapsed, 0.001));
-    post({ type: 'frame', time, render, stats: sim.stats(), rate, warming }, [render.buffer]);
+    post({ type: 'frame', time, render: frame, stats: sim.stats(), rate, warming }, [frame.buffer]);
     if (time - lastEdgeSpeeds >= EDGE_SPEED_INTERVAL) {
       lastEdgeSpeeds = time;
       const speeds = sim.edgeSpeeds();
       post({ type: 'edgeSpeeds', time, speeds }, [speeds.buffer]);
+    }
+  }
+  if (volumeAsks.length > 0) {
+    const now = sim.stats()[0];
+    const due = volumeAsks.filter((a) => now >= a.at);
+    volumeAsks = volumeAsks.filter((a) => now < a.at);
+    for (const ask of due) {
+      const counts = sim.edgeEntered();
+      post({ type: 'volumes', id: ask.id, time: now, counts }, [counts.buffer]);
+    }
+  }
+  const job = routeJob;
+  if (job) {
+    const end = Math.min(job.pairs.length / 2, job.next + ROUTES_PER_BATCH);
+    for (let k = job.next; k < end; k++) {
+      job.times[k] = sim.routeTime(job.pairs[k * 2], job.pairs[k * 2 + 1]);
+    }
+    job.next = end;
+    if (end * 2 >= job.pairs.length) {
+      routeJob = undefined;
+      post({ type: 'routeTimes', id: job.id, time: sim.stats()[0], times: job.times }, [
+        job.times.buffer,
+      ]);
     }
   }
   setTimeout(tick, Math.max(0, TICK_MS - (performance.now() - start)));
@@ -108,6 +141,9 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
       paused = message.paused;
       owed = 0;
       break;
+    case 'hold':
+      held = message.held;
+      break;
     case 'demand':
       engine?.setDemandScale(message.scale);
       break;
@@ -118,6 +154,17 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
     case 'edits':
       edits = message;
       if (engine) applyEdits(engine, message);
+      break;
+    case 'routeTimes':
+      routeJob = {
+        id: message.id,
+        pairs: message.pairs,
+        times: new Float64Array(message.pairs.length / 2),
+        next: 0,
+      };
+      break;
+    case 'volumes':
+      volumeAsks.push({ id: message.id, at: message.at });
       break;
   }
 };

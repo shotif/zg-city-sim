@@ -5,7 +5,7 @@ A realistic traffic and city-building simulator of Zagreb, Croatia, running enti
 - Whole City of Zagreb in 3D, built from open data (terrain, land cover, roads, the City's official 3D buildings).
 - Live traffic simulation: cars and trucks from where people live and work, commuters and through traffic from beyond the map, ZET trams and buses on their timetable.
 - Analysis: a traffic map of measured speeds, news reports of jams at 39 places, the City's live road closures, and a [validation report](docs/VALIDATION.md) against traffic counts.
-- Build: close roads and lanes, change speed limits, make bus lanes, ban turns and change green times at traffic lights, and traffic re-plans its routes within a minute. Edits are kept in the browser and can be shared as a link or a file. New roads, bridges and zoning come next (see the plan).
+- Build: close roads and lanes, change speed limits, make bus lanes, ban turns and change green times at traffic lights, and traffic re-plans its routes within a minute. Edits are kept in the browser and can be shared as a link or a file. Before and after runs the day again with the edits next to today's roads and compares delay, speeds, travel times between districts and traffic per road. New roads, bridges and zoning come next (see the plan).
 
 See [docs/PLAN.md](docs/PLAN.md) for the vision, architecture and roadmap.
 

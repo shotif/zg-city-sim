@@ -262,6 +262,29 @@ pub extern "C" fn zg_signal_len(which: u32) -> u32 {
     })
 }
 
+/// Travel time (s) by car from edge `from` to edge `to` on the measured travel times, or
+/// -1 without a route.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_route_time(from: u32, to: u32) -> f64 {
+    with_state(|s| {
+        s.engine
+            .as_mut()
+            .and_then(|e| e.route_time(from, to))
+            .map_or(-1.0, |t| t as f64)
+    })
+}
+
+/// Pointer to the number of vehicles that have driven onto each edge since the start
+/// (u32 per edge, `zg_edge_count` of them).
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_edge_entered_ptr() -> *const u32 {
+    with_state(|s| {
+        s.engine
+            .as_ref()
+            .map_or(std::ptr::null(), |e| e.edge_entered.as_ptr())
+    })
+}
+
 /// Advance `n` steps of `zg_dt()` seconds, then refresh the render buffer. Returns the time.
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_step(n: u32) -> f64 {

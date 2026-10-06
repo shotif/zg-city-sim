@@ -18,6 +18,8 @@ export interface EngineExports {
   zg_set_edits(words: number, count: number): number;
   zg_signal_ptr(which: number): number;
   zg_signal_len(which: number): number;
+  zg_route_time(from: number, to: number): number;
+  zg_edge_entered_ptr(): number;
   zg_step(steps: number): number;
   zg_dt(): number;
   zg_render_ptr(): number;
@@ -49,6 +51,11 @@ export const STAT = {
   buses: 15,
   /** Vehicles coming from or going to places beyond the map. */
   outside: 16,
+  /** Since the start, road vehicles (not trams): hours driving, hours of delay against the
+   * speed limit, kilometres driven. */
+  vehicleHours: 17,
+  delayHours: 18,
+  vehicleKm: 19,
 } as const;
 
 /** Words per vehicle slot in the render buffer and what they hold (engine::write_render). */
@@ -206,6 +213,17 @@ export class TrafficEngine {
   stats(): Float64Array {
     const ex = this.exports;
     return new Float64Array(this.memory, ex.zg_stats_ptr(), ex.zg_stats_len()).slice();
+  }
+
+  /** Seconds by car from one edge to another on the measured travel times (-1: no route). */
+  routeTime(from: number, to: number): number {
+    return this.exports.zg_route_time(from, to);
+  }
+
+  /** Vehicles that have driven onto each edge since the start. */
+  edgeEntered(): Uint32Array {
+    const ex = this.exports;
+    return new Uint32Array(this.memory, ex.zg_edge_entered_ptr(), ex.zg_edge_count()).slice();
   }
 
   /** Mean speed / speed limit per edge over the last minute (0-254; 255 = no traffic). */

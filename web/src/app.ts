@@ -14,6 +14,15 @@ import {
   saveEdits,
   serializeEdits,
 } from './edit/edits';
+import {
+  DIFF_BANDS,
+  DIFF_FROM,
+  PLACES,
+  commonMinute,
+  compareStats,
+  diffBands,
+  summariseTravelTimes,
+} from './edit/compare';
 import { RoadIndex } from './edit/roadIndex';
 import { DATA_URL, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
@@ -75,12 +84,14 @@ interface TravelData {
   demandScale: number;
 }
 
-/** Start the traffic simulation in a worker on the loaded network. */
+/** Start the traffic simulation in a worker on the loaded network. `render`: false for a
+ * simulation that is only compared with, not drawn. */
 function startSimulation(
   net: RoadNetwork,
   travel: TravelData,
   height: HeightFn,
   speed: number,
+  render = true,
 ): SimClient {
   const laneShapeY = laneShapeHeights(net, height);
   return new SimClient(
@@ -94,6 +105,7 @@ function startSimulation(
       startTime: START_TIME,
       warmUntil: WARM_UNTIL,
       speed,
+      render,
     },
     [laneShapeY.buffer],
   );
@@ -127,6 +139,10 @@ export interface DebugApi {
   edits?: ResolvedEdit[];
   /** Pick the road at a screen point (CSS pixels in the canvas), as a click would. */
   pickAt?(x: number, y: number): number | undefined;
+  /** The simulation of today's roads while comparing (Build panel, Before and after). */
+  baseline?: SimClient;
+  /** Comparisons shown so far: simulated time of the last measures and travel times. */
+  compared?: { stats: number; travel: number; diff: number };
 }
 
 declare global {
@@ -155,6 +171,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let closureLayer: ClosureLayer | undefined;
   let closedEdges: Uint32Array | undefined;
   let buildPanel: BuildPanel | undefined;
+  let baseline: SimClient | undefined;
+  let setCompare: (on: boolean) => void = () => {};
+  let setDiffMap: (on: boolean) => void = () => {};
   let invalidateView = () => {};
   // Edits: from a shared link, else saved in this browser.
   const editsFromLink = /[#&]edits=([^&]+)/.exec(location.hash)?.[1];
@@ -164,10 +183,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
     onMode: (mode) => rig?.setMode(mode),
     onRotateIso: (direction) => rig?.rotateIso(direction),
     onFaceNorth: () => rig?.faceNorth(),
-    onPause: (paused) => sim?.setPaused(paused),
+    onPause: (paused) => {
+      sim?.setPaused(paused);
+      baseline?.setPaused(paused);
+    },
     onSpeed: (speed) => {
-      sim?.setSpeed(speed);
-      if (sim?.paused) sim.setPaused(false);
+      for (const s of [sim, baseline]) {
+        s?.setSpeed(speed);
+        if (s?.paused) s.setPaused(false);
+      }
     },
     onTrafficMap: (enabled) => {
       if (traffic) traffic.enabled = enabled;
@@ -310,6 +334,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
         shareLink: async (list) =>
           `${location.origin}${location.pathname}${location.search}#edits=${await encodeEditsForUrl(list)}`,
         importFile: async (file) => parseEdits(await file.text()),
+        onCompare: (on) => setCompare(on),
+        onDiffMap: (on) => setDiffMap(on),
         exportFile: (list) => {
           const blob = new Blob([serializeEdits(list)], { type: 'application/json' });
           const link = document.createElement('a');
@@ -377,6 +403,116 @@ export async function startApp(container: HTMLElement): Promise<void> {
         if (encoded) loadFromLink(encoded);
       });
       return panel;
+    };
+
+    /** Before and after: run the day again with the edits next to today's roads. */
+    const setUpCompare = (
+      net: RoadNetwork,
+      surface: HeightFn,
+      travelData: TravelData,
+      launch: (speed: number) => SimClient,
+    ) => {
+      const index = debug.roadIndex;
+      if (!index) return;
+      const diffLayer = new EditLayer(net, surface);
+      scene.add(diffLayer.object);
+      // Travel times between every two of the places, from the road nearest each.
+      const placeEdges = PLACES.map((p) => index.pick(p.x, p.z, 600));
+      const pairs: [number, number][] = [];
+      for (let i = 0; i < PLACES.length; i++) {
+        for (let j = 0; j < PLACES.length; j++) {
+          if (i !== j && placeEdges[i] !== undefined && placeEdges[j] !== undefined) {
+            pairs.push([i, j]);
+          }
+        }
+      }
+      const pairWords = Uint32Array.from(
+        pairs.flatMap(([i, j]) => [placeEdges[i]!, placeEdges[j]!]),
+      );
+      let timer: ReturnType<typeof setInterval> | undefined;
+      let diffOn = false;
+      let busy = false;
+      const compared = { stats: 0, travel: -Infinity, diff: -Infinity };
+
+      setDiffMap = (on) => {
+        diffOn = on;
+        compared.diff = -Infinity;
+        if (!on) diffLayer.show([]);
+        invalidate();
+      };
+      setCompare = (on) => {
+        if (timer) clearInterval(timer);
+        timer = undefined;
+        baseline?.dispose();
+        baseline = undefined;
+        debug.baseline = undefined;
+        setDiffMap(false);
+        buildPanel?.setComparing(on);
+        if (!on) return;
+        // Both start at 06:50 with the same trips: the player's with the edits.
+        const speed = sim?.speed ?? 1;
+        sim?.dispose();
+        sim = launch(speed);
+        const today = startSimulation(net, travelData, surface, speed, false);
+        if (closedEdges) today.setClosures(closedEdges);
+        baseline = today;
+        debug.baseline = today;
+        compared.stats = 0;
+        compared.travel = -Infinity;
+        compared.diff = -Infinity;
+        debug.compared = compared;
+        timer = setInterval(() => {
+          const edited = sim;
+          if (!edited?.stats || !today.stats) return;
+          const [tToday, tEdited] = [today.stats[STAT.time], edited.stats[STAT.time]];
+          // Keep in step: the one ahead waits.
+          edited.setHeld(tEdited - tToday > 10);
+          today.setHeld(tToday - tEdited > 10);
+          const time = Math.min(tToday, tEdited);
+          // Measures as of the same simulated minute in both.
+          const minute = commonMinute(today.minutes, edited.minutes);
+          if (minute !== undefined) {
+            compared.stats = minute * 60;
+            buildPanel?.setComparison(
+              minute * 60,
+              compareStats(today.minutes.get(minute)!, edited.minutes.get(minute)!),
+            );
+          }
+          if (busy) return;
+          if (time - compared.travel >= 300) {
+            busy = true;
+            Promise.all([today.routeTimes(pairWords), edited.routeTimes(pairWords)])
+              .then(([a, b]) => {
+                compared.travel = Math.min(a.time, b.time);
+                buildPanel?.setTravelTimes(
+                  compared.travel,
+                  summariseTravelTimes(pairs, a.times, b.times),
+                );
+              })
+              .finally(() => {
+                busy = false;
+              });
+          } else if (diffOn && time >= DIFF_FROM && time - compared.diff >= 60) {
+            busy = true;
+            // Both counted as of the same simulated time.
+            const at = Math.floor(time / 60) * 60;
+            Promise.all([today.volumes(at), edited.volumes(at)])
+              .then(([a, b]) => {
+                compared.diff = Math.min(a.time, b.time);
+                const bands = diffBands(a.counts, b.counts, (e) => index.editable(e));
+                diffLayer.show(
+                  DIFF_BANDS.map((band, k) => ({ color: band.color, edges: bands[k] })).filter(
+                    (g) => g.edges.length > 0,
+                  ),
+                );
+                invalidate();
+              })
+              .finally(() => {
+                busy = false;
+              });
+          }
+        }, 1000);
+      };
     };
 
     // Roads load after the terrain is on screen, then traffic starts on them.
@@ -467,32 +603,38 @@ export async function startApp(container: HTMLElement): Promise<void> {
           traffic = new TrafficLayer(net, surface);
           scene.add(traffic.object);
           debug.traffic = traffic;
-          sim = startSimulation(net, await travel, surface, Number(params.get('speed')) || 1);
-          debug.sim = sim;
-          if (closedEdges) sim.setClosures(closedEdges);
-          if (editWordsNow) sim.setEdits(editWordsNow);
-          const running = sim;
-          sim.onReady = () => {
-            if (running.signals) buildPanel?.setSignals(running.signals);
+          const travelData = await travel;
+          /** The simulation the player sees, with the edits in force. */
+          const launch = (speed: number): SimClient => {
+            const running = startSimulation(net, travelData, surface, speed);
+            debug.sim = running;
+            if (closedEdges) running.setClosures(closedEdges);
+            if (editWordsNow) running.setEdits(editWordsNow);
+            running.onReady = () => {
+              if (running.signals) buildPanel?.setSignals(running.signals);
+            };
+            running.onEdited = (applied, signals) => {
+              buildPanel?.setSignals(signals);
+              buildPanel?.setInForce(applied);
+            };
+            running.onFrame = () => {
+              simChanged = true;
+            };
+            running.onEdgeSpeeds = (latest) => {
+              speeds = latest;
+              traffic?.setSpeeds(latest);
+              const place = news?.selected;
+              if (place) newsPanel?.setTraffic(placeTraffic(net, place.edges, latest));
+              invalidate();
+            };
+            running.onError = (message) => {
+              console.error(message);
+              hud.setNotice(`The traffic simulation stopped: ${message}`);
+            };
+            return running;
           };
-          sim.onEdited = (applied, signals) => {
-            buildPanel?.setSignals(signals);
-            buildPanel?.setInForce(applied);
-          };
-          sim.onFrame = () => {
-            simChanged = true;
-          };
-          sim.onEdgeSpeeds = (latest) => {
-            speeds = latest;
-            traffic?.setSpeeds(latest);
-            const place = news?.selected;
-            if (place) newsPanel?.setTraffic(placeTraffic(net, place.edges, latest));
-            invalidate();
-          };
-          sim.onError = (message) => {
-            console.error(message);
-            hud.setNotice(`The traffic simulation stopped: ${message}`);
-          };
+          sim = launch(Number(params.get('speed')) || 1);
+          setUpCompare(net, surface, travelData, launch);
         })
         .catch((error: unknown) => {
           console.error(error);

@@ -105,7 +105,12 @@ pub mod stat {
     pub const BUSES: usize = 15;
     /// Vehicles coming from or going to places beyond the map.
     pub const OUTSIDE: usize = 16;
-    pub const LEN: usize = 17;
+    /// Since the start: hours spent driving by road vehicles (not trams), hours of delay
+    /// (time lost against driving at the speed limit) and kilometres driven.
+    pub const VEHICLE_HOURS: usize = 17;
+    pub const DELAY_HOURS: usize = 18;
+    pub const VEHICLE_KM: usize = 19;
+    pub const LEN: usize = 20;
 }
 
 /// Trip flags.
@@ -278,6 +283,11 @@ pub struct Stats {
     pub outside: u32,
     /// Vehicles removed (stuck) per edge.
     pub removed_at: std::collections::BTreeMap<u32, u32>,
+    /// Since the start, road vehicles (not trams): seconds driving, seconds of delay against
+    /// the speed limit, metres driven.
+    pub vehicle_seconds: f64,
+    pub delay_seconds: f64,
+    pub vehicle_metres: f64,
 }
 
 enum Finish {
@@ -2785,6 +2795,7 @@ impl Engine {
         let mut running = 0u32;
         let mut stopped = 0u32;
         let (mut trams, mut buses, mut outside) = (0u32, 0u32, 0u32);
+        let (mut driving, mut delay, mut metres) = (0f64, 0f64, 0f64);
         let mut stuck = std::mem::take(&mut self.scratch);
         stuck.clear();
         let d = &self.net.d;
@@ -2802,6 +2813,12 @@ impl Engine {
                 }
                 if veh.trip_flags != 0 {
                     outside += 1;
+                }
+                if veh.vtype != vtype::TRAM {
+                    let limit = d.lane_speed[lane as usize].min(veh.params().max_speed);
+                    driving += 1.0;
+                    delay += (1.0 - veh.speed / limit.max(1.0)).clamp(0.0, 1.0) as f64;
+                    metres += veh.speed as f64;
                 }
                 if veh.speed < 0.1 {
                     stopped += 1;
@@ -2859,6 +2876,9 @@ impl Engine {
         });
 
         let s = &mut self.stats;
+        s.vehicle_seconds += driving * DT as f64;
+        s.delay_seconds += delay * DT as f64;
+        s.vehicle_metres += metres * DT as f64;
         s.running = running;
         s.stopped = stopped;
         s.trams = trams;
@@ -2997,6 +3017,25 @@ impl Engine {
         self.edits.len()
     }
 
+    /// Travel time (s) of the fastest route for a car from one road to another on the
+    /// travel times measured now (None if there is no route).
+    pub fn route_time(&mut self, from: u32, to: u32) -> Option<f32> {
+        let n = self.net.edge_count() as u32;
+        if from >= n || to >= n {
+            return None;
+        }
+        self.router.tolls = true;
+        let route = self
+            .router
+            .route(&self.net, &self.travel_time, from, to, vclass::PASSENGER)?;
+        Some(
+            route[1..]
+                .iter()
+                .map(|&e| self.travel_time[e as usize])
+                .sum(),
+        )
+    }
+
     /// Edits in force.
     pub fn edits(&self) -> &[Edit] {
         &self.edits
@@ -3104,6 +3143,9 @@ impl Engine {
         out[stat::TRAMS] = s.trams as f64;
         out[stat::BUSES] = s.buses as f64;
         out[stat::OUTSIDE] = s.outside as f64;
+        out[stat::VEHICLE_HOURS] = s.vehicle_seconds / 3600.0;
+        out[stat::DELAY_HOURS] = s.delay_seconds / 3600.0;
+        out[stat::VEHICLE_KM] = s.vehicle_metres / 1000.0;
         out
     }
 
