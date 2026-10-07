@@ -13,7 +13,7 @@ Read these before changing anything:
 - **Deploy:** push every finished, validated step to `main`. GitHub Actions builds, tests and deploys `main` to Pages. Also push your session branch. Don't open pull requests unless asked.
 - **Default branch:** `main` (since 2026-10-07); scheduled workflows (live-data) run from it.
 - **Language:** English UI with Croatian place and street names, with diacritics.
-- **"Live":** a calibrated typical weekday plus live layers (road closures now; ZET vehicle positions and weather later).
+- **"Live":** a calibrated typical weekday plus live layers (road closures and the weather; live ZET vehicle positions are skipped for now).
 - **Commits:** an imperative subject and a body that says why, using bullets for lists. End with the attribution lines your environment gives. Never put model names in commits, code or docs.
 - **Writing:** plain, concrete British English for docs and UI text. Give numbers with units. Say what is estimated or guessed, and from what.
 

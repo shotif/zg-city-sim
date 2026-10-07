@@ -262,9 +262,8 @@ Known gaps:
     - Lorries of 10 m, as the engine's: a box lorry and a flatbed with its load. Articulated lorries and buses wait for the engine to have longer vehicles.
     - ZET's 12 m bus, blue with a band of windows and a white roof, its doors on the right; ZET's 32 m low-floor tram in five modules with a sloping nose, white roof, roof equipment and a pantograph.
     - Instanced per model: seven meshes each (paint, the rest, headlamps, tail lamps, the two indicators, the beam) sharing one set of transforms, 63 in all. Tail lamps brighten when the engine reports braking, and indicators blink 1.5 times a second while it reports a turn or a lane change.
-- **M6d, live ZET vehicles.**
-  - ZET's real-time feed (GTFS-RT vehicle positions, about every 10 seconds) sends no CORS headers, so the browser needs a small proxy that adds them. With it, the app shows the trams and buses where they really are, next to the timetabled ones, with their delay.
-  - Needs a host for the proxy (the user's decision).
+- **M6d, live ZET vehicles** (skipped, 2026-10-07).
+  - ZET's real-time feed (GTFS-RT vehicle positions, about every 10 seconds) sends no CORS headers, so the browser would need a small proxy that adds them, and a host for it. Left out for now by decision: trams and buses run to ZET's timetable.
 - **M6e, sound** (done 2026-10-07).
   - Generated in the browser (Web Audio, no recordings): the hum of traffic near the camera rising with the number of vehicles and their speed, trams' bells and wheels, rain. Off until the player turns it on.
   - As built (`web/src/ui/sound.ts`, the HUD's 🔈 button, key `S`): brown noise through a low-pass filter for the traffic within 250 m of the point looked at, its loudness growing with the square root of their number and its cut-off from 250 Hz (standing) to 1,090 Hz (50 km/h); a rumble around 90 Hz for trams, and now and then a two-stroke bell (1,480 and 2,220 Hz); white noise above 1.2 kHz for rain. Everything fades out between 200 m and 3 km of view height, and snow muffles the traffic by 40 %.
@@ -282,6 +281,17 @@ Known gaps:
     - Route searches (`sim/src/router.rs`), half the engine's time, are a little faster without changing a single route: each edge's search state in one record, the landmark bound computed without branches over a row per edge, and heap entries in one 64-bit key. From 06:00 to 07:30 the engine finds exactly the same routes and traffic, its route searches take 14 % less time and the whole run 8 % less; on its own (`sim/examples/routes.rs`) a search settles an edge in 129 ns instead of 174 ns, but inside the engine each search starts with cold caches.
     - Tried and left out: weighting the heuristic by how slow traffic is (1.2 times the ratio, up to 1.8) and never re-opening a settled edge cut route search time by 40 % and the whole run by 20 %, but over a simulated day 10 instead of 13 of the 47 independent count stations came within 25 %, county and local roads carried 0.67 of their counts instead of 0.84, and 29 % instead of 34 % of the station-hours had a GEH below 5. Without the weighting (only never re-opening, with 16 landmarks) the day ended with 20,788 vehicles removed from gridlock instead of 14,095 and 15,304 in two runs with today's router. Routes are part of what the counts validate, so they stay as they are.
     - The engine compiled to WebAssembly runs as fast as natively (in Node, V8 as in Chrome: about 20-25 ms a step from 07:00 to 08:00 with 17,000-18,000 vehicles), so a worker with a core to itself simulates the morning peak at about 20 times real time, the rest of the day faster. In headless Chromium, which draws in software on the same cores, it reaches 11-13 times: there the emulated GPU takes 1.6 of the 4 cores.
+
+**Plan (M7 Full demand, proposed 2026-10-07, awaiting approval).** Accuracy comes first, and the largest gap is that the simulation runs only 60 % of the estimated demand: with more, Zagreb's simulated junctions lock up, because they let less traffic through than the real ones. At 60 %, the counts come out at 0.79 of the real ones in total (state roads 0.65), 13 of 47 stations within ±25 %, and 34 % of station-hours with a GEH below 5. M7 makes the junctions carry what Zagreb's carry, then raises the demand. Every step is checked with a day run against two runs of today (seeds 1 and 2), and pushed to `main` when it holds.
+
+- **M7a, where capacity is lost.** A report from the native runs (`sim/examples/`): for every signalled junction and every approach, vehicles through per hour of green against the saturation flow, and the time lost to blocked exits, yielding, trams and vehicles in the wrong lane; for every roundabout, entries per hour against its circulating flow. It names the junctions that carry least of their capacity, at 60 % demand and at 80 %.
+- **M7b, left turns inside the junction.** Netconvert's internal junction points, so a left-turning vehicle waits in the junction for a gap in oncoming traffic instead of at the stop line, as drivers do, and straight-on traffic behind it can go. Expected to help most at the centre's signalled junctions.
+- **M7c, roundabouts and lasting gridlock.** Entering a roundabout gives way to circulating traffic and only enters when the exit ahead has room; the A2/D1 interchange at Zabok and Zagrebačka cesta in Sesvete, jammed through the night today, should clear.
+- **M7d, trams through junctions.** The tram-car crossings where most vehicles get stuck (Vlaška at Draškovićeva, Mesnička at Ilica, Branimirova at Držićeva): trams and cars as movements of one junction with one signal program, and tram priority as ZET has it where known.
+- **M7e, lane choice.** Vehicles choose their lane for the next two or three turns before a junction rather than at it; in the morning peak today about 25,000 route searches an hour are not for trips starting (estimated from the search counts), most of them vehicles that missed their lane routing again.
+- **M7f, full demand.** Raise the simulated share of demand in steps (70 %, 80 %, 100 %) as the steps above allow, recalibrating trip rates or the hourly profile only where the counts show it is needed. Targets: a full weekday at 100 % without lasting gridlock (under 1 % of trips removed), the total within 10 % of the counts, at least 25 of 47 stations within ±25 %, and at least half the station-hours with a GEH below 5.
+- Data that would help: the City's signal timings for its main junctions (they are not published; a request to the City's traffic office might get them), and Hrvatske ceste's counts by vehicle class (their CSV files, which their site refuses to plain clients).
+- Later milestones to choose from after M7: public transport tools (tram and bus lines, stops, frequencies), policies (parking pricing, a congestion charge, a low-emission zone), HŽ trains, and pedestrians and cyclists.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
@@ -397,7 +407,8 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M3 Like the real thing** | Demand from census, buildings and jobs; calibration against counts; validation report; news hotspot layer; live closures |
 | **M4 Build** | Tools for roads, bridges, lanes, signals and roundabouts with instant re-routing; before/after analytics; real project presets (e.g. Jarunski most) |
 | **M5 Grow** | Zoning, growable Zagreb-style buildings, demand, land value, economy |
-| **M6 Polish and live** | Day/night, weather, vehicle models, sound, performance; live ZET vehicles and weather |
+| **M6 Polish and live** | Day/night, weather, vehicle models, sound, performance; live weather (live ZET vehicles skipped) |
+| **M7 Full demand** (proposed) | Junctions that carry what Zagreb's do (left turns inside junctions, roundabouts, trams, lane choice), then all of the estimated demand, validated against the counts |
 
 ## Risks and open questions
 
