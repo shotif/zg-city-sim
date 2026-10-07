@@ -17,6 +17,7 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | Transport Master Plan (2020) | Calibration targets: trip rates, modal split | reports, no licence | M3 |
 | City road closures feed | Live closures | Otvorena dozvola | ✅ copied every 15 min to the `live-data` branch (`.github/workflows/live-data.yml`); drawn in the app, routed around |
 | Croatian online news | Congestion hotspots | headlines and links only | ✅ 107 reports at 39 places (`pipeline/data/news.json`) |
+| City of Zagreb planned land use 2023 | Zoning: lots along streets, the plan's zones | Otvorena dozvola | ✅ in use (`pipeline/zoning.py`): lots kept off land the plan keeps open, each lot's planned use, the plan drawn in the Zones tool |
 | DHMZ weather XML | Live weather | Otvorena dozvola, DHMZ citation mandatory | M6 |
 
 ## Licences and attribution
@@ -95,7 +96,7 @@ Official DGU register of spatial units (RPJ), dated 2025-02-03, EPSG:3765:
 Other datasets:
 
 - **Street names register:** 5,489 streets, no geometry.
-- **Planned land use (GUP/UPU zoning), `geoportal-planirana-namjena-2023`:** 8,999 polygons. This is the basis for game-mode zoning.
+- **Planned land use (GUP/UPU zoning), `geoportal-planirana-namjena-2023`:** ✅ in use for zoning (M5a). 8,999 polygons (GeoJSON in EPSG:4326, 35 MB; also SHP, CSV, KML, XLSX on ArcGIS Online), last modified 2024-09-13. A mosaic of the plans in force in 2023: 4,370 polygons from the general urban plan (GUP), 2,155 from urban plans (UPU), 2,111 from the City's spatial plan and 363 from detailed plans (DPU), covering the whole City (644 km²) without overlaps. Fields: `Namjena` (use), `Skupna_namjena` (group of uses, 20 values), `Analitika`, `Naziv_plana` (plan), `Izradivac_plana`, `Izvorno_kartografsko_mjerilo` (scale), `Godina_zadnje_izmjene`. By group: forests 175 km², farmland 162 km², mainly residential 111 km², public green 37 km², transport 31 km², protective green 30 km², economic 18 km², sport 17 km², water 14 km², public and social 11 km², business 6 km², mixed 10.5 km².
 - **Actual land use 2020:** attributes on CKAN; the geometry (33,497 polygons) is only on ArcGIS.
 - **Topographic base 2018:** objects, vegetation, water (EPSG:3765).
 - **Schools, kindergartens, universities, health facilities:** points.

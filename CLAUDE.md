@@ -21,13 +21,14 @@ Read these before changing anything:
 
 | Path | What |
 |---|---|
-| `pipeline/` | Python data pipeline (`python -m pipeline <steps>`). Steps, in order: `terrain`, `ground`, `network` (OSM → SUMO netconvert → packed arrays, `simnet.py`), `buildings`, `demand` (residents, jobs, gateways), `transit` (ZET GTFS), `news`, `projects`. Output goes to `web/public/data/`. |
+| `pipeline/` | Python data pipeline (`python -m pipeline <steps>`). Steps, in order: `terrain`, `ground`, `network` (OSM → SUMO netconvert → packed arrays, `simnet.py`), `buildings`, `demand` (residents, jobs, gateways), `transit` (ZET GTFS), `news`, `zoning` (lots for zoning along streets, the City's planned land use), `projects`. Output goes to `web/public/data/`. |
 | `pipeline/counts.py` | Hrvatske ceste count stations (2025), read from `pipeline/data/hc_counts_2025.json`, with working-day estimates. |
 | `pipeline/hc.py` | Tool, run by hand: downloads Hrvatske ceste's tables and PDF, places the stations on OSM roads by road number and section, reads the hourly and weekday charts, and writes `hc_counts_2025.json`. Never commit the PDF. |
 | `pipeline/census.py` | Tool, run by hand: DZS 2021 population by settlement for the counties around the City (`pipeline/data/census_2021_settlements.json`). |
 | `pipeline/gateways.py` | Traffic across the map's edge: counted sections crossing it, else typical volumes. |
 | `pipeline/validate.py` | Writes `docs/VALIDATION.md` from a day run. |
 | `pipeline/projects.py` | Planned road projects (M4c): each a patch over the OSM extract (proposed or construction ways opened, ends carried across roads, signals, bridges), built by netconvert into a network of its own with demand, transit and news (`web/public/data/projects/<id>/`, about 3 min each). `python -m pipeline.projects compare` writes their before and after numbers to `pipeline/data/projects/<id>.json`. |
+| `pipeline/zoning.py` | Lots for zoning (M5a): free land along streets, 20 m by 30 m, kept off buildings, roads, water and the land the City's plan keeps open; each lot's street, planned use and the storeys around it. The plan's polygons for the app's map. |
 | `pipeline/data/news.json` | Curated news reports of jams (39 places). |
 | `sim/` | Rust traffic engine, compiled to WebAssembly (C ABI in `ffi.rs`) and run natively. |
 | `sim/src/engine.rs` | Vehicles, IDM/MOBIL, junction right of way, signals (`merge_signal_phases`, `retime_signals`, actuated control), routing calls, closures, statistics. |
@@ -38,7 +39,7 @@ Read these before changing anything:
 | `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
 | `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck), `day.rs` (a whole weekday, for validation) and `compare.rs` (one network through the morning peak, for a project's before and after). |
-| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles, traffic map, closures, news, edits); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, roundabouts and signal programs, built into the network the engine runs) and the junctions' movements for the signal editor (`signals.ts`); `src/ui/` the HUD and panels; `src/camera/` the views. |
+| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles, traffic map, closures, news, edits); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, roundabouts and signal programs, built into the network the engine runs) and the junctions' movements for the signal editor (`signals.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool); `src/ui/` the HUD and panels; `src/camera/` the views. |
 | `.github/workflows/` | `deploy.yml` (build, test, deploy main) and `live-data.yml` (copies the City's closures feed to the `live-data` branch every 15 minutes). |
 
 ## Commands

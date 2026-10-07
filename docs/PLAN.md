@@ -160,6 +160,31 @@ Known gaps:
     - Swapping the network now also drops vehicles beyond the new end of a road shortened, and buses and trams whose way on no longer joins up take the shortest way across, keeping their stops.
   - Tests: engine tests on a hand-built crossroads made a roundabout while cars and a bus drive (the car where the ring now is leaves, the others re-plan round the ring and arrive, the bus keeps its stop) and on a player's program running as given; builder unit tests (the ring and its right of way, lights on a junction without them, closing movements never green, taking lights away); a Playwright test that makes a junction in Novi Zagreb a roundabout, sees traffic drive round it, lengthens a phase of lights near the centre and checks the engine runs it, then undoes both.
 
+**Plan (M5 Grow, 2026-10-07).** Zagreb grows where the player zones land, and what grows makes trips the traffic simulation drives. Today's city stays as it is: growth happens on free land along streets. Steps, each pushed to `main` when it works:
+
+- **M5a, zoning.**
+  - *Lots*: a pipeline step `zoning` divides free land along streets into lots of about 20 m of frontage and 30 m depth, the size of a family-house plot in Zagreb's outskirts. Free means no building, road, railway or water on it, and not land the City's plan keeps open: forests, parks, protective green, sport grounds, cemeteries, water and infrastructure.
+  - Each lot records the street it faces (the edge its trips use), its planned use and its land cover.
+  - *The City's plan*: the planned land use of the City (`geoportal-planirana-namjena-2023`: 8,999 polygons from the general, urban and detailed plans in force in 2023, Otvorena dozvola) is grouped into residential, mixed, commercial, office, industrial, civic, green, agricultural, water and transport. Outside the City there is no plan, and lots there have none.
+  - *Zones*: houses, low-rise flats, high-rise flats, mixed (flats over shops, the plan's *mješovita namjena*), shops, offices and industry.
+  - *Tool*: a Zones panel (key `Z`). Choose a zone and a brush size and paint over the map: the lots under the brush take the zone. "As the City plans" paints each lot with the zone its plan gives it, and "Remove zoning" clears them. The planned land use can be drawn under the lots.
+  - Zoning is kept in the browser and shared as a link, as brush strokes by position, so it survives the network being rebuilt.
+  - Tests: lot making on a hand-made map (lots face their street, avoid buildings, roads and water, and skip land kept open); zone painting and saving; a Playwright test that paints zones and finds them after a reload.
+- **M5b, buildings that grow.**
+  - Zoned lots grow buildings over simulated time, faster where demand is higher (M5d). Neighbouring lots of the same zone join for larger buildings.
+  - Zagreb's types: family houses of two or three storeys with tiled pitched roofs; urban villas and five-storey blocks; slabs and towers of 10-19 storeys as in Novi Zagreb; perimeter blocks with shops at street level near the centre; shops and retail parks; office blocks; halls and warehouses. Footprints, setbacks and heights are taken from today's buildings of the same kind in ZG3D.
+  - They are drawn in a layer of their own and saved with the zoning.
+- **M5c, growth makes trips.**
+  - Each new building adds residents or jobs from its floor area, at today's densities by kind, on the street its lot faces.
+  - The engine takes new home and work weights and a new daily trip total while it runs, so new residents' trips and new jobs' commuters, including those from beyond the map, join the traffic.
+  - Engine tests: homes added on a hand-built network make trips from there; jobs added attract them.
+- **M5d, demand and land value.**
+  - Demand per zone: homes are wanted where jobs outnumber workers, shops where residents spend, offices and industry where workers can reach them. It comes from the city's totals and simulated travel times.
+  - Land value per lot from accessibility (jobs and residents reachable by car in 20 minutes on measured travel times), parks and water nearby, and noise from traffic volumes. It is drawn as a map. Buildings grow taller where land is dearer.
+- **M5e, economy.**
+  - A budget: income from property tax and the local income tax on residents and jobs; costs of the roads, junctions and bridges the player builds, from real Croatian project costs, and their upkeep.
+  - Building needs money. The panel shows the balance over time.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.

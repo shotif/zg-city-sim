@@ -603,3 +603,100 @@ test('makes a junction a roundabout and sets traffic lights', async ({ page }, t
 
   expect(errors).toEqual([]);
 });
+
+test('zones lots by painting them, and keeps and shares the zoning', async ({
+  page,
+  context,
+}, testInfo) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const ready = () =>
+    page.waitForFunction(() => window.__ZG__?.zoning !== undefined, null, { timeout: 150_000 });
+  const zoned = () =>
+    page.evaluate(() => window.__ZG__!.zoning!.zones.reduce((n, z) => n + (z > 0 ? 1 : 0), 0));
+
+  await page.goto('./');
+  await ready();
+  // A village street in southern Novi Zagreb with free lots planned for housing.
+  const spot = await page.evaluate(() => {
+    const lots = window.__ZG__!.zoning!.lots;
+    let best = { x: 0, z: 0, n: 0 };
+    for (let i = 0; i < lots.count; i++) {
+      if (lots.planOf(i)?.id !== 'residential') continue;
+      if (Math.hypot(lots.x[i] + 1500, lots.z[i] - 7800) > 2000) continue;
+      const n = lots.within(lots.x[i], lots.z[i], 60).length;
+      if (n > best.n) best = { x: lots.x[i], z: lots.z[i], n };
+    }
+    return best;
+  });
+  expect(spot.n).toBeGreaterThan(2);
+
+  await page.keyboard.press('z');
+  await expect(page.locator('.zones-panel')).toBeVisible();
+  await page.evaluate(({ x, z }) => {
+    window.__ZG__?.setView('map');
+    window.__ZG__?.lookAt(x, z, 400);
+  }, spot);
+  await page.waitForTimeout(1500);
+
+  // Houses, painted by dragging across the middle of the view: the map stays put.
+  await page.getByRole('button', { name: 'Houses', exact: true }).click();
+  const canvas = page.locator('canvas').first();
+  const box = (await canvas.boundingBox())!;
+  const [cx, cy] = [box.x + box.width / 2, box.y + box.height / 2];
+  const before = await page.evaluate(() => window.__ZG__!.rig!.state().target.clone());
+  await page.mouse.move(cx - 80, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx + 80, cy, { steps: 10 });
+  await page.mouse.up();
+  const after = await page.evaluate(() => window.__ZG__!.rig!.state().target.clone());
+  expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(1);
+  const houses = await page.evaluate(
+    () => window.__ZG__!.zoning!.zones.filter((z) => z === 1).length,
+  );
+  expect(houses).toBeGreaterThan(0);
+  await expect(page.locator('.zone-totals')).toContainText('Houses');
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: testInfo.outputPath('zones.png') });
+
+  // As the City plans, with a large brush, and the plan shown.
+  await page.getByRole('button', { name: 'As the City plans' }).click();
+  await page.getByLabel('Brush size').selectOption('200');
+  await page.mouse.click(cx, cy + 40);
+  expect(await zoned()).toBeGreaterThan(houses);
+  await page.getByLabel("The City's planned land use").check();
+  await page.keyboard.press('Escape');
+  await page.evaluate(({ x, z }) => window.__ZG__?.lookAt(x, z, 3000), spot);
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: testInfo.outputPath('zones-plan.png') });
+  const total = await zoned();
+  const strokes = await page.evaluate(() => window.__ZG__!.zoning!.strokes.length);
+  expect(strokes).toBe(2);
+
+  // Kept across a reload.
+  await page.reload();
+  await ready();
+  expect(await zoned()).toBe(total);
+
+  // Shared as a link, which opens with the same zoning.
+  await page.keyboard.press('z');
+  await page.getByRole('button', { name: 'Share zoning' }).click();
+  await expect(page.locator('.zones-status')).toHaveText('Link copied.');
+  const link = await page.evaluate(() => navigator.clipboard.readText());
+  expect(link).toMatch(/#zoning=[A-Za-z0-9_-]+$/);
+  await page.getByRole('button', { name: 'Clear zoning' }).click();
+  expect(await zoned()).toBe(0);
+  await page.goto(link);
+  await ready();
+  await expect(page.locator('.zones-panel')).toBeVisible();
+  await expect(page.locator('.zones-status')).toContainText('Loaded 2 strokes from the link.');
+  expect(await zoned()).toBe(total);
+  expect(page.url()).not.toContain('#zoning=');
+
+  expect(errors).toEqual([]);
+});

@@ -541,7 +541,8 @@ a.news-headline:hover {
   font-size: 11px;
 }
 
-.build-panel {
+.build-panel,
+.zones-panel {
   position: absolute;
   top: calc(max(12px, env(safe-area-inset-top)) + 56px);
   right: var(--gutter);
@@ -552,8 +553,45 @@ a.news-headline:hover {
 }
 
 .build-panel[hidden],
-.build-panel [hidden] {
+.build-panel [hidden],
+.zones-panel[hidden],
+.zones-panel [hidden] {
   display: none;
+}
+
+/* The Zones panel: a grid of zone brushes with their colours. */
+.zone-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 6px 0 8px;
+}
+
+.zone-grid .zone-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.zone-button[aria-pressed='true'] {
+  outline: 2px solid #ffffff;
+  outline-offset: -2px;
+}
+
+.zone-swatch {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.zone-totals .build-item {
+  justify-content: flex-start;
+  gap: 6px;
 }
 
 .build-hint,
@@ -748,7 +786,8 @@ a.news-headline:hover {
 
 @media (max-width: 640px) {
   .news-panel,
-  .build-panel {
+  .build-panel,
+  .zones-panel {
     top: auto;
     bottom: calc(max(12px, env(safe-area-inset-bottom)) + 100px);
     max-height: 45%;

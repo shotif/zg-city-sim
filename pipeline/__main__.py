@@ -6,7 +6,18 @@ import argparse
 import logging
 import time
 
-from . import buildings, demand, landcover, manifest, network, news, projects, terrain, transit
+from . import (
+    buildings,
+    demand,
+    landcover,
+    manifest,
+    network,
+    news,
+    projects,
+    terrain,
+    transit,
+    zoning,
+)
 
 STEPS = {
     "terrain": terrain.build_terrain,
@@ -17,6 +28,8 @@ STEPS = {
     "demand": demand.build_demand,
     "transit": transit.build_transit,
     "news": news.build_news,
+    # Lots for zoning along today's streets, and the City's planned land use.
+    "zoning": zoning.build_zoning,
     # Planned road projects, each built into a network of its own (all of the above first).
     "projects": projects.build_projects,
 }

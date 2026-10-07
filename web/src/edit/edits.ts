@@ -408,13 +408,22 @@ async function pipe(bytes: Uint8Array, stream: CompressionStream | Decompression
   return new Uint8Array(await new Response(out).arrayBuffer());
 }
 
+/** Text as a URL fragment parameter value: deflated, in base64url. */
+export async function encodeTextForUrl(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  return toBase64Url(await pipe(bytes, new CompressionStream('deflate-raw')));
+}
+
+export async function decodeTextFromUrl(value: string): Promise<string> {
+  const bytes = await pipe(fromBase64Url(value), new DecompressionStream('deflate-raw'));
+  return new TextDecoder().decode(bytes);
+}
+
 /** Edits as a URL fragment parameter value: deflated JSON in base64url. */
 export async function encodeEditsForUrl(edits: readonly Edit[]): Promise<string> {
-  const json = new TextEncoder().encode(serializeEdits(edits));
-  return toBase64Url(await pipe(json, new CompressionStream('deflate-raw')));
+  return encodeTextForUrl(serializeEdits(edits));
 }
 
 export async function decodeEditsFromUrl(value: string): Promise<Edit[]> {
-  const json = await pipe(fromBase64Url(value), new DecompressionStream('deflate-raw'));
-  return parseEdits(new TextDecoder().decode(json));
+  return parseEdits(await decodeTextFromUrl(value));
 }

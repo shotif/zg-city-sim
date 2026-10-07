@@ -6,7 +6,8 @@ A realistic traffic and city-building simulator of Zagreb, Croatia, running enti
 - Live traffic simulation: cars and trucks from where people live and work, commuters and through traffic from beyond the map, ZET trams and buses on their timetable.
 - Analysis: a traffic map of measured speeds, news reports of jams at 39 places, the City's live road closures, and a [validation report](docs/VALIDATION.md) against traffic counts.
 - Build: draw new roads and bridges, make junctions roundabouts, set traffic lights phase by phase, close roads and lanes, change speed limits, make bus lanes and ban turns, and traffic re-plans its routes within a minute. Edits are kept in the browser and can be shared as a link or a file. Before and after runs the day again with the edits next to today's roads and compares delay, speeds, travel times between districts and traffic per road.
-- Planned projects: Jarunski most, Šarengradska ulica, Branimirova's extension to Sesvete and the A11's link into Sarajevska cesta, each on a road network of its own, with simulated before and after numbers. Zoning comes next (see the plan).
+- Zones: paint housing, shops, offices and industry onto the free lots along Zagreb's streets, or zone them as the City's plan has it, with the planned land use drawn on the map. Buildings growing there come next (see the plan).
+- Planned projects: Jarunski most, Šarengradska ulica, Branimirova's extension to Sesvete and the A11's link into Sarajevska cesta, each on a road network of its own, with simulated before and after numbers.
 
 See [docs/PLAN.md](docs/PLAN.md) for the vision, architecture and roadmap.
 
@@ -32,6 +33,7 @@ Requirements: Node.js 22+, Python 3.12+, Rust (stable) with the WebAssembly targ
 #    crossing the map's edge from Hrvatske ceste counts),
 #    transit (ZET's weekday tram and bus timetable, stops placed on the network),
 #    news (news reports of traffic trouble, placed on the network),
+#    zoning (lots along streets for zoning, and the City's planned land use),
 #    projects (planned roads, each built into a network of its own with the above on it)
 python -m venv .venv && . .venv/bin/activate
 pip install -r pipeline/requirements.txt
@@ -99,6 +101,7 @@ cd .. && python -m pipeline.projects compare jarunski-most /tmp/jarun.json /tmp/
 | Build: draw a new road | Draw a road, click where it starts, along its way and where it ends, then Finish road | The same with taps | `Enter` finishes, `Backspace` removes the last point, `Esc` cancels |
 | Build: a roundabout or traffic lights at the junction ahead | Click a road into it, then Make a roundabout, or Add (Edit) traffic lights: tick what each phase lets go, set its seconds, Apply lights | The same with taps | |
 | Open a planned project | Build, Planned projects, Open this project | | |
+| Zone land | Zones button, choose a zone, then drag over the map | The same with a finger | `Z`; `Esc` stops painting so the map moves again |
 
 ## Data and attribution
 

@@ -89,6 +89,13 @@ export interface ProjectsLayerInfo {
   attribution?: Attribution;
 }
 
+/** Lots for zoning and the City's planned land use (pipeline/zoning.py). */
+export interface ZoningLayerInfo {
+  index: string;
+  lots: number;
+  attribution?: Attribution;
+}
+
 export interface WorldManifest {
   version: number;
   generated: string;
@@ -106,6 +113,7 @@ export interface WorldManifest {
     transit?: TransitLayer;
     news?: NewsLayerInfo;
     projects?: ProjectsLayerInfo;
+    zoning?: ZoningLayerInfo;
   };
 }
 

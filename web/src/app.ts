@@ -34,12 +34,14 @@ import {
 } from './edit/builder';
 import { type ProjectInfo, edgeMap, loadProjects, projectUrl, pullCounts } from './edit/projects';
 import { RoadIndex } from './edit/roadIndex';
+import { loadLots } from './grow/lots';
+import { type ZoningTool, setUpZoning } from './grow/zoningTool';
 import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
 import { STAT } from './sim/wasm';
 import { BuildPanel } from './ui/buildPanel';
 import { ClosureMarkers } from './ui/closureMarkers';
-import { Hud } from './ui/hud';
+import { Hud, type HudCallbacks } from './ui/hud';
 import { NewsPanel } from './ui/newsPanel';
 import { ProjectsSection } from './ui/projectsSection';
 import { RoadDrawer } from './ui/roadDrawer';
@@ -197,6 +199,8 @@ export interface DebugApi {
   drawer?: RoadDrawer;
   /** The ground point under a screen point (CSS pixels in the canvas). */
   groundAt?(x: number, y: number): { x: number; z: number } | undefined;
+  /** The Zones tool, once the lots are loaded. */
+  zoning?: ZoningTool;
 }
 
 declare global {
@@ -225,6 +229,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let closureLayer: ClosureLayer | undefined;
   let closedEdges: Uint32Array | undefined;
   let buildPanel: BuildPanel | undefined;
+  let zoning: ZoningTool | undefined;
   let baseline: SimClient | undefined;
   let setCompare: (on: boolean) => void = () => {};
   /** The network the player's simulation runs: as loaded, with the roads drawn. */
@@ -239,7 +244,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
   const editsFromLink = /[#&]edits=([^&]+)/.exec(location.hash)?.[1];
   let edits: Edit[] = loadSavedEdits();
   let editWordsNow: Uint32Array | undefined;
-  const hud = new Hud(container, {
+  const hudCallbacks: HudCallbacks = {
     onMode: (mode) => rig?.setMode(mode),
     onRotateIso: (direction) => rig?.rotateIso(direction),
     onFaceNorth: () => rig?.faceNorth(),
@@ -267,10 +272,24 @@ export async function startApp(container: HTMLElement): Promise<void> {
       invalidateView();
     },
     onBuild: (enabled) => {
+      // One panel on the right at a time.
+      if (enabled && zoning?.panel.visible) {
+        hud.setZones(false);
+        zoning.setVisible(false);
+      }
       buildPanel?.setVisible(enabled);
       invalidateView();
     },
-  });
+    onZones: (enabled) => {
+      if (enabled && buildPanel?.visible) {
+        hud.setBuild(false);
+        buildPanel.setVisible(false);
+      }
+      zoning?.setVisible(enabled);
+      invalidateView();
+    },
+  };
+  const hud = new Hud(container, hudCallbacks);
   hud.setTrafficLegend(TRAFFIC_BANDS.map(({ color, label }) => ({ color, label })));
 
   try {
@@ -360,6 +379,28 @@ export async function startApp(container: HTMLElement): Promise<void> {
       attributions(manifest),
       `Renderer: ${backend} · terrain mesh every ${stride * terrain.heightfield.resolution} m · data built ${manifest.generated}`,
     );
+
+    /** The ground point under a screen point (CSS pixels in the canvas). */
+    const raycaster = new THREE.Raycaster();
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const hit = new THREE.Vector3();
+    const groundAt = (px: number, py: number): { x: number; z: number } | undefined => {
+      const canvas = renderer.domElement;
+      const ndc = new THREE.Vector2(
+        (px / canvas.clientWidth) * 2 - 1,
+        -(py / canvas.clientHeight) * 2 + 1,
+      );
+      raycaster.setFromCamera(ndc, activeRig.camera);
+      const view = activeRig.state();
+      let ground = terrain.heightfield.sample(view.target.x, view.target.z);
+      for (let i = 0; i < 3; i++) {
+        plane.constant = -ground;
+        if (!raycaster.ray.intersectPlane(plane, hit)) return undefined;
+        ground = terrain.heightfield.sample(hit.x, hit.z);
+      }
+      return { x: hit.x, z: hit.z };
+    };
+    debug.groundAt = groundAt;
 
     /** The Build tools: road picking, the panel, the edits layer and the edit list. */
     const setUpBuild = (net: RoadNetwork, surface: HeightFn): BuildPanel => {
@@ -541,25 +582,6 @@ export async function startApp(container: HTMLElement): Promise<void> {
       }
 
       // A click (not a drag) on the map picks the road there while the panel is open.
-      const raycaster = new THREE.Raycaster();
-      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-      const hit = new THREE.Vector3();
-      const groundAt = (px: number, py: number): { x: number; z: number } | undefined => {
-        const canvas = renderer.domElement;
-        const ndc = new THREE.Vector2(
-          (px / canvas.clientWidth) * 2 - 1,
-          -(py / canvas.clientHeight) * 2 + 1,
-        );
-        raycaster.setFromCamera(ndc, activeRig.camera);
-        const view = activeRig.state();
-        let ground = terrain.heightfield.sample(view.target.x, view.target.z);
-        for (let i = 0; i < 3; i++) {
-          plane.constant = -ground;
-          if (!raycaster.ray.intersectPlane(plane, hit)) return undefined;
-          ground = terrain.heightfield.sample(hit.x, hit.z);
-        }
-        return { x: hit.x, z: hit.z };
-      };
       const pickAt = (px: number, py: number): number | undefined => {
         const p = groundAt(px, py);
         if (!p) return undefined;
@@ -569,7 +591,6 @@ export async function startApp(container: HTMLElement): Promise<void> {
         return current.index.pick(p.x, p.z, radius);
       };
       debug.pickAt = pickAt;
-      debug.groundAt = groundAt;
       let down: { x: number; y: number; t: number } | undefined;
       renderer.domElement.addEventListener('pointerdown', (event) => {
         down = { x: event.offsetX, y: event.offsetY, t: performance.now() };
@@ -973,6 +994,33 @@ export async function startApp(container: HTMLElement): Promise<void> {
       debug.buildingsReady = true;
     }
 
+    // The Zones tool: lots along streets, painted with zones.
+    const zoningInfo = manifest.layers.zoning;
+    if (zoningInfo) {
+      loadLots(zoningInfo.index)
+        .then((lots) => {
+          zoning = setUpZoning({
+            lots,
+            scene,
+            hud: hud.element,
+            canvas: renderer.domElement,
+            surface: terrain.heightfield.meshSurface(stride),
+            terrain: terrain.mesh.geometry,
+            groundAt,
+            setMapDragging: (on) => {
+              activeRig.controls.enabled = on;
+            },
+            invalidate,
+            open: () => hud.setZones(true, hudCallbacks),
+            onClose: () => hud.setZones(false, hudCallbacks),
+          });
+          debug.zoning = zoning;
+          hud.enableZones();
+          invalidate();
+        })
+        .catch((error: unknown) => console.warn('Zoning could not be loaded', error));
+    }
+
     const fog = new THREE.Fog(SKY, 1, 2);
     const marker = new THREE.Vector3();
     let lastHudSim = 0;
@@ -1039,13 +1087,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
           5,
         ) ?? false;
       const trafficMapChanged = traffic?.update(view.viewHeight) ?? false;
+      const zonesChanged = zoning?.layer.update(view.target, view.viewHeight) ?? false;
       if (
         !moving &&
         !dirty &&
         !roadsChanged &&
         !buildingsChanged &&
         !trafficMoving &&
-        !trafficMapChanged
+        !trafficMapChanged &&
+        !zonesChanged
       ) {
         return;
       }

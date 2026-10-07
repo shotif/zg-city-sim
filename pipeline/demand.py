@@ -136,6 +136,32 @@ MIN_STREET_LENGTH = 20.0
 PASSENGER = 1
 
 
+def ring_points(
+    ring_origin: np.ndarray, ring_offsets: np.ndarray, deltas: np.ndarray, rings: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Points (scene x, z, m) of the rings `rings`, one after another, and each ring's point
+    count. Rings are delta-encoded in centimetres (pipeline/buildings.py encode_rings)."""
+    n = len(rings)
+    starts = ring_offsets[rings].astype(np.int64)
+    ends = ring_offsets[rings + 1].astype(np.int64)
+    lengths = ends - starts
+    point = (
+        np.concatenate([np.arange(a, b) for a, b in zip(starts, ends, strict=True)]) if n else []
+    )
+    point = np.asarray(point, np.int64)
+    steps = deltas.reshape(-1, 2)[point].astype(np.int64)
+    # Running sum within each ring: a global cumulative sum minus the sum before the ring.
+    csum = np.cumsum(steps, axis=0)
+    first = np.concatenate([[0], np.cumsum(lengths)[:-1]]).astype(np.int64)
+    before = np.where(first[:, None] > 0, csum[np.maximum(first - 1, 0)], 0)
+    xy = (
+        csum
+        - np.repeat(before, lengths, axis=0)
+        + np.repeat(ring_origin.reshape(-1, 2)[rings], lengths, axis=0)
+    )
+    return xy[:, 0] / 100.0, xy[:, 1] / 100.0, lengths
+
+
 def outer_rings(
     ring_origin: np.ndarray, ring_offsets: np.ndarray, deltas: np.ndarray, rings: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

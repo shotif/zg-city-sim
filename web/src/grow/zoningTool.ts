@@ -1,0 +1,189 @@
+/**
+ * The Zones tool (M5a), wired to the map: painting lots with a brush while the pointer is
+ * dragged, the layer that draws them, and keeping and sharing the zoning.
+ */
+import type * as THREE from 'three/webgpu';
+
+import { ZonesPanel } from '../ui/zonesPanel';
+import type { HeightFn } from '../world/roadGeometry';
+import { ZoneLayer } from '../world/zoneLayer';
+import type { Lots } from './lots';
+import {
+  type Brush,
+  type Stroke,
+  applyStroke,
+  decodeZoningFromUrl,
+  encodeZoningForUrl,
+  loadSavedZoning,
+  saveZoning,
+  zoneTotals,
+  zonesFrom,
+} from './zones';
+
+export interface ZoningDeps {
+  lots: Lots;
+  scene: THREE.Scene;
+  hud: HTMLElement;
+  canvas: HTMLCanvasElement;
+  surface: HeightFn;
+  terrain: THREE.BufferGeometry;
+  /** The ground point under a screen point (CSS pixels in the canvas). */
+  groundAt(x: number, y: number): { x: number; z: number } | undefined;
+  /** Stop or restart the map's own dragging while a stroke is painted. */
+  setMapDragging(on: boolean): void;
+  invalidate(): void;
+  /** Open or close the tool as its HUD button does. */
+  open(): void;
+  onClose(): void;
+}
+
+export interface ZoningTool {
+  lots: Lots;
+  panel: ZonesPanel;
+  layer: ZoneLayer;
+  setVisible(on: boolean): void;
+  /** Zone codes of every lot. */
+  readonly zones: Uint8Array;
+  readonly strokes: readonly Stroke[];
+  /** Paint a stroke as the pointer would (scene points). */
+  paint(brush: Brush, radius: number, points: [number, number][]): void;
+}
+
+/** A stroke takes a new point once the pointer moved this share of the brush radius. */
+const POINT_SPACING = 0.3;
+
+export function setUpZoning(deps: ZoningDeps): ZoningTool {
+  const { lots } = deps;
+  let strokes: Stroke[] = [];
+  let zones: Uint8Array = new Uint8Array(lots.count);
+  const layer = new ZoneLayer(lots, deps.surface, deps.terrain);
+  deps.scene.add(layer.object);
+
+  const show = () => {
+    panel.setTotals(zoneTotals(lots, zones), strokes.length);
+    deps.invalidate();
+  };
+  /** Keep and draw a new list of strokes. */
+  const use = (list: Stroke[]) => {
+    strokes = list;
+    zones = zonesFrom(lots, strokes);
+    layer.setZones(zones);
+    saveZoning(strokes);
+    show();
+  };
+
+  const panel = new ZonesPanel(deps.hud, lots.planClasses, {
+    onBrush: (brush) => {
+      if (!brush) layer.setBrush(undefined, 0);
+      deps.invalidate();
+    },
+    onRadius: () => deps.invalidate(),
+    onPlan: (on) => {
+      layer.setPlanVisible(on);
+      deps.invalidate();
+    },
+    onUndo: () => use(strokes.slice(0, -1)),
+    onClear: () => use([]),
+    shareLink: async () =>
+      `${location.origin}${location.pathname}${location.search}#zoning=${await encodeZoningForUrl(strokes)}`,
+    onClose: () => deps.onClose(),
+  });
+
+  // Painting: a drag with a brush chosen paints; the map is not dragged meanwhile.
+  let stroke: Stroke | undefined;
+  const canvas = deps.canvas;
+  const at = (event: PointerEvent) => deps.groundAt(event.offsetX, event.offsetY);
+  const extend = (p: { x: number; z: number }) => {
+    if (!stroke) return;
+    const last = stroke.points[stroke.points.length - 1];
+    if (last && Math.hypot(p.x - last[0], p.z - last[1]) < stroke.radius * POINT_SPACING) return;
+    stroke.points.push([Math.round(p.x), Math.round(p.z)]);
+    // Paint as it goes: just the newest stretch.
+    const changed = applyStroke(lots, zones, { ...stroke, points: stroke.points.slice(-2) });
+    if (changed.length) layer.setZones(zones, changed);
+  };
+  canvas.addEventListener(
+    'pointerdown',
+    (event) => {
+      const brush = panel.brush;
+      if (!panel.visible || !brush || event.button !== 0) return;
+      const p = at(event);
+      if (!p) return;
+      // Before the map's controls see it: this drag paints.
+      event.stopImmediatePropagation();
+      deps.setMapDragging(false);
+      canvas.setPointerCapture(event.pointerId);
+      stroke = { brush, radius: panel.radius, points: [] };
+      extend(p);
+      deps.invalidate();
+    },
+    { capture: true },
+  );
+  canvas.addEventListener('pointermove', (event) => {
+    if (!panel.visible || !panel.brush) return;
+    const p = at(event);
+    layer.setBrush(p, panel.radius);
+    if (p && stroke) extend(p);
+    deps.invalidate();
+  });
+  const finish = (event: PointerEvent) => {
+    if (!stroke) return;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    deps.setMapDragging(true);
+    const done = stroke;
+    stroke = undefined;
+    if (done.points.length) {
+      strokes = [...strokes, done];
+      saveZoning(strokes);
+    }
+    show();
+  };
+  canvas.addEventListener('pointerup', finish);
+  canvas.addEventListener('pointercancel', finish);
+
+  // Zoning from a shared link, else this browser's.
+  const fromLink = /[#&]zoning=([^&]+)/.exec(location.hash)?.[1];
+  if (fromLink) {
+    decodeZoningFromUrl(fromLink)
+      .then((list) => {
+        use(list);
+        deps.open();
+        panel.setStatus(
+          `Loaded ${list.length} stroke${list.length === 1 ? '' : 's'} from the link.`,
+        );
+      })
+      .catch(() => panel.setStatus('The link has no zoning that could be read.'))
+      .finally(() => history.replaceState(null, '', location.pathname + location.search));
+  } else use(loadSavedZoning());
+
+  const tool: ZoningTool = {
+    lots,
+    panel,
+    layer,
+    setVisible: (on) => {
+      panel.setVisible(on);
+      layer.setShowAll(on);
+      if (!on) layer.setBrush(undefined, 0);
+      deps.invalidate();
+    },
+    get zones() {
+      return zones;
+    },
+    get strokes() {
+      return strokes;
+    },
+    paint: (brush, radius, points) => {
+      const s: Stroke = {
+        brush,
+        radius,
+        points: points.map(([x, z]) => [Math.round(x), Math.round(z)]),
+      };
+      strokes = [...strokes, s];
+      const changed = applyStroke(lots, zones, s);
+      layer.setZones(zones, changed);
+      saveZoning(strokes);
+      show();
+    },
+  };
+  return tool;
+}

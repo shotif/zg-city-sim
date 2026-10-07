@@ -11,6 +11,7 @@ export interface HudCallbacks {
   onTrafficMap?(enabled: boolean): void;
   onNews?(enabled: boolean): void;
   onClosures?(enabled: boolean): void;
+  onZones?(enabled: boolean): void;
   onBuild?(enabled: boolean): void;
 }
 
@@ -101,11 +102,13 @@ export class Hud {
   private readonly newsButton: HTMLButtonElement;
   private readonly closuresButton: HTMLButtonElement;
   private readonly buildButton: HTMLButtonElement;
+  private readonly zonesButton: HTMLButtonElement;
   private simState?: HudSim;
   private trafficMap = false;
   private news = false;
   private closures = true;
   private build = false;
+  private zones = false;
 
   constructor(container: HTMLElement, callbacks: HudCallbacks) {
     this.root = el('div', 'hud', container);
@@ -166,6 +169,13 @@ export class Hud {
     this.buildButton.hidden = true;
     this.buildButton.setAttribute('aria-pressed', 'false');
     this.buildButton.addEventListener('click', () => this.setBuild(!this.build, callbacks));
+    this.zonesButton = el('button', 'hud-button hud-speed', this.layers);
+    this.zonesButton.type = 'button';
+    this.zonesButton.textContent = 'Zones';
+    this.zonesButton.title = 'Zone land for housing, shops, offices and industry (Z)';
+    this.zonesButton.hidden = true;
+    this.zonesButton.setAttribute('aria-pressed', 'false');
+    this.zonesButton.addEventListener('click', () => this.setZones(!this.zones, callbacks));
 
     const toolbar = el('div', 'hud-panel hud-toolbar', this.root);
     toolbar.setAttribute('role', 'toolbar');
@@ -242,6 +252,8 @@ export class Hud {
         this.toggleClosures(callbacks);
       } else if ((event.key === 'b' || event.key === 'B') && !this.buildButton.hidden) {
         this.setBuild(!this.build, callbacks);
+      } else if ((event.key === 'z' || event.key === 'Z') && !this.zonesButton.hidden) {
+        this.setZones(!this.zones, callbacks);
       } else if ((event.key === '+' || event.key === '-') && this.simState) {
         const i = SIM_SPEEDS.indexOf(this.simState.speed) + (event.key === '+' ? 1 : -1);
         const speed = SIM_SPEEDS[Math.min(SIM_SPEEDS.length - 1, Math.max(0, i))];
@@ -316,6 +328,19 @@ export class Hud {
   enableBuild(): void {
     this.layers.hidden = false;
     this.buildButton.hidden = false;
+  }
+
+  /** Offer the Zones tool. */
+  enableZones(): void {
+    this.layers.hidden = false;
+    this.zonesButton.hidden = false;
+  }
+
+  /** Turn the Zones tool on or off (`callbacks` given: tell the app). */
+  setZones(enabled: boolean, callbacks?: HudCallbacks): void {
+    this.zones = enabled;
+    this.zonesButton.setAttribute('aria-pressed', String(enabled));
+    callbacks?.onZones?.(enabled);
   }
 
   /** Turn the Build tools on or off (`callbacks` given: tell the app). */
