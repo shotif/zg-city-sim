@@ -805,7 +805,10 @@ test('grows buildings on zoned lots as the day goes on', async ({ page }, testIn
   await page.getByRole('checkbox', { name: 'Land value' }).check();
   await expect(page.locator('.zones-value')).toContainText('best-placed land');
   await page.evaluate(({ x, z }) => window.__ZG__?.lookAt(x, z, 2500), spot);
-  await page.waitForTimeout(3000);
+  // Drawn once the lots around are coloured (software rendering is slow).
+  await page.waitForTimeout(1000);
+  await page.waitForFunction(() => !window.__ZG__!.zoning!.layer.filling);
+  await page.waitForTimeout(2000);
   await page.screenshot({ path: testInfo.outputPath('land-value.png') });
   await page.getByRole('checkbox', { name: 'Land value' }).uncheck();
   await page.keyboard.press('z');

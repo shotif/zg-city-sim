@@ -53,6 +53,8 @@ export class ZoneLayer {
   });
   private plan?: THREE.Mesh;
   private readonly brush: THREE.Mesh;
+  /** Chunks around the view still to build after the last update. */
+  private waiting = 0;
 
   constructor(
     private readonly lots: Lots,
@@ -146,6 +148,7 @@ export class ZoneLayer {
         changed = true;
       }
     }
+    this.waiting = 0;
     if (!visible) return changed;
     const radius = Math.max(1500, viewHeight * 1.5);
     const near: string[] = [];
@@ -164,11 +167,23 @@ export class ZoneLayer {
           near.push(key);
       }
     }
+    // Nearest first, so what is in view fills in first.
+    const away = (key: string) => {
+      const [cx, cz] = key.split(',').map(Number);
+      return Math.hypot((cx + 0.5) * CHUNK - target.x, (cz + 0.5) * CHUNK - target.z);
+    };
+    if (near.length > BUDGET) near.sort((a, b) => away(a) - away(b));
     for (const key of near.slice(0, BUDGET)) {
       this.buildChunk(key);
       changed = true;
     }
+    this.waiting = Math.max(0, near.length - BUDGET);
     return changed;
+  }
+
+  /** Whether lots around the view are still being drawn. */
+  get filling(): boolean {
+    return this.waiting > 0;
   }
 
   private buildChunk(key: string): void {
