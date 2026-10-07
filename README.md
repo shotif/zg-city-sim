@@ -8,6 +8,7 @@ A realistic traffic and city-building simulator of Zagreb, Croatia, running enti
 - Build: draw new roads and bridges, make junctions roundabouts, set traffic lights phase by phase, close roads and lanes, change speed limits, make bus lanes and ban turns, and traffic re-plans its routes within a minute. Edits are kept in the browser and can be shared as a link or a file. Before and after runs the day again with the edits next to today's roads and compares delay, speeds, travel times between districts and traffic per road.
 - Zones: paint housing, shops, offices and industry onto the free lots along Zagreb's streets, or zone them as the City's plan has it, with the planned land use drawn on the map. Zagreb-style buildings grow there as the simulated day goes on: houses, blocks, towers, shops, offices and halls. Their residents and jobs join the traffic. Demand for homes, shops and workplaces sets how fast each zone grows, and land value, from homes and jobs within reach on the simulated traffic, green land and traffic noise, where it grows first and how tall; it can be drawn as a map.
 - Day and night: the sun moves with the simulated time on today's date in Zagreb; at night street lamps, lit windows and headlights come on (or keep the light at midday with the ☀ button).
+- Sound: the hum of the traffic around the view, trams' rumble and bells, and rain, generated in the browser (the 🔈 button).
 - Weather: Zagreb's weather as DHMZ observes it, or one to try: cloud, rain, snow and fog change the light and the view, and drivers go slower and keep longer gaps, so junctions let fewer through.
 - Budget: building costs money at Croatian prices (roads by the lane-km, bridges by the m² of deck, roundabouts, traffic lights), and the City's money comes from its yearly streets budget and the income tax, communal fees and contributions of what grows, with a day of the game counting as a year.
 - Planned projects: Jarunski most, Šarengradska ulica, Branimirova's extension to Sesvete and the A11's link into Sarajevska cesta, each on a road network of its own, with simulated before and after numbers.
@@ -107,6 +108,7 @@ cd .. && python -m pipeline.projects compare jarunski-most /tmp/jarun.json /tmp/
 | Zone land | Zones button, choose a zone, then drag over the map | The same with a finger | `Z`; `Esc` stops painting so the map moves again |
 | See the budget | Budget button | The same | `M` |
 | Light as at midday | ☀ button | The same | `L` |
+| Sound on or off | 🔈 button | The same | `S` |
 
 ## Data and attribution
 

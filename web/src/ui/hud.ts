@@ -17,6 +17,8 @@ export interface HudCallbacks {
   onAlwaysDay?(on: boolean): void;
   /** The weather: as observed in Zagreb now ('live'), or a kind the player picks. */
   onWeather?(choice: string): void;
+  /** Sound on or off. */
+  onSound?(on: boolean): void;
   onBuild?(enabled: boolean): void;
 }
 
@@ -112,6 +114,8 @@ export class Hud {
   private readonly budgetButton: HTMLButtonElement;
   private readonly dayButton: HTMLButtonElement;
   private alwaysDay = false;
+  private readonly soundButton: HTMLButtonElement;
+  private sound = false;
   private simState?: HudSim;
   private trafficMap = false;
   private news = false;
@@ -232,6 +236,14 @@ export class Hud {
     this.dayButton.setAttribute('aria-pressed', 'false');
     this.dayButton.addEventListener('click', () => this.setAlwaysDay(!this.alwaysDay, callbacks));
 
+    this.soundButton = el('button', 'hud-button hud-icon', toolbar);
+    this.soundButton.type = 'button';
+    this.soundButton.textContent = '🔈';
+    this.soundButton.title = "The city's sound: traffic, trams and rain (S)";
+    this.soundButton.setAttribute('aria-label', 'Sound');
+    this.soundButton.setAttribute('aria-pressed', 'false');
+    this.soundButton.addEventListener('click', () => this.setSound(!this.sound, callbacks));
+
     this.compass = el('button', 'hud-panel hud-compass', this.root);
     this.compass.type = 'button';
     this.compass.title = 'Face north';
@@ -289,6 +301,8 @@ export class Hud {
         this.setBudget(!this.budget, callbacks);
       } else if (event.key === 'l' || event.key === 'L') {
         this.setAlwaysDay(!this.alwaysDay, callbacks);
+      } else if (event.key === 's' || event.key === 'S') {
+        this.setSound(!this.sound, callbacks);
       } else if ((event.key === '+' || event.key === '-') && this.simState) {
         const i = SIM_SPEEDS.indexOf(this.simState.speed) + (event.key === '+' ? 1 : -1);
         const speed = SIM_SPEEDS[Math.min(SIM_SPEEDS.length - 1, Math.max(0, i))];
@@ -363,6 +377,14 @@ export class Hud {
   enableBuild(): void {
     this.layers.hidden = false;
     this.buildButton.hidden = false;
+  }
+
+  /** Sound on or off (`callbacks` given: tell the app). */
+  setSound(on: boolean, callbacks?: HudCallbacks): void {
+    this.sound = on;
+    this.soundButton.textContent = on ? '🔊' : '🔈';
+    this.soundButton.setAttribute('aria-pressed', String(on));
+    callbacks?.onSound?.(on);
   }
 
   /** The weather's choices: the live weather (its label, or why there is none) and the

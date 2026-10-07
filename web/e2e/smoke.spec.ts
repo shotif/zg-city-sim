@@ -998,5 +998,11 @@ test("shows Zagreb's weather, and drives and looks as the weather picked", async
   await picker.selectOption('live');
   await expect.poll(() => page.evaluate(() => window.__ZG__!.weather!.choice)).toBe('live');
 
+  // The city's sound (M6e): on with a click, generated in the page; off again.
+  await page.getByRole('button', { name: 'Sound' }).click();
+  await expect.poll(() => page.evaluate(() => window.__ZG__!.sound!.state)).toBe('running');
+  await page.getByRole('button', { name: 'Sound' }).click();
+  await expect.poll(() => page.evaluate(() => window.__ZG__!.sound!.state)).toBe('suspended');
+
   expect(errors).toEqual([]);
 });

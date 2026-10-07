@@ -37,6 +37,7 @@ import { RoadIndex } from './edit/roadIndex';
 import { type DemandArrays, type EdgeDemand, mergeDemand } from './grow/demand';
 import { loadLots } from './grow/lots';
 import { BudgetTool } from './grow/budgetTool';
+import { CitySound } from './ui/sound';
 import { editsCost, euros } from './grow/economy';
 import { type ZoningTool, setUpZoning } from './grow/zoningTool';
 import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
@@ -236,6 +237,8 @@ export interface DebugApi {
   /** The light now, and the simulated time it is for (M6a). */
   light?: Lighting & { time: number };
   streetLights?: StreetLightLayer;
+  /** The city's sound (M6e). */
+  sound?: CitySound;
   /** The weather: the player's choice, the kind in force and the live observation (M6b). */
   weather?: { choice: string; kind: WeatherKind; live?: LiveWeather };
 }
@@ -310,7 +313,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
     weatherChoice === 'live' ? (live?.kind ?? 'clear') : weatherChoice;
   /** Tell the simulations, the layers and the HUD (set once the scene exists). */
   let applyWeather = () => {};
+  // The city's sound (M6e), off until the player turns it on.
+  const sound = new CitySound();
+  debug.sound = sound;
   const hudCallbacks: HudCallbacks = {
+    onSound: (on) => {
+      sound.setEnabled(on).catch((error: unknown) => console.warn('No sound', error));
+    },
     onWeather: (choice) => {
       weatherChoice = choice === 'live' || !(choice in WEATHER) ? 'live' : (choice as WeatherKind);
       try {
@@ -1355,6 +1364,17 @@ export async function startApp(container: HTMLElement): Promise<void> {
         activeRig.mode === 'map',
       );
       if (falling) lightChanged = true;
+      if (sound.enabled && vehicles) {
+        const { near } = vehicles;
+        sound.update({
+          vehicles: near.vehicles,
+          speed: near.speed,
+          trams: near.trams,
+          rain: look.falling === 'rain' ? look.amount : 0,
+          snow: look.falling === 'snow' ? look.amount : 0,
+          viewHeight: view.viewHeight,
+        });
+      }
       // Both every frame: one rebuilding must not hold the other up.
       const lotsChanged = zoning?.layer.update(view.target, view.viewHeight) ?? false;
       const grownChanged = zoning?.grown.update(view.viewHeight) ?? false;

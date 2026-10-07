@@ -91,6 +91,8 @@ interface ModelGeometries {
 
 /** Indicators blink this many times a second. */
 const BLINK = 1.5;
+/** Vehicles within this distance (m) of the point looked at can be heard. */
+const EARSHOT = 250;
 
 const keyOf = (type: number, model: number) => type * 16 + model;
 
@@ -111,6 +113,9 @@ export class VehicleLayer {
   private readonly color = new THREE.Color();
   /** Vehicles drawn in the last update. */
   drawn = 0;
+  /** Within earshot of the point looked at (250 m) at the last update: vehicles, trams
+   * among them, and their mean speed (m/s). */
+  near = { vehicles: 0, trams: 0, speed: 0 };
 
   constructor(private readonly height: HeightFn) {
     this.object.name = 'vehicles';
@@ -207,6 +212,7 @@ export class VehicleLayer {
     const headLevel = 0.55 + 0.45 * night;
     const tailLevel = 0.3 + 0.35 * night;
     const blinkOn = Math.floor((performance.now() / 1000) * BLINK * 2) % 2 === 0;
+    const near = { vehicles: 0, trams: 0, speed: 0 };
     for (let slot = 0; slot < slots; slot++) {
       if (!interpolatePose(prev, cur, slot, alpha, pose)) continue;
       const dx = pose[0] - tx;
@@ -214,6 +220,11 @@ export class VehicleLayer {
       if (dx * dx + dz * dz > r2) continue;
       const info = cur[slot * RENDER.stride + RENDER.info];
       const type = info & 0xff;
+      if (dx * dx + dz * dz < EARSHOT * EARSHOT) {
+        near.vehicles++;
+        if (type === 3) near.trams++;
+        near.speed += asFloat(cur[slot * RENDER.stride + RENDER.speed]);
+      }
       const key = keyOf(type, modelOf(type, info >>> 16));
       const set = sets.get(key);
       if (!set) continue;
@@ -256,6 +267,8 @@ export class VehicleLayer {
       (set.left.instanceColor!.array as Float32Array).fill(left, k * 3, k * 3 + 3);
       (set.right.instanceColor!.array as Float32Array).fill(right, k * 3, k * 3 + 3);
     }
+    if (near.vehicles) near.speed /= near.vehicles;
+    this.near = near;
     this.drawn = 0;
     for (const [key, set] of sets) {
       const n = used.get(key) ?? 0;

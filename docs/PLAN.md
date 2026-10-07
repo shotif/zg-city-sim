@@ -265,8 +265,9 @@ Known gaps:
 - **M6d, live ZET vehicles.**
   - ZET's real-time feed (GTFS-RT vehicle positions, about every 10 seconds) sends no CORS headers, so the browser needs a small proxy that adds them. With it, the app shows the trams and buses where they really are, next to the timetabled ones, with their delay.
   - Needs a host for the proxy (the user's decision).
-- **M6e, sound.**
+- **M6e, sound** (done 2026-10-07).
   - Generated in the browser (Web Audio, no recordings): the hum of traffic near the camera rising with the number of vehicles and their speed, trams' bells and wheels, rain. Off until the player turns it on.
+  - As built (`web/src/ui/sound.ts`, the HUD's 🔈 button, key `S`): brown noise through a low-pass filter for the traffic within 250 m of the point looked at, its loudness growing with the square root of their number and its cut-off from 250 Hz (standing) to 1,090 Hz (50 km/h); a rumble around 90 Hz for trams, and now and then a two-stroke bell (1,480 and 2,220 Hz); white noise above 1.2 kHz for rain. Everything fades out between 200 m and 3 km of view height, and snow muffles the traffic by 40 %.
 - **M6f, performance.**
   - Measure first: frame time on the map, isometric and 3D views, and how fast the simulation runs, on a desktop and a phone profile; a `?perf` overlay.
   - Then fix the largest costs found, for example drawing fewer distant layers, building chunks within a frame budget, and the worker's batches.
