@@ -1109,6 +1109,107 @@ fn actuated_signals_skip_phases_nobody_waits_for() {
     assert!(through, "the car from the south never got a green");
 }
 
+/// Crossroads where turning left from the east-west road waits for oncoming traffic at a
+/// point inside the junction (M7b): one lane in from the west, straight on or left; one lane
+/// in from the east, straight on. Returns the network, its roads (eastbound in and out,
+/// westbound in and out, northbound out) and the junction lane where the turn waits.
+fn waiting_left_turn() -> (NetworkData, [u32; 5], u32) {
+    let mut b = Builder::default();
+    let jw = b.junction(0.0, 0.0);
+    let j = b.junction(300.0, 0.0);
+    let je = b.junction(600.0, 0.0);
+    let jn = b.junction(300.0, -300.0);
+    let eb_in = b.road(jw, j, 1, 13.9);
+    let eb_out = b.road(j, je, 1, 13.9);
+    let wb_in = b.road(je, j, 1, 13.9);
+    let wb_out = b.road(j, jw, 1, 13.9);
+    let nb_out = b.road(j, jn, 1, 13.9);
+    let (eb, wb) = (b.lane(eb_in, 0), b.lane(wb_in, 0));
+    b.connect(eb, b.lane(eb_out, 0), j, dir::STRAIGHT, b'O');
+    let left = b.connect(eb, b.lane(nb_out, 0), j, dir::LEFT, b'o');
+    let oncoming = b.connect(wb, b.lane(wb_out, 0), j, dir::STRAIGHT, b'O');
+    // The left turn crosses the junction in two lanes, waiting between them.
+    let wait = b.d.link_via[left as usize];
+    let to = b.d.lane_next[wait as usize];
+    let end = *b.d.lane_shape_offsets.last().unwrap() as usize;
+    let (x, z) = (b.d.lane_shape[end * 3 - 3], b.d.lane_shape[end * 3 - 2]);
+    let e = b.add_edge(j, j, edge_flag::INTERNAL);
+    let second = b.add_lane(e, &[(x, z), (x, z - 2.0)], 7.0, ALL);
+    b.d.edge_lane_count[e as usize] = 1;
+    b.d.lane_next[wait as usize] = second;
+    b.d.lane_next[second as usize] = to;
+    // The turn gives way to oncoming traffic (at the point where it waits).
+    b.set_logic(j, &[(0, 0), (0b100, 0b100), (0, 0b010)]);
+    b.d.wait_lane = vec![wait];
+    b.d.wait_foe_offsets = vec![0, 2];
+    b.d.wait_foes = vec![b.d.link_via[oncoming as usize], wb];
+    (b.data(), [eb_in, eb_out, wb_in, wb_out, nb_out], wait)
+}
+
+#[test]
+fn a_left_turn_waits_inside_the_junction_and_lets_traffic_behind_it_pass() {
+    let (data, [eb_in, eb_out, wb_in, wb_out, nb_out], wait) = waiting_left_turn();
+    let mut engine = Engine::new(Network::build(data).unwrap(), 1);
+    engine.set_time(0.0);
+    // Oncoming traffic every 3 s for a minute and a half.
+    for k in 0..30 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 3.0,
+            from: wb_in,
+            to: wb_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 30.0, assert_no_overlaps);
+    // A car turning left, and one going straight on behind it.
+    let lane = engine.net.edge_lanes(eb_in).start;
+    let left = engine.insert_at(vtype::CAR, vec![eb_in, nb_out], lane, 220.0, 10.0);
+    let straight = engine.insert_at(vtype::CAR, vec![eb_in, eb_out], lane, 190.0, 10.0);
+    let (left_serial, straight_serial) = (
+        engine.vehs[left as usize].serial,
+        engine.vehs[straight as usize].serial,
+    );
+    let mut waited_inside = false;
+    let mut straight_through = None;
+    let mut oncoming_stopped = false;
+    run_until(&mut engine, 40.0, |e| {
+        assert_no_overlaps(e);
+        let l = &e.vehs[left as usize];
+        if l.serial == left_serial && l.lane == wait && l.speed < 0.1 {
+            waited_inside = true;
+        }
+        let s = &e.vehs[straight as usize];
+        if straight_through.is_none() && (s.serial != straight_serial || s.route_idx >= 1) {
+            straight_through = Some(e.time);
+        }
+        let wb = e.net.edge_lanes(wb_in).start;
+        oncoming_stopped |= e
+            .vehicles_on(wb)
+            .iter()
+            .any(|&u| e.vehs[u as usize].wait > 3.0);
+    });
+    assert!(
+        waited_inside,
+        "the left turn waited at the stop line, not inside"
+    );
+    assert!(
+        straight_through.is_some(),
+        "the car going straight on waited behind the left turn"
+    );
+    assert!(
+        !oncoming_stopped,
+        "oncoming traffic stopped for the left turn"
+    );
+    // Once the oncoming traffic has passed, the turn is made.
+    run_until(&mut engine, 60.0, assert_no_overlaps);
+    let l = &engine.vehs[left as usize];
+    assert!(
+        l.serial != left_serial || !l.alive() || l.route_idx >= 1,
+        "the left turn never went"
+    );
+}
+
 #[test]
 fn routes_avoid_tolls_where_a_free_road_is_not_much_slower() {
     // From A to D over 10.2 km: a tolled motorway at 130 km/h or a free road at 80 km/h.

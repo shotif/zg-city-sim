@@ -188,6 +188,9 @@ class SumoNet:
     connections: list[Connection] = field(default_factory=list)
     tls: list[TlsProgram] = field(default_factory=list)
     roundabout_edges: set[str] = field(default_factory=set)
+    #: SUMO's internal junctions: where a turn waits inside its junction (id, incLanes,
+    #: intLanes).
+    waits: list[tuple[str, list[str], list[str]]] = field(default_factory=list)
 
 
 def parse_net(path: Path) -> SumoNet:
@@ -241,7 +244,11 @@ def parse_net(path: Path) -> SumoNet:
                 pass  # read with its junction
             elif tag == "junction":
                 jid = el.get("id")
-                if el.get("type") != "internal" and not jid.startswith(":"):
+                if el.get("type") == "internal":
+                    net.waits.append(
+                        (jid, el.get("incLanes", "").split(), el.get("intLanes", "").split())
+                    )
+                elif not jid.startswith(":"):
                     junction = Junction(
                         id=jid,
                         type=el.get("type"),
@@ -484,6 +491,22 @@ def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
             phase_state_offsets.append(len(phase_states))
         tls_phase_offsets.append(len(phase_duration))
 
+    # Where turns wait inside their junction (SUMO's internal junctions, M7b): the junction
+    # lane that waits, and the lanes it gives way to there: the junction lanes of the
+    # movements it crosses at that point, and the lanes those come from.
+    waits = []
+    for _, inc, ints in net.waits:
+        waiting = [lane_id[lane] for lane in inc if lane.startswith(":") and lane in lane_id]
+        foes = [
+            lane_id[lane]
+            for lane in (*ints, *(lane for lane in inc if not lane.startswith(":")))
+            if lane in lane_id
+        ]
+        if len(waiting) == 1 and foes:
+            waits.append((waiting[0], foes))
+    waits.sort()
+    wait_foe_offsets = np.cumsum([0] + [len(foes) for _, foes in waits]).astype(np.uint32)
+
     lane_shapes = encode_polylines([lane.shape for lane in lanes])
     junction_shapes = encode_polylines([j.shape for j in net.junctions])
 
@@ -531,6 +554,10 @@ def pack_network(net: SumoNet) -> tuple[dict[str, np.ndarray], dict]:
         "linkState": np.asarray(link_state, np.uint8),
         "linkTls": np.asarray(link_tls, np.uint32),
         "linkTlsIndex": np.asarray(link_tls_index, np.uint16),
+        # turns waiting inside junctions
+        "waitLane": np.asarray([lane for lane, _ in waits], np.uint32),
+        "waitFoeOffsets": wait_foe_offsets,
+        "waitFoes": np.asarray([f for _, foes in waits for f in foes], np.uint32),
         # traffic lights
         "tlsPhaseOffsets": np.asarray(tls_phase_offsets, np.uint32),
         "tlsOffset": np.asarray(tls_offset, np.float32),

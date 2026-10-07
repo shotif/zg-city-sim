@@ -32,7 +32,7 @@ Read these before changing anything:
 | `pipeline/data/news.json` | Curated news reports of jams (39 places). |
 | `sim/` | Rust traffic engine, compiled to WebAssembly (C ABI in `ffi.rs`) and run natively. |
 | `sim/src/engine.rs` | Vehicles, IDM/MOBIL, junction right of way, signals (`merge_signal_phases`, `retime_signals`, actuated control), routing calls, closures, statistics. |
-| `sim/src/network.rs` | The network built from the packed arrays: routing successors, toll time. |
+| `sim/src/network.rs` | The network built from the packed arrays: routing successors, toll time, where turns wait inside junctions (`waits_for`). |
 | `sim/src/router.rs` | ALT A* with weighted heuristic; `reach`, the time-limited search behind land value's accessibility (`Engine::reach`). |
 | `sim/src/demand.rs` | Trip generation: `HOURLY` profile, gravity model, gateways. |
 | `sim/src/weather.rs` | The weather's factors on desired speed, headway and acceleration (M6b). |

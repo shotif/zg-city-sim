@@ -1888,6 +1888,28 @@ function finish(
   for (let l = 0; l < d.laneCount; l++) linkOffsets[l + 1] += linkOffsets[l];
   out.laneLinkOffsets = linkOffsets;
 
+  // Turns that wait inside their junction (M7b): as loaded, but not at junctions given new
+  // right of way here, whose movements changed.
+  const waitLane = a.waitLane as Uint32Array | undefined;
+  if (waitLane) {
+    const waitOffsets = a.waitFoeOffsets as Uint32Array;
+    const waitFoes = a.waitFoes as Uint32Array;
+    const laneEdge = a.laneEdge as Uint32Array;
+    const edgeFrom = a.edgeFrom as Uint32Array;
+    const lanes: number[] = [];
+    const offsets = [0];
+    const foes: number[] = [];
+    for (let w = 0; w < waitLane.length; w++) {
+      if (d.logic.has(edgeFrom[laneEdge[waitLane[w]]])) continue;
+      lanes.push(waitLane[w]);
+      for (let k = waitOffsets[w]; k < waitOffsets[w + 1]; k++) foes.push(waitFoes[k]);
+      offsets.push(foes.length);
+    }
+    out.waitLane = Uint32Array.from(lanes);
+    out.waitFoeOffsets = Uint32Array.from(offsets);
+    out.waitFoes = Uint32Array.from(foes);
+  }
+
   // Right of way: junctions with roads added get a new block at the end.
   const logic: number[] = [];
   const linkCount = grow(

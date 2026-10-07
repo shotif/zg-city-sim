@@ -1290,6 +1290,13 @@ impl Engine {
             }
             let next;
             if net.lane_internal[cur as usize] {
+                // A turn that waits inside the junction: at the point where it waits, until
+                // what it crosses there is clear.
+                let w = net.lane_wait[cur as usize];
+                if w != NONE && !self.wait_clear(v, veh, w, cur, dist) {
+                    acc = acc.min(stop_at(speed, vmax, dist, p, self.weather));
+                    break;
+                }
                 next = d_.lane_next[cur as usize];
                 if next == NONE {
                     break;
@@ -1459,6 +1466,99 @@ impl Engine {
         !self.junction_conflict(v, veh, link, minor, arrive, leave, can_stop)
     }
 
+    /// Whether a vehicle `dist` metres before the point inside a junction where its turn
+    /// waits (wait `w`, at the end of junction lane `lane`) may go on past it (M7b): nobody
+    /// inside the junction on the lanes it crosses there, and nobody coming on a crossing
+    /// way who gets there before it is through. As at a stop line, a driver who has waited
+    /// pushes into gaps where the others can still brake comfortably.
+    fn wait_clear(&self, v: u32, veh: &Vehicle, w: u32, lane: u32, dist: f32) -> bool {
+        let net = &self.net;
+        let d = &net.d;
+        let p = veh.params();
+        let v_lane = self.desired_speed(veh, lane);
+        let arrive = travel_time(dist, veh.speed, p.accel, v_lane);
+        // The rest of the way across: the junction lanes after this one, and its length.
+        let mut rest = p.length;
+        let mut next = d.lane_next[lane as usize];
+        let mut guard = 0;
+        while next != NONE && net.lane_internal[next as usize] && guard < 8 {
+            rest += d.lane_length[next as usize];
+            next = d.lane_next[next as usize];
+            guard += 1;
+        }
+        let v_arrive = (veh.speed * veh.speed + 2.0 * p.accel * dist)
+            .sqrt()
+            .min(v_lane.max(veh.speed));
+        let leave = arrive + travel_time(rest, v_arrive, p.accel, v_lane);
+        let margin = if veh.blocked > 10.0 {
+            0.5
+        } else {
+            YIELD_MARGIN
+        };
+        let pushing_in = veh.blocked > PUSH_IN_WAIT;
+        let foes = net.wait_foes(w);
+        for &f in foes {
+            let len = d.lane_length[f as usize];
+            if net.lane_internal[f as usize] {
+                for &u in &self.lane_vehs[f as usize] {
+                    let uv = &self.vehs[u as usize];
+                    if u == v || self.stuck_in_junction(u) {
+                        continue;
+                    }
+                    // Waiting at its own point there: it gives way to us.
+                    if net.lane_wait[f as usize] != NONE && uv.speed < 0.5 && len - uv.pos < 1.5 {
+                        continue;
+                    }
+                    let remaining = (len - uv.pos + uv.params().length).max(0.0);
+                    if remaining / uv.speed.max(0.5) > arrive - 0.2 {
+                        return false;
+                    }
+                }
+                continue;
+            }
+            for &u in self.lane_vehs[f as usize].iter().rev().take(3) {
+                let uv = &self.vehs[u as usize];
+                if !uv.will_pass {
+                    break; // it stops at the line, and so does everyone behind it
+                }
+                let du = len - uv.pos;
+                if du > uv.speed * 10.0 + 30.0 {
+                    break;
+                }
+                let ul = uv.next_link;
+                if ul == NONE || !self.crosses_wait(ul, foes) {
+                    continue;
+                }
+                let up = uv.params();
+                let u_arrive = travel_time(du, uv.speed, up.accel, self.link_speed(uv, ul));
+                let can_stop = uv.speed * uv.speed / (2.0 * up.decel) < du - 1.0;
+                if pushing_in && can_stop {
+                    continue;
+                }
+                if u_arrive <= leave + margin {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Whether `link`'s way across its junction passes one of `lanes`.
+    fn crosses_wait(&self, link: u32, lanes: &[u32]) -> bool {
+        let net = &self.net;
+        let d = &net.d;
+        let mut lane = d.link_via[link as usize];
+        let mut guard = 0;
+        while lane != NONE && net.lane_internal[lane as usize] && guard < 8 {
+            if lanes.contains(&lane) {
+                return true;
+            }
+            lane = d.lane_next[lane as usize];
+            guard += 1;
+        }
+        false
+    }
+
     /// Whether the light (or stop sign) at `link` lets a vehicle through right now.
     fn signal_allows(&self, link: u32, stop_done: u32) -> bool {
         match self.net.link_state_char(link, &self.tls_phase) {
@@ -1553,14 +1653,31 @@ impl Engine {
     }
 
     /// Vehicles inside the junction on `link`, then (if `approaching`) those about to enter.
-    fn link_users(&self, link: u32, out: &mut [LinkUser; 8], approaching: bool) -> usize {
+    /// With `past_wait`, only those past the point inside the junction where the link's turn
+    /// waits (the others give way there).
+    fn link_users(
+        &self,
+        link: u32,
+        out: &mut [LinkUser; 8],
+        approaching: bool,
+        past_wait: bool,
+    ) -> usize {
         let net = &self.net;
         let d = &net.d;
         let mut n = 0;
         let mut lane = d.link_via[link as usize];
         let mut rest = net.link_via_length[link as usize];
         let mut guard = 0;
+        let mut waiting = past_wait && net.link_wait[link as usize] != NONE;
         while lane != NONE && net.lane_internal[lane as usize] && guard < 8 {
+            let before_wait = waiting;
+            waiting &= net.lane_wait[lane as usize] == NONE;
+            if before_wait {
+                rest -= d.lane_length[lane as usize];
+                lane = d.lane_next[lane as usize];
+                guard += 1;
+                continue;
+            }
             for &u in &self.lane_vehs[lane as usize] {
                 if n == out.len() {
                     return n;
@@ -1596,7 +1713,7 @@ impl Engine {
                 n += 1;
             }
         }
-        if approaching {
+        if approaching && !(past_wait && net.link_wait[link as usize] != NONE) {
             let from = d.link_from[link as usize] as usize;
             let lane_len = d.lane_length[from];
             let mut earliest = 0.0f32;
@@ -1677,12 +1794,15 @@ impl Engine {
         let mut users = [LinkUser::default(); 8];
         for f in net.foes(j, r) {
             let fl = net.request_link(j, f);
-            if fl == NONE || fl == link {
+            // A turn that waits inside the junction gives way there, not at the stop line.
+            if fl == NONE || fl == link || net.waits_for(link, fl) {
                 continue;
             }
             // Never drive into a vehicle that is inside the junction on a crossing path
-            // (unless it has been stuck there for long).
-            let n = self.link_users(fl, &mut users, false);
+            // (unless it has been stuck there for long); one still before the point where
+            // it waits for us does.
+            let past = net.waits_for(fl, link);
+            let n = self.link_users(fl, &mut users, false, past);
             if users[..n]
                 .iter()
                 .any(|u| u.veh != v && u.leave > arrive - 0.2 && !self.stuck_in_junction(u.veh))
@@ -1697,7 +1817,7 @@ impl Engine {
                     && self.signal_allows(fl, w.stop_done)
                     && self.exit_has_room(fl, w)
             };
-            if can_stop && self.waiting_at(fl).is_some_and(waited_longer) {
+            if can_stop && !past && self.waiting_at(fl).is_some_and(waited_longer) {
                 return true;
             }
         }
@@ -1711,11 +1831,12 @@ impl Engine {
         let my_to = d.link_to[link as usize];
         for f in net.response(j, r) {
             let fl = net.request_link(j, f);
-            if fl == NONE || fl == link {
+            if fl == NONE || fl == link || net.waits_for(link, fl) {
                 continue;
             }
             let same_target = d.link_to[fl as usize] == my_to;
-            let n = self.link_users(fl, &mut users, true);
+            let past = net.waits_for(fl, link);
+            let n = self.link_users(fl, &mut users, true, past);
             for u in &users[..n] {
                 if u.veh == v {
                     continue;
@@ -2939,7 +3060,7 @@ impl Engine {
                 if fl == NONE || fl == link {
                     continue;
                 }
-                let n = self.link_users(fl, &mut users, true);
+                let n = self.link_users(fl, &mut users, true, false);
                 for u in &users[..n] {
                     let uv = &self.vehs[u.veh as usize];
                     out.push(format!(
@@ -2984,7 +3105,7 @@ impl Engine {
             if fl == NONE || fl == link {
                 continue;
             }
-            let n = self.link_users(fl, &mut users, false);
+            let n = self.link_users(fl, &mut users, false, false);
             for u in &users[..n] {
                 if u.veh != v && !seen.contains(&u.veh) {
                     seen.push(u.veh);

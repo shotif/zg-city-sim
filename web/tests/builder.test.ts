@@ -378,6 +378,31 @@ describe('junctions changed', () => {
     expect(back).toContainEqual({ old: ringLane, from: 0, lane: NONE, shift: 0 });
   });
 
+  it('keeps turns waiting inside junctions it leaves alone, not inside those it changes', () => {
+    const { net, ids } = crossroads();
+    const arrays = net.arrays as unknown as Record<string, Uint32Array>;
+    // A turn waiting inside C, and one inside the junction east of it.
+    const inside = (j: number) => {
+      for (let l = 0; l < net.laneCount; l++) {
+        const e = net.laneEdge[l];
+        if (net.isInternal(e) && net.edgeFrom[e] === j) return l;
+      }
+      return -1;
+    };
+    const atC = inside(ids.c);
+    const east = net.edgeTo[ids.ce];
+    const atEast = inside(east);
+    expect(atC).toBeGreaterThanOrEqual(0);
+    arrays.waitLane = Uint32Array.of(atC, ...(atEast >= 0 ? [atEast] : []));
+    arrays.waitFoeOffsets = Uint32Array.of(0, 1, ...(atEast >= 0 ? [2] : []));
+    arrays.waitFoes = Uint32Array.of(atC, ...(atEast >= 0 ? [atEast] : []));
+    const { built } = rebuilt(net, [{ kind: 'roundabout', junction: C, lanes: 1 }]);
+    const kept = Array.from(built.arrays.waitLane as Uint32Array);
+    expect(kept).not.toContain(atC);
+    if (atEast >= 0) expect(kept).toEqual([atEast]);
+    expect((built.arrays.waitFoeOffsets as Uint32Array).length).toBe(kept.length + 1);
+  });
+
   it('needs three roads for a roundabout', () => {
     const { net } = town();
     const { built, next } = rebuilt(net, [{ kind: 'roundabout', junction: C, lanes: 2 }]);

@@ -86,6 +86,13 @@ pub struct NetworkData {
     /// Per signal program, 1 where the player set it (Build panel): the engine runs it as
     /// given, without merging or re-timing its phases. Empty for a network as loaded.
     pub tls_fixed: Vec<u8>,
+    /// Where turns wait inside their junction (SUMO's internal junctions, M7b): the
+    /// junction lane that waits, sorted, and per wait (offsets) the lanes it gives way to
+    /// there: the junction lanes of the movements it crosses, and the lanes they come from.
+    /// Empty: turns wait at the stop line.
+    pub wait_lane: Vec<u32>,
+    pub wait_foe_offsets: Vec<u32>,
+    pub wait_foes: Vec<u32>,
 }
 
 macro_rules! named_arrays {
@@ -154,6 +161,9 @@ named_arrays! {
     "phaseStateOffsets" => phase_state_offsets: u32,
     "phaseStates" => phase_states: u8,
     "tlsFixed" => tls_fixed: u8,
+    "waitLane" => wait_lane: u32,
+    "waitFoeOffsets" => wait_foe_offsets: u32,
+    "waitFoes" => wait_foes: u32,
 }
 
 #[derive(Debug)]
@@ -202,9 +212,45 @@ pub struct Network {
     pub edge_mid: Vec<(f32, f32)>,
     pub succ_offset: Vec<u32>,
     pub succ: Vec<Successor>,
+    /// Per lane, the wait (index into `d.wait_lane`) at its end, or NONE.
+    pub lane_wait: Vec<u32>,
+    /// Per link, the wait on its way across the junction, or NONE.
+    pub link_wait: Vec<u32>,
 }
 
 impl Network {
+    /// The lanes wait `w` gives way to (see `NetworkData::wait_lane`).
+    pub fn wait_foes(&self, w: u32) -> &[u32] {
+        let d = &self.d;
+        &d.wait_foes
+            [d.wait_foe_offsets[w as usize] as usize..d.wait_foe_offsets[w as usize + 1] as usize]
+    }
+
+    /// Whether a vehicle on `link` gives way to `foe` at the point inside the junction where
+    /// it waits, not at the stop line: `foe` crosses there, coming from or through one of
+    /// the lanes that wait gives way to.
+    pub fn waits_for(&self, link: u32, foe: u32) -> bool {
+        let w = self.link_wait[link as usize];
+        if w == NONE {
+            return false;
+        }
+        let foes = self.wait_foes(w);
+        let d = &self.d;
+        if foes.contains(&d.link_from[foe as usize]) {
+            return true;
+        }
+        let mut lane = d.link_via[foe as usize];
+        let mut guard = 0;
+        while lane != NONE && self.lane_internal[lane as usize] && guard < 8 {
+            if foes.contains(&lane) {
+                return true;
+            }
+            lane = d.lane_next[lane as usize];
+            guard += 1;
+        }
+        false
+    }
+
     /// Whether the player set signal program `t` (see `NetworkData::tls_fixed`).
     pub fn tls_fixed(&self, t: usize) -> bool {
         self.d.tls_fixed.get(t).is_some_and(|&f| f != 0)
@@ -314,6 +360,39 @@ impl Network {
             }
         }
 
+        // Where turns wait inside junctions, if the arrays are there and fit.
+        let n_waits = d.wait_lane.len();
+        let mut lane_wait = vec![NONE; n_lanes];
+        let mut link_wait = vec![NONE; n_links];
+        let waits_fit = d.wait_foe_offsets.len() == n_waits + 1
+            && d.wait_foe_offsets.windows(2).all(|w| w[0] <= w[1])
+            && d.wait_foe_offsets
+                .last()
+                .is_some_and(|&o| o as usize == d.wait_foes.len())
+            && d.wait_lane
+                .iter()
+                .chain(&d.wait_foes)
+                .all(|&l| (l as usize) < n_lanes);
+        if n_waits > 0 && waits_fit {
+            for (w, &lane) in d.wait_lane.iter().enumerate() {
+                if lane_internal[lane as usize] {
+                    lane_wait[lane as usize] = w as u32;
+                }
+            }
+            for l in 0..n_links {
+                let mut lane = d.link_via[l];
+                let mut guard = 0;
+                while lane != NONE && lane_internal[lane as usize] && guard < 8 {
+                    if lane_wait[lane as usize] != NONE {
+                        link_wait[l] = lane_wait[lane as usize];
+                        break;
+                    }
+                    lane = d.lane_next[lane as usize];
+                    guard += 1;
+                }
+            }
+        }
+
         let lane_allow_loaded = d.lane_allow.clone();
         let mut net = Network {
             d,
@@ -333,6 +412,8 @@ impl Network {
             edge_mid,
             succ_offset: vec![0; n_edges + 1],
             succ: Vec::new(),
+            lane_wait,
+            link_wait,
         };
         net.refresh_speeds();
         net.refresh_links();
