@@ -291,6 +291,9 @@ pub struct Stats {
     /// Routes computed and edges the searches settled (routing cost).
     pub routes: u64,
     pub route_settled: u64,
+    /// Vehicles that found themselves in a lane with no way on along their route and went
+    /// another way (M7e).
+    pub lane_reroutes: u64,
     /// Why removed vehicles were stuck (`Holdup` names).
     pub teleport_reasons: std::collections::BTreeMap<String, u64>,
     /// Details of the first few removals per reason (with `Engine::debug`).
@@ -2402,7 +2405,10 @@ impl Engine {
             match self.lane_change_decision(v) {
                 Some(LaneChange::To(target)) => self.change_lane(v, target),
                 Some(LaneChange::AskToYield(f)) => self.vehs[f as usize].coop = v,
-                Some(LaneChange::Reroute) => self.reroute_from_lane(v),
+                Some(LaneChange::Reroute) => {
+                    self.stats.lane_reroutes += 1;
+                    self.reroute_from_lane(v)
+                }
                 None => {}
             }
         }

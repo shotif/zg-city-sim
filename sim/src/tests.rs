@@ -1211,6 +1211,64 @@ fn a_left_turn_waits_inside_the_junction_and_lets_traffic_behind_it_pass() {
 }
 
 #[test]
+fn a_lane_that_ends_merges_into_a_queue_beside_it() {
+    // Two lanes narrow to one; a light further on keeps the queue in the lane that goes
+    // on stopping and starting. A car coming up the lane that ends gets in when the queue
+    // moves: the car beside it holds back for it.
+    let mut b = Builder::default();
+    let j0 = b.junction(0.0, 0.0);
+    let j1 = b.junction(200.0, 0.0);
+    let j2 = b.junction(300.0, 0.0);
+    let j3 = b.junction(600.0, 0.0);
+    let wide = b.road(j0, j1, 2, 13.9);
+    let narrow = b.road(j1, j2, 1, 13.9);
+    let beyond = b.road(j2, j3, 1, 13.9);
+    b.connect(b.lane(wide, 0), b.lane(narrow, 0), j1, dir::STRAIGHT, b'M');
+    let light = b.connect(
+        b.lane(narrow, 0),
+        b.lane(beyond, 0),
+        j2,
+        dir::STRAIGHT,
+        b'O',
+    );
+    b.signal(&[light], &[(20.0, "G"), (40.0, "r")]);
+    let mut engine = Engine::new(b.build(), 1);
+    engine.set_time(0.0);
+    // Steady traffic in the lane that goes on: it queues back from the light.
+    for k in 0..200 {
+        engine.add_trip(Trip {
+            depart: k as f64,
+            from: wide,
+            to: beyond,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 90.0, |_| {});
+    let lane0 = engine.net.edge_lanes(wide).start;
+    assert!(
+        engine.vehicles_on(lane0).len() > 10,
+        "the queue reaches back"
+    );
+    // A car comes up the lane that ends.
+    let lane1 = lane0 + 1;
+    let merging = engine.insert_at(vtype::CAR, vec![wide, narrow, beyond], lane1, 20.0, 10.0);
+    let serial = engine.vehs[merging as usize].serial;
+    let mut merged = None;
+    run_until(&mut engine, 180.0, |e| {
+        assert_no_overlaps(e);
+        let m = &e.vehs[merging as usize];
+        if merged.is_none() && (m.serial != serial || m.lane != lane1) {
+            merged = Some(e.time);
+        }
+    });
+    assert!(
+        merged.is_some_and(|t| t < 150.0),
+        "the car in the lane that ends got in at {merged:?}"
+    );
+}
+
+#[test]
 fn routes_avoid_tolls_where_a_free_road_is_not_much_slower() {
     // From A to D over 10.2 km: a tolled motorway at 130 km/h or a free road at 80 km/h.
     let mut b = Builder::default();

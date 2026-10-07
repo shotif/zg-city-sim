@@ -427,6 +427,10 @@ fn main() {
         found_settled as f64 / (searches - failed).max(1) as f64,
         failed_settled as f64 / failed.max(1) as f64
     );
+    println!(
+        "lane changes missed: {} vehicles went another way from a lane with no way on",
+        s.lane_reroutes
+    );
     println!("removed vehicles were: {:?}", s.teleport_reasons);
     let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
     places.sort_unstable_by(|a, b| b.cmp(a));
