@@ -32,7 +32,14 @@ from scipy.spatial import cKDTree
 
 from .config import CACHE_DIR, OUTPUT_DIR, PIPELINE_DIR
 from .demand import build_demand
-from .network import NETCONVERT_OPTIONS, export_network, filter_roads, run_netconvert, wanted_way
+from .network import (
+    NETCONVERT_OPTIONS,
+    ROADS_VERSION,
+    export_network,
+    filter_roads,
+    run_netconvert,
+    wanted_way,
+)
 from .news import build_news
 from .osm import ATTRIBUTION as OSM_ATTRIBUTION
 from .osm import fetch_osm
@@ -476,7 +483,9 @@ def project_network(project: Project) -> tuple[Path, Patch]:
     pbf = fetch_osm()
     patch = Planner(project, pbf).plan()
     key = hashlib.sha1(
-        (pbf.name + json.dumps(NETCONVERT_OPTIONS) + patch.digest()).encode()
+        (
+            pbf.name + json.dumps(NETCONVERT_OPTIONS) + f"roads {ROADS_VERSION}" + patch.digest()
+        ).encode()
     ).hexdigest()[:10]
     folder = CACHE_DIR / "network"
     net_file = folder / f"{project.id}_{key}.net.xml.gz"

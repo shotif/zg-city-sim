@@ -103,18 +103,75 @@ def wanted_way(tags: osmium.osm.TagList) -> bool:
     return tags.get("railway") in TRACKS
 
 
+#: Version of the roads written for netconvert (`filter_roads`): bump it when they change, so
+#: cached networks are built again.
+ROADS_VERSION = 2
+
+#: Road classes whose missing lane counts are taken from their neighbours (`infer_lanes`).
+LANE_CLASSES = {"motorway", "trunk", "primary", "secondary", "tertiary"}
+
+
+def lane_count(tags: dict[str, str]) -> int | None:
+    try:
+        return int(tags["lanes"]) if "lanes" in tags else None
+    except ValueError:
+        return None
+
+
+def infer_lanes(ways: dict[int, tuple[list[int], dict[str, str]]]) -> dict[int, int]:
+    """Lane counts for main roads OpenStreetMap gives none: a way without `lanes` takes the
+    fewest lanes of the ways joined to its ends with the same name (or number), class and
+    one-way status, given or found in an earlier round, so counts spread along chains of
+    untagged ways. Netconvert would give it one lane each
+    way, so a short untagged way on a multi-lane avenue (Slavonska avenija, Zagrebačka
+    cesta) became a one-lane bottleneck. Only counts above that default are returned."""
+
+    def key(tags: dict[str, str]) -> tuple:
+        return (tags.get("name") or tags.get("ref"), tags.get("highway"), tags.get("oneway"))
+
+    by_end: dict[int, list[int]] = {}
+    for wid, (nodes, _) in ways.items():
+        for end in (nodes[0], nodes[-1]):
+            by_end.setdefault(end, []).append(wid)
+    known = {wid: n for wid, (_, tags) in ways.items() if (n := lane_count(tags))}
+    inferred: dict[int, int] = {}
+    for _ in range(4):
+        found = {}
+        for wid, (nodes, tags) in ways.items():
+            if wid in known or "lanes:forward" in tags or not key(tags)[0]:
+                continue
+            around = [
+                known[o]
+                for end in (nodes[0], nodes[-1])
+                for o in by_end[end]
+                if o != wid and o in known and key(ways[o][1]) == key(tags)
+            ]
+            if around:
+                found[wid] = min(around)
+        if not found:
+            break
+        known.update(found)
+        inferred.update(found)
+    one_way = {wid for wid, (_, tags) in ways.items() if tags.get("oneway") in ("yes", "1")}
+    return {w: n for w, n in inferred.items() if n >= (2 if w in one_way else 3)}
+
+
 def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
     """Write drivable roads, tracks and their turn restrictions as OSM XML for netconvert,
     with a project's patch (pipeline/projects.py) applied if given."""
     patch_ways = patch.ways if patch else {}
     way_ids: set[int] = set()
     node_ids: set[int] = set()
+    main: dict[int, tuple[list[int], dict[str, str]]] = {}
     for way in osmium.FileProcessor(str(src), osmium.osm.WAY):
         if way.id in patch_ways:
             way_ids.add(way.id)
         elif wanted_way(way.tags):
             way_ids.add(way.id)
             node_ids.update(n.ref for n in way.nodes)
+            if way.tags.get("highway") in LANE_CLASSES and len(way.nodes) > 1:
+                main[way.id] = ([n.ref for n in way.nodes], dict(way.tags))
+    lanes = infer_lanes(main)
     for nodes, _ in patch_ways.values():
         node_ids.update(nodes)
     new_ways = {w: v for w, v in patch_ways.items() if w not in way_ids}
@@ -148,6 +205,8 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
             if obj.id in patch_ways:
                 nodes, tags = patch_ways[obj.id]
                 writer.add_way(obj.replace(nodes=nodes, tags=tags))
+            elif obj.id in lanes:
+                writer.add_way(obj.replace(tags={**dict(obj.tags), "lanes": str(lanes[obj.id])}))
             elif obj.id in way_ids:
                 writer.add_way(obj)
             continue
@@ -169,6 +228,7 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
         "ways": len(way_ids) + len(new_ways),
         "nodes": len(node_ids),
         "restrictions": restrictions,
+        "lanesInferred": len(lanes),
     }
 
 
@@ -188,11 +248,13 @@ def run_netconvert(osm_xml: Path, net_file: Path) -> None:
 def build_sumo_network() -> Path:
     """Cached SUMO network for the current OSM extract and netconvert options."""
     pbf = fetch_osm()
-    key = hashlib.sha1((pbf.name + json.dumps(NETCONVERT_OPTIONS)).encode()).hexdigest()[:10]
+    key = hashlib.sha1(
+        (pbf.name + json.dumps(NETCONVERT_OPTIONS) + f"roads {ROADS_VERSION}").encode()
+    ).hexdigest()[:10]
     net_file = CACHE_DIR / "network" / f"zagreb_{key}.net.xml.gz"
     if net_file.exists() and net_file.stat().st_mtime >= pbf.stat().st_mtime:
         return net_file
-    roads = CACHE_DIR / "network" / f"roads_{pbf.name.split('.')[0]}.osm"
+    roads = CACHE_DIR / "network" / f"roads_{pbf.name.split('.')[0]}_{ROADS_VERSION}.osm"
     if not roads.exists() or roads.stat().st_mtime < pbf.stat().st_mtime:
         log.info("filtering roads: %s", filter_roads(pbf, roads))
     log.info("running netconvert")
