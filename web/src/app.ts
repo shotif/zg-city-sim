@@ -36,6 +36,8 @@ import { type ProjectInfo, edgeMap, loadProjects, projectUrl, pullCounts } from 
 import { RoadIndex } from './edit/roadIndex';
 import { type DemandArrays, type EdgeDemand, mergeDemand } from './grow/demand';
 import { loadLots } from './grow/lots';
+import { BudgetTool } from './grow/budgetTool';
+import { editsCost, euros } from './grow/economy';
 import { type ZoningTool, setUpZoning } from './grow/zoningTool';
 import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
@@ -202,6 +204,8 @@ export interface DebugApi {
   groundAt?(x: number, y: number): { x: number; z: number } | undefined;
   /** The Zones tool, once the lots are loaded. */
   zoning?: ZoningTool;
+  /** The City's money. */
+  budget?: BudgetTool;
 }
 
 declare global {
@@ -288,6 +292,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
         hud.setZones(false);
         zoning.setVisible(false);
       }
+      if (enabled && budgetTool.panel.visible) {
+        hud.setBudget(false);
+        budgetTool.setVisible(false);
+      }
       buildPanel?.setVisible(enabled);
       invalidateView();
     },
@@ -296,11 +304,38 @@ export async function startApp(container: HTMLElement): Promise<void> {
         hud.setBuild(false);
         buildPanel.setVisible(false);
       }
+      if (enabled && budgetTool.panel.visible) {
+        hud.setBudget(false);
+        budgetTool.setVisible(false);
+      }
       zoning?.setVisible(enabled);
       invalidateView();
     },
+    onBudget: (enabled) => {
+      if (enabled && buildPanel?.visible) {
+        hud.setBuild(false);
+        buildPanel.setVisible(false);
+      }
+      if (enabled && zoning?.panel.visible) {
+        hud.setZones(false);
+        zoning.setVisible(false);
+      }
+      budgetTool.setVisible(enabled);
+    },
   };
   const hud = new Hud(container, hudCallbacks);
+  // The City's money: building costs it, what grows pays into it (M5e).
+  const budgetTool = new BudgetTool({
+    hud: hud.element,
+    onClose: () => hud.setBudget(false, hudCallbacks),
+    growth: () =>
+      zoning && {
+        growth: zoning.growth,
+        value: zoning.landValue.access.measured ? zoning.landValue.value : undefined,
+      },
+  });
+  debug.budget = budgetTool;
+  hud.enableBudget();
   hud.setTrafficLegend(TRAFFIC_BANDS.map(({ color, label }) => ({ color, label })));
 
   try {
@@ -416,6 +451,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
     /** The Build tools: road picking, the panel, the edits layer and the edit list. */
     const setUpBuild = (net: RoadNetwork, surface: HeightFn): BuildPanel => {
       const loaded = { net, index: new RoadIndex(net) };
+      /** Whether a junction had traffic lights before any edit (new lights cost more). */
+      const hasLights = (x: number, z: number) => loaded.index.findSignal({ x, z }) !== undefined;
+      let missing = 0;
       /** The network with the roads drawn, and where its lanes lie on the one loaded. */
       let current = {
         net,
@@ -474,6 +512,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
         const result = buildRoads(network);
         const problem = result.problems.find((p) => p.road === network.indexOf(edit));
         if (problem) return problem.reason;
+        const unpaid = budgetTool.afford(editsCost(list, hasLights).build);
+        if (unpaid) return unpaid;
         apply(list);
         return undefined;
       };
@@ -532,9 +572,11 @@ export async function startApp(container: HTMLElement): Promise<void> {
         edits = list;
         const matched = resolveEdits(current.index, list);
         resolved = matched.resolved;
+        missing = matched.missing.length;
         debug.edits = resolved;
-        panel.setEdits(list, resolved, matched.missing.length);
+        panel.setEdits(list, resolved, missing);
         saveEdits(list);
+        budgetTool.setEdits(editsCost(list, hasLights), list.length);
         editWordsNow = editWords(resolved);
         sim?.setEdits(editWordsNow);
         if (list.length === 0) panel.setStatus('');
@@ -542,7 +584,14 @@ export async function startApp(container: HTMLElement): Promise<void> {
         redraw();
       };
       const panel = new BuildPanel(hud.element, loaded.index, {
-        onEdits: apply,
+        // Building needs money: edits that cost more than the City has are refused.
+        onEdits: (list) => {
+          const unpaid = budgetTool.afford(editsCost(list, hasLights).build);
+          if (!unpaid) return apply(list);
+          panel.setEdits(edits, resolved, missing);
+          panel.setStatus(unpaid);
+        },
+        costOf: (edit) => euros(editsCost([edit], hasLights).build),
         onNetworkEdit: tryNetworkEdit,
         onSelect: () => redraw(),
         onClose: () => {
@@ -959,7 +1008,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
             };
             running.onFrame = () => {
               simChanged = true;
-              if (running.cur) zoning?.tick(running.cur.time);
+              if (running.cur) {
+                zoning?.tick(running.cur.time);
+                budgetTool.tick(running.cur.time);
+              }
             };
             running.onEdgeSpeeds = (latest) => {
               // Speeds measured on the network before roads were drawn or taken away.

@@ -542,7 +542,8 @@ a.news-headline:hover {
 }
 
 .build-panel,
-.zones-panel {
+.zones-panel,
+.budget-panel {
   position: absolute;
   top: calc(max(12px, env(safe-area-inset-top)) + 56px);
   right: var(--gutter);
@@ -555,8 +556,61 @@ a.news-headline:hover {
 .build-panel[hidden],
 .build-panel [hidden],
 .zones-panel[hidden],
-.zones-panel [hidden] {
+.zones-panel [hidden],
+.budget-panel[hidden] {
   display: none;
+}
+
+/* The Budget panel: the balance, a year's flows and the balance over time. */
+.budget-balance {
+  margin: 4px 0 8px;
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-balance.budget-negative,
+.budget-rows .budget-out {
+  color: #ff9c8a;
+}
+
+.budget-rows {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 12px;
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+
+.budget-rows dt {
+  color: var(--text-dim);
+}
+
+.budget-rows dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-rows dt:last-of-type,
+.budget-rows dd:last-of-type {
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  padding-top: 3px;
+  color: inherit;
+  font-weight: 600;
+}
+
+.budget-chart {
+  display: block;
+  width: 100%;
+  height: 120px;
+  margin: 4px 0 8px;
+}
+
+.budget-note {
+  margin: 4px 0 8px;
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
 /* The Zones panel: a grid of zone brushes with their colours. */
@@ -855,7 +909,8 @@ a.news-headline:hover {
 @media (max-width: 640px) {
   .news-panel,
   .build-panel,
-  .zones-panel {
+  .zones-panel,
+  .budget-panel {
     top: auto;
     bottom: calc(max(12px, env(safe-area-inset-bottom)) + 100px);
     max-height: 45%;

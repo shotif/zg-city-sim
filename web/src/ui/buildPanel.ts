@@ -71,6 +71,8 @@ export interface BuildPanelCallbacks {
   onCompare(on: boolean): void;
   /** Show or hide the difference map. */
   onDiffMap(on: boolean): void;
+  /** What an edit cost to build, as shown in the list. */
+  costOf?(edit: Edit): string;
 }
 
 export const fmt = (n: number, digits: number) =>
@@ -430,7 +432,8 @@ export class BuildPanel {
       ...this.edits.map((edit) => {
         const item = el('li', 'build-item');
         const text = el('span', '', item);
-        text.textContent = describeEdit(edit);
+        const cost = this.callbacks.costOf?.(edit);
+        text.textContent = describeEdit(edit) + (cost ? ` · ${cost}` : '');
         const remove = el('button', 'hud-button hud-icon', item);
         remove.type = 'button';
         remove.textContent = '✕';

@@ -19,6 +19,7 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | Croatian online news | Congestion hotspots | headlines and links only | ✅ 107 reports at 39 places (`pipeline/data/news.json`) |
 | City of Zagreb planned land use 2023 | Zoning: lots along streets, the plan's zones | Otvorena dozvola | ✅ in use (`pipeline/zoning.py`): lots kept off land the plan keeps open, each lot's planned use, the plan drawn in the Zones tool |
 | DHMZ weather XML | Live weather | Otvorena dozvola, DHMZ citation mandatory | M6 |
+| City of Zagreb budget and fee decisions; Croatian project costs | The game's money: income, building costs, upkeep | public documents and news reports; figures only | ✅ in use (`web/src/grow/economy.ts`, section 9) |
 
 ## Licences and attribution
 
@@ -266,6 +267,27 @@ The city street network has no stations; the toll-free Zagreb bypass (A3 Jankomi
 | HAK events and roadworks, HC traffic counters | National access point <https://www.promet-info.hr/hr/datasets> (DATEX II, GeoJSON) | ≤ 1 min / ≤ 1 h | **Registration required** (free licence for most feeds) |
 
 None of the open feeds send CORS headers. The static site needs a small scheduled job (for example a GitHub Action) or a serverless proxy (for example a Cloudflare Worker) that republishes them as static JSON.
+
+## 9. Budget and costs (M5e)
+
+Figures the game's money is built from (`web/src/grow/economy.ts`), checked on 2026-10-07. Sums are in euros without VAT; kuna are converted at the fixed rate of 7.5345.
+
+| Figure | Value | Source |
+|---|---|---|
+| The City's income, 2025 | €2.74 billion, of which income tax €1.38 billion (all of it the City's) and communal contributions and fees €143 million | [Kratki vodič kroz proračun Grada Zagreba za 2025.](https://zagreb.hr/UserDocsImages/arhiva/financije/proracun%202025/Kratki%20vodi%C4%8D.pdf) |
+| Capital spending on city streets (*nerazvrstane ceste*), 2025 | €63.9 million | the same guide |
+| Extraordinary maintenance of city streets, 2024 | €20,999,300 (cut from €27,363,000), in a programme of €52.0 million with street lighting and pedestrian areas | [Program održavanja … i izvanrednog održavanja nerazvrstanih cesta … u 2024.](https://informator.hr/zakoni/648057-program-odrzavanja-javnih-prometnih-povrsina-gradevina-i-uredaja-javne-namjene-javne-rasvjete-te-izvanrednog-odrzavanja-nerazvrstanih-cesta-na-podrucju-grada-zagreba-u-2024) |
+| Length of city streets | 2,761 km, 4,986 lane-km: streets inside the City on the simulated network, service roads and motorways left out (measured, not published) | `web/public/data/network` and the City's boundary |
+| Communal fee point value (housing, zone I) | €1.39 per m² of usable floor a year, since 2024 | [Odluka o vrijednosti boda komunalne naknade](https://www.zagreb.hr/UserDocsImages/guprostorno-normativa/02%20Prijedlog%20odluke-%20vrijednost%20boda.pdf) |
+| Communal fee purpose coefficients | offices, finance, IT 10.00; non-food retail 9.00; food retail 8.50 | [draft amendment to the Odluka o komunalnoj naknadi, 2023](https://www.zagreb.hr/UserDocsImages/guprostorno-normativa/PRIJEDLOG%20ODLUKE%2016.01.2023..docx) |
+| Communal contribution, zones I-VI | €18.35, 18.00, 16.00, 12.00, 2.00, 1.50 per m³ | Odluka o komunalnom doprinosu, consolidated text from 24 July 2025 ([informator.hr](https://informator.hr/doks/981002)) |
+| Branimirova's extension, first phase | €4.4 million for just over 1 km of four lanes with pavements, cycle paths and four junctions with lights; all three phases about €20 million | [tportal, 11 June 2024](https://www.tportal.hr/vijesti/clanak/pustena-u-promet-produzena-branimirovu-evo-kako-izgleda-foto-20240611) |
+| A11 motorway, Jakuševec-Velika Gorica | 780 million kuna for 9.5 km of four lanes | [tportal, 1 February 2021](https://www.tportal.hr/biznis/clanak/plenkovic-najavio-natjecaj-za-zavrsetak-autoceste-zagreb-sisak-20210201) |
+| Jarunski most | €140 million estimated, without VAT, for a bridge 625 m long and 40 m wide: two lanes each way, tram tracks, cycle paths and pavements | [tportal, 5 May 2026](https://www.tportal.hr/vijesti/clanak/tomasevic-predstavlja-veliki-projekt-na-zapadu-zagreba-otkriva-detalje-izgradnje-jarunskog-mosta-20260505) |
+| A roundabout | Pavlovac, Rijeka: €947,490.59 contracted in January 2025 | [Novi list, 31 January 2025](https://www.novilist.hr/?p=1386545) |
+| New traffic signals | €198,900 in Zagreb's 2023 programme of works | the City's 2023 programme of works for transport and communal services |
+
+Not found, and estimated instead: the communal fee's zone coefficients and the coefficient for production premises, the cost of a roundabout with two lanes, of new signal timings, signs and markings, and the upkeep of bridges and lights. The new signals' figure is the whole line in the 2023 programme, which may cover more than one junction.
 
 ## Gaps and data requests
 

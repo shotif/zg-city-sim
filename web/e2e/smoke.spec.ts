@@ -427,6 +427,11 @@ test('draws a new road that traffic takes, and takes it away again', async ({ pa
   const road = await page.evaluate(() => window.__ZG__!.drawn!.roads[0]);
   expect(road).toHaveLength(2);
   expect(await page.evaluate(() => window.__ZG__!.network!.edgeCount)).toBeGreaterThan(before);
+  // It cost money (M5e): two lanes of 300-450 m at €1.1 million a lane-km.
+  const spent = await page.evaluate(() => window.__ZG__!.budget!.budget.spent);
+  expect(spent).toBeGreaterThan(600_000);
+  expect(spent).toBeLessThan(2_000_000);
+  await expect(page.locator('.build-list li')).toContainText('€');
 
   // Traffic drives onto it.
   await expect
@@ -453,6 +458,29 @@ test('draws a new road that traffic takes, and takes it away again', async ({ pa
   expect(await page.evaluate(() => window.__ZG__!.network!.edgeCount)).toBe(before);
   const running = await page.evaluate(() => window.__ZG__!.sim!.stats![1]);
   expect(running).toBeGreaterThan(100);
+  // Taken back, it is refunded; and a road the City cannot pay for is not built.
+  expect(await page.evaluate(() => window.__ZG__!.budget!.budget.spent)).toBe(0);
+  await page.evaluate(() => {
+    window.__ZG__!.budget!.budget.balance = 1000;
+  });
+  await page.getByRole('button', { name: 'Draw a road' }).click();
+  for (const p of ends) {
+    await page.evaluate(({ x, z }) => window.__ZG__?.lookAt(x, z, 800), p);
+    await page.waitForTimeout(500);
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  }
+  await page.getByRole('button', { name: 'Finish road' }).click();
+  await expect(page.locator('.build-draw-status')).toContainText('Not enough money');
+  expect(await page.evaluate(() => window.__ZG__!.network!.edgeCount)).toBe(before);
+
+  // The Budget panel: the balance, a year's flows and the balance over time.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('m');
+  await expect(page.locator('.budget-panel')).toBeVisible();
+  await expect(page.locator('.budget-balance')).toContainText('€');
+  await expect(page.locator('.budget-rows')).toContainText('Streets budget');
+  await page.screenshot({ path: testInfo.outputPath('budget.png') });
 
   expect(errors).toEqual([]);
 });
@@ -755,6 +783,14 @@ test('grows buildings on zoned lots as the day goes on', async ({ page }, testIn
     .toBeGreaterThan(0);
   const totals = await built();
   expect(totals.jobs).toBeGreaterThan(0);
+  // What grew pays communal contributions once finished and fees every year (M5e).
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__!.budget!.budget.yearly.fee), {
+      timeout: 60_000,
+      intervals: [2_000],
+    })
+    .toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.__ZG__!.budget!.budget.contributions)).toBeGreaterThan(0);
   // The houses' residents make car trips: the simulation's daily total goes up (M5c).
   const today = await page.evaluate(
     async () =>

@@ -12,6 +12,7 @@ export interface HudCallbacks {
   onNews?(enabled: boolean): void;
   onClosures?(enabled: boolean): void;
   onZones?(enabled: boolean): void;
+  onBudget?(enabled: boolean): void;
   onBuild?(enabled: boolean): void;
 }
 
@@ -103,12 +104,14 @@ export class Hud {
   private readonly closuresButton: HTMLButtonElement;
   private readonly buildButton: HTMLButtonElement;
   private readonly zonesButton: HTMLButtonElement;
+  private readonly budgetButton: HTMLButtonElement;
   private simState?: HudSim;
   private trafficMap = false;
   private news = false;
   private closures = true;
   private build = false;
   private zones = false;
+  private budget = false;
 
   constructor(container: HTMLElement, callbacks: HudCallbacks) {
     this.root = el('div', 'hud', container);
@@ -176,6 +179,13 @@ export class Hud {
     this.zonesButton.hidden = true;
     this.zonesButton.setAttribute('aria-pressed', 'false');
     this.zonesButton.addEventListener('click', () => this.setZones(!this.zones, callbacks));
+    this.budgetButton = el('button', 'hud-button hud-speed', this.layers);
+    this.budgetButton.type = 'button';
+    this.budgetButton.textContent = 'Budget';
+    this.budgetButton.title = "The City's money: income, costs and the balance (M)";
+    this.budgetButton.hidden = true;
+    this.budgetButton.setAttribute('aria-pressed', 'false');
+    this.budgetButton.addEventListener('click', () => this.setBudget(!this.budget, callbacks));
 
     const toolbar = el('div', 'hud-panel hud-toolbar', this.root);
     toolbar.setAttribute('role', 'toolbar');
@@ -254,6 +264,8 @@ export class Hud {
         this.setBuild(!this.build, callbacks);
       } else if ((event.key === 'z' || event.key === 'Z') && !this.zonesButton.hidden) {
         this.setZones(!this.zones, callbacks);
+      } else if ((event.key === 'm' || event.key === 'M') && !this.budgetButton.hidden) {
+        this.setBudget(!this.budget, callbacks);
       } else if ((event.key === '+' || event.key === '-') && this.simState) {
         const i = SIM_SPEEDS.indexOf(this.simState.speed) + (event.key === '+' ? 1 : -1);
         const speed = SIM_SPEEDS[Math.min(SIM_SPEEDS.length - 1, Math.max(0, i))];
@@ -328,6 +340,19 @@ export class Hud {
   enableBuild(): void {
     this.layers.hidden = false;
     this.buildButton.hidden = false;
+  }
+
+  /** Offer the Budget panel. */
+  enableBudget(): void {
+    this.layers.hidden = false;
+    this.budgetButton.hidden = false;
+  }
+
+  /** Open or close the Budget panel (`callbacks` given: tell the app). */
+  setBudget(enabled: boolean, callbacks?: HudCallbacks): void {
+    this.budget = enabled;
+    this.budgetButton.setAttribute('aria-pressed', String(enabled));
+    callbacks?.onBudget?.(enabled);
   }
 
   /** Offer the Zones tool. */
