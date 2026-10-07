@@ -72,6 +72,7 @@ import { Precipitation } from './world/precipitation';
 import { sunAt, zagrebOffset, zagrebToday } from './world/sun';
 import { TRAFFIC_BANDS, TrafficLayer } from './world/trafficLayer';
 import { VehicleLayer } from './world/vehicleLayer';
+import { FrameStats, type Perf, PerfOverlay } from './ui/perfOverlay';
 import {
   type LiveWeather,
   WEATHER,
@@ -241,6 +242,8 @@ export interface DebugApi {
   sound?: CitySound;
   /** The weather: the player's choice, the kind in force and the live observation (M6b). */
   weather?: { choice: string; kind: WeatherKind; live?: LiveWeather };
+  /** How fast the app runs, with `?perf` (M6f): refreshed twice a second. */
+  perf?: Perf;
 }
 
 declare global {
@@ -1281,7 +1284,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
     const fog = new THREE.Fog(SKY, 1, 2);
     const marker = new THREE.Vector3();
     let lastHudSim = 0;
-    renderer.setAnimationLoop((time: number) => {
+    /** Draw a frame if anything changed; whether it drew. */
+    const drawFrame = (time: number): boolean => {
       const moving = activeRig.update(time);
       const camera = activeRig.camera;
       const view = activeRig.state();
@@ -1390,7 +1394,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         !lightChanged &&
         !lampsChanged
       ) {
-        return;
+        return false;
       }
       dirty = false;
 
@@ -1430,6 +1434,34 @@ export async function startApp(container: HTMLElement): Promise<void> {
         azimuth: view.azimuth,
         metersPerPixel: view.viewHeight / Math.max(1, container.clientHeight),
       });
+      return true;
+    };
+
+    // ?perf: frame rate, frame time, draw calls and the simulation's step time (M6f).
+    const frameStats = params.has('perf') ? new FrameStats() : undefined;
+    const perfOverlay = frameStats ? new PerfOverlay(container) : undefined;
+    let lastPerf = 0;
+    renderer.setAnimationLoop((time: number) => {
+      const t0 = performance.now();
+      const drawn = drawFrame(time);
+      if (!frameStats || !perfOverlay) return;
+      const t1 = performance.now();
+      const { drawCalls, triangles } = renderer.info.render;
+      frameStats.add({ at: t0, ms: t1 - t0, drawn, drawCalls, triangles });
+      if (t1 - lastPerf < 500) return;
+      lastPerf = t1;
+      const perf: Perf = frameStats.summary();
+      if (sim?.stats) {
+        perf.sim = {
+          stepMs: sim.stepMs,
+          dt: sim.dt,
+          rate: sim.rate,
+          speed: sim.paused ? 0 : sim.speed,
+          vehicles: sim.stats[STAT.running],
+        };
+      }
+      debug.perf = perf;
+      perfOverlay.show(perf, t1);
     });
 
     hud.ready();

@@ -61,7 +61,8 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
   });
   page.on('pageerror', (error) => errors.push(error.message));
 
-  await page.goto('./');
+  // ?perf shows how fast it runs (M6f).
+  await page.goto('./?perf');
   await page.waitForFunction(() => window.__ZG__?.sim?.ready === true, null, { timeout: 150_000 });
   // The streets fill with traffic at full speed, then the clock runs in real time.
   await page.waitForFunction(() => window.__ZG__?.sim?.warming === false, null, {
@@ -113,6 +114,10 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
       ).size,
   );
   expect(shapes).toBeGreaterThan(1);
+  await expect(page.locator('.perf-overlay')).toContainText(/fps drawn[\s\S]*ms\/step/);
+  const perf = await page.evaluate(() => window.__ZG__?.perf);
+  expect(perf?.drawCalls).toBeGreaterThan(0);
+  expect(perf?.sim?.stepMs).toBeGreaterThan(0);
 
   // Speed up, then pause: the clock follows.
   await page.getByRole('button', { name: '16×' }).click();

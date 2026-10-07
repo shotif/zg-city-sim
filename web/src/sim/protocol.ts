@@ -58,11 +58,14 @@ export interface FrameMessage {
   stats: Float64Array;
   /** Simulated seconds per real second over the last few seconds. */
   rate: number;
+  /** Engine time per step lately (ms). */
+  stepMs: number;
   warming: boolean;
 }
 
 export type FromWorker =
-  | { type: 'ready'; buildMs: number; signals: SignalPrograms }
+  /** The engine is built: in how long (ms), its signal programs and its step (s). */
+  | { type: 'ready'; buildMs: number; signals: SignalPrograms; dt: number }
   /** Edits `id` are in force: how many fit the network, and the signal programs now. */
   | { type: 'edited'; id: number; applied: number; signals: SignalPrograms }
   /** Network `id` runs (or could not be swapped in: `error`), and its signal programs. */

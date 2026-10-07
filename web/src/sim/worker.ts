@@ -70,7 +70,12 @@ async function init(message: InitMessage): Promise<void> {
   speed = message.speed;
   warmUntil = message.warmUntil;
   render = message.render ?? true;
-  post({ type: 'ready', buildMs: performance.now() - t0, signals: engine.signalPrograms() });
+  post({
+    type: 'ready',
+    buildMs: performance.now() - t0,
+    signals: engine.signalPrograms(),
+    dt: engine.dt,
+  });
   if (network) swapNetwork(engine, network);
   if (edits) applyEdits(engine, edits);
   if (weights) applyWeights(engine, weights);
@@ -136,7 +141,10 @@ function tick(): void {
     if (!warming) owed -= steps * sim.dt;
     const frame = render ? sim.render() : new Uint32Array(0);
     rate = 0.8 * rate + 0.2 * ((steps * sim.dt) / Math.max(elapsed, 0.001));
-    post({ type: 'frame', time, render: frame, stats: sim.stats(), rate, warming }, [frame.buffer]);
+    post(
+      { type: 'frame', time, render: frame, stats: sim.stats(), rate, stepMs: msPerStep, warming },
+      [frame.buffer],
+    );
     if (time - lastEdgeSpeeds >= EDGE_SPEED_INTERVAL) {
       lastEdgeSpeeds = time;
       const speeds = sim.edgeSpeeds();

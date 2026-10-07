@@ -933,3 +933,23 @@ a.news-headline:hover {
     justify-content: space-between;
   }
 }
+
+/* ?perf (M6f). */
+.perf-overlay {
+  position: absolute;
+  right: var(--gutter);
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 52px);
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(10, 14, 20, 0.75);
+  color: #d8e4ef;
+  font:
+    11px/1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  pointer-events: none;
+  white-space: pre;
+  z-index: 5;
+}

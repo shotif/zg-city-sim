@@ -17,6 +17,9 @@ export class SimClient {
   stats?: Float64Array;
   /** Simulated seconds per real second the worker achieves. */
   rate = 0;
+  /** Engine time per step lately (ms), and the step (s). */
+  stepMs = 0;
+  dt = 0.5;
   warming = true;
   ready = false;
   speed: number;
@@ -54,6 +57,7 @@ export class SimClient {
       case 'ready':
         this.ready = true;
         this.signals = message.signals;
+        this.dt = message.dt;
         this.onReady?.(message.buildMs);
         break;
       case 'edited':
@@ -72,6 +76,7 @@ export class SimClient {
         this.stats = message.stats;
         this.recordMinute(message.time, message.stats);
         this.rate = message.rate;
+        this.stepMs = message.stepMs;
         this.warming = message.warming;
         this.onFrame?.();
         break;
