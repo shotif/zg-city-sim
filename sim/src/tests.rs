@@ -8,6 +8,7 @@ use crate::network::{LINK_STATE_CHARS, NONE, Network, NetworkData, dir, edge_fla
 use crate::rng::Rng;
 use crate::router::Router;
 use crate::vtype::{self, TYPES};
+use crate::weather::Weather;
 
 const ALL: u16 = 0xffff;
 const LANE_WIDTH: f32 = 3.2;
@@ -250,11 +251,11 @@ fn assert_no_overlaps(engine: &Engine) {
 #[test]
 fn idm_accelerates_on_free_road_and_brakes_for_obstacles() {
     let p = &TYPES[vtype::CAR as usize];
-    assert!(idm::acceleration(0.0, 13.9, f32::INFINITY, 0.0, p) > 1.5);
-    assert!(idm::acceleration(13.9, 13.9, f32::INFINITY, 0.0, p).abs() < 0.01);
-    assert!(idm::acceleration(13.9, 13.9, 20.0, 0.0, p) < -2.0);
+    assert!(idm::acceleration(0.0, 13.9, f32::INFINITY, 0.0, p, Weather::CLEAR) > 1.5);
+    assert!(idm::acceleration(13.9, 13.9, f32::INFINITY, 0.0, p, Weather::CLEAR).abs() < 0.01);
+    assert!(idm::acceleration(13.9, 13.9, 20.0, 0.0, p, Weather::CLEAR) < -2.0);
     // Standing still behind a standing car at the minimum gap: stay put.
-    assert!(idm::acceleration(0.0, 13.9, p.min_gap, 0.0, p) <= 0.0);
+    assert!(idm::acceleration(0.0, 13.9, p.min_gap, 0.0, p, Weather::CLEAR) <= 0.0);
 }
 
 #[test]
@@ -845,9 +846,9 @@ fn guessed_signal_programs_give_green_by_the_lanes_served() {
     assert_eq!(durations, vec![42.0, 3.0, 18.0, 3.0]);
 }
 
-#[test]
-fn a_queue_leaves_a_green_light_at_a_realistic_saturation_flow() {
-    // 30 cars queue at a red light on one lane, then get green.
+/// 30 cars queue at a red light on one lane, then get green: the times they cross the stop
+/// line (s after green), in `weather`.
+fn queue_discharge(weather: Weather) -> Vec<f64> {
     let mut b = Builder::default();
     let j0 = b.junction(0.0, 0.0);
     let j1 = b.junction(1000.0, 0.0);
@@ -858,6 +859,7 @@ fn a_queue_leaves_a_green_light_at_a_realistic_saturation_flow() {
     let link = b.connect(l0, l1, j1, dir::STRAIGHT, b'O');
     b.signal(&[link], &[(200.0, "r"), (200.0, "G")]);
     let mut engine = Engine::new(b.build(), 5);
+    engine.weather = weather;
     for k in 0..30 {
         engine.add_trip(Trip {
             depart: k as f64 * 3.0,
@@ -869,27 +871,82 @@ fn a_queue_leaves_a_green_light_at_a_realistic_saturation_flow() {
     }
     run_until(&mut engine, 200.0, |_| {});
     assert_eq!(engine.vehicles_on(l0).len(), 30);
-    // Time each car crosses the stop line.
     let mut crossed = Vec::new();
-    run_until(&mut engine, 120.0, |e| {
+    run_until(&mut engine, 150.0, |e| {
         while crossed.len() < 30 - e.vehicles_on(l0).len() {
-            crossed.push(e.time);
+            crossed.push(e.time - 200.0);
         }
     });
     assert_eq!(crossed.len(), 30);
-    // Saturation flow, from the fifth car on once the queue is moving: the Highway Capacity
-    // Manual's base is 1,900 cars per lane per hour.
-    let flow = 20.0 * 3600.0 / (crossed[24] - crossed[4]);
+    crossed
+}
+
+/// Saturation flow (cars per hour) from the fifth car on, once the queue is moving.
+fn saturation_flow(crossed: &[f64]) -> f64 {
+    20.0 * 3600.0 / (crossed[24] - crossed[4])
+}
+
+#[test]
+fn a_queue_leaves_a_green_light_at_a_realistic_saturation_flow() {
+    let crossed = queue_discharge(Weather::CLEAR);
+    // The Highway Capacity Manual's base is 1,900 cars per lane per hour.
+    let flow = saturation_flow(&crossed);
     assert!(
         (1_700.0..=2_100.0).contains(&flow),
         "saturation flow {flow:.0} per hour"
     );
     // The first car gets going within a few seconds of green.
-    assert!(
-        crossed[0] - 200.0 < 4.0,
-        "first car crossed at {}",
-        crossed[0]
-    );
+    assert!(crossed[0] < 4.0, "first car crossed at {}", crossed[0]);
+}
+
+#[test]
+fn rain_and_snow_slow_the_queue_at_a_green_light_and_free_flow() {
+    let clear = saturation_flow(&queue_discharge(Weather::CLEAR));
+    let share = |w: Weather| saturation_flow(&queue_discharge(w)) / clear;
+    // Lower saturation flow, as observed at signals (2-21 %) and in the HCM's capacity
+    // factors: rain about 8 %, heavy rain about 14 %, snow about 10 %, heavy snow 25-30 %.
+    let rain = share(Weather::RAIN);
+    let heavy_rain = share(Weather::HEAVY_RAIN);
+    let snow = share(Weather::SNOW);
+    let heavy_snow = share(Weather::HEAVY_SNOW);
+    let fog = share(Weather::FOG);
+    for (name, s, lo, hi) in [
+        ("rain", rain, 0.88, 0.96),
+        ("heavy rain", heavy_rain, 0.8, 0.9),
+        ("snow", snow, 0.84, 0.94),
+        ("heavy snow", heavy_snow, 0.65, 0.8),
+        ("fog", fog, 0.85, 0.95),
+    ] {
+        assert!(
+            (lo..=hi).contains(&s),
+            "{name}: {:.1} % of clear",
+            s * 100.0
+        );
+    }
+    assert!(heavy_rain < rain && heavy_snow < snow);
+
+    // Free flow: a lone car on an open road settles at a lower speed.
+    let cruise = |w: Weather| {
+        let (b, e0, e1) = straight_road(2000.0, 1);
+        let mut engine = Engine::new(b.build(), 3);
+        engine.weather = w;
+        engine.add_trip(Trip {
+            depart: 0.0,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+        run_until(&mut engine, 120.0, |_| {});
+        engine
+            .live_vehicles()
+            .map(|v| engine.vehs[v as usize].speed)
+            .sum::<f32>()
+    };
+    let free = cruise(Weather::CLEAR);
+    assert!(free > 12.0, "clear: {free} m/s");
+    assert!((cruise(Weather::RAIN) / free - 0.95).abs() < 0.02);
+    assert!((cruise(Weather::HEAVY_SNOW) / free - 0.65).abs() < 0.03);
 }
 
 /// Crossroads with two-lane east-west approaches (straight, left) and one-lane north-south

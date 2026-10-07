@@ -31,6 +31,8 @@ let closed: Uint32Array | undefined;
 let edits: { id: number; words: Uint32Array } | undefined;
 /** Homes and jobs grown since the start, kept until the engine is built. */
 let weights: Extract<ToWorker, { type: 'demandWeights' }> | undefined;
+/** The weather's effect on driving, kept until the engine is built. */
+let weather: Extract<ToWorker, { type: 'weather' }> | undefined;
 /** A network with roads drawn that came before the engine was built. */
 let network: Extract<ToWorker, { type: 'network' }> | undefined;
 let render = true;
@@ -72,6 +74,7 @@ async function init(message: InitMessage): Promise<void> {
   if (network) swapNetwork(engine, network);
   if (edits) applyEdits(engine, edits);
   if (weights) applyWeights(engine, weights);
+  if (weather) engine.setWeather(weather.speed, weather.headway, weather.accel);
   last = performance.now();
   tick();
 }
@@ -200,6 +203,10 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
       break;
     case 'demand':
       engine?.setDemandScale(message.scale);
+      break;
+    case 'weather':
+      weather = message;
+      engine?.setWeather(message.speed, message.headway, message.accel);
       break;
     case 'demandWeights':
       weights = message;

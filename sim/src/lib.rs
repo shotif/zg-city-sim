@@ -19,6 +19,7 @@ pub mod rng;
 pub mod router;
 pub mod transit;
 pub mod vtype;
+pub mod weather;
 
 #[cfg(test)]
 mod tests;

@@ -136,6 +136,11 @@ export class SimClient {
     this.send({ type: 'hold', held });
   }
 
+  /** The weather's effect on driving (sim/src/weather.rs factors). */
+  setWeather(effect: { speed: number; headway: number; accel: number }): void {
+    this.send({ type: 'weather', ...effect });
+  }
+
   setDemandScale(scale: number): void {
     this.send({ type: 'demand', scale });
   }

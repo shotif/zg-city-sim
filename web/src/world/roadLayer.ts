@@ -114,6 +114,17 @@ export class RoadLayer {
     this.buildOverview();
   }
 
+  private wet = 0;
+
+  /** Wet roads (0 dry, 1 soaked: rain or snow): darker and glossier; whether it changed. */
+  setWet(wet: number): boolean {
+    if (Math.abs(wet - this.wet) < 0.01) return false;
+    this.wet = wet;
+    this.surfaceMaterial.color.setScalar(1 - 0.3 * wet);
+    this.surfaceMaterial.roughness = 0.92 - 0.5 * wet;
+    return true;
+  }
+
   /** Hide the zoomed-out road lines (while the traffic map draws the roads instead). */
   overviewHidden = false;
 

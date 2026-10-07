@@ -13,6 +13,7 @@ use crate::edits::Edit;
 use crate::engine::{DT, Engine, LanePiece, RENDER_STRIDE, Trip, stat};
 use crate::network::{Network, NetworkData};
 use crate::transit::{Transit, TransitData};
+use crate::weather::Weather;
 
 #[derive(Default)]
 struct State {
@@ -170,6 +171,22 @@ pub extern "C" fn zg_set_demand_scale(scale: f32) {
     with_state(|s| {
         if let Some(e) = s.engine.as_mut() {
             e.demand_scale = scale.max(0.0)
+        }
+    })
+}
+
+/// Set the weather's effect on driving (`weather.rs`): desired speed as a share, time
+/// headway as a multiple, acceleration and braking as a share; kept within sensible bounds.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_set_weather(speed: f32, headway: f32, accel: f32) {
+    with_state(|s| {
+        if let Some(e) = s.engine.as_mut() {
+            e.weather = Weather {
+                speed,
+                headway,
+                accel,
+            }
+            .clamped();
         }
     })
 }

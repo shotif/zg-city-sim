@@ -28,6 +28,8 @@ export type ToWorker =
   /** Wait (even while filling the streets): keeps two compared simulations in step. */
   | { type: 'hold'; held: boolean }
   | { type: 'demand'; scale: number }
+  /** The weather's effect on driving (sim/src/weather.rs). */
+  | { type: 'weather'; speed: number; headway: number; accel: number }
   /** Homes and jobs per edge again (`demandEdge`, `demandHome`, `demandWork`: the city's and
    * those of buildings grown since), and the car trips a day they make. */
   | { type: 'demandWeights'; arrays: Record<string, NumericArray>; dailyTrips: number }

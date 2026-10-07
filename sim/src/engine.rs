@@ -23,6 +23,7 @@ use crate::rng::Rng;
 use crate::router::{LandmarkBuild, Landmarks, Router};
 use crate::transit::{PendingRun, Transit, TransitRun};
 use crate::vtype::{self, TYPES, VType};
+use crate::weather::Weather;
 
 // Swapping in a changed network while traffic runs (roads drawn in the app).
 #[path = "patch.rs"]
@@ -404,6 +405,8 @@ pub struct Engine {
     pub transit: Option<Transit>,
     /// Scale applied to generated demand (1 = full).
     pub demand_scale: f32,
+    /// How the weather changes driving (M6b).
+    pub weather: Weather,
     pub stats: Stats,
     /// Per vehicle slot: x, y, z, heading, speed (f32), generation, info (u32), accel (f32).
     pub render: Vec<u32>,
@@ -773,8 +776,8 @@ pub fn travel_time(d: f32, v: f32, a: f32, vmax: f32) -> f32 {
 }
 
 /// IDM acceleration toward a stop line `d` metres ahead (stopping about 0.5 m before it).
-fn stop_at(speed: f32, vmax: f32, d: f32, p: &VType) -> f32 {
-    idm::acceleration(speed, vmax, (d - 0.5).max(0.0) + p.min_gap, 0.0, p)
+fn stop_at(speed: f32, vmax: f32, d: f32, p: &VType, w: Weather) -> f32 {
+    idm::acceleration(speed, vmax, (d - 0.5).max(0.0) + p.min_gap, 0.0, p, w)
 }
 
 fn is_left(direction: u8) -> bool {
@@ -832,6 +835,7 @@ impl Engine {
             demand: None,
             transit: None,
             demand_scale: 1.0,
+            weather: Weather::CLEAR,
             stats: Stats::default(),
             render: Vec::new(),
             scratch: Vec::new(),
@@ -1026,7 +1030,7 @@ impl Engine {
     // ---- planning -------------------------------------------------------------------------
 
     fn desired_speed(&self, veh: &Vehicle, lane: u32) -> f32 {
-        (self.net.d.lane_speed[lane as usize] * veh.speed_factor)
+        (self.net.d.lane_speed[lane as usize] * veh.speed_factor * self.weather.speed)
             .min(veh.params().max_speed)
             .max(1.0)
     }
@@ -1083,7 +1087,7 @@ impl Engine {
         let lane = veh.lane;
         let speed = veh.speed;
         let vmax = self.desired_speed(veh, lane);
-        let mut acc = idm::acceleration(speed, vmax, f32::INFINITY, 0.0, p);
+        let mut acc = idm::acceleration(speed, vmax, f32::INFINITY, 0.0, p, self.weather);
         let mut plan = Plan {
             acc: 0.0,
             pass: None,
@@ -1097,7 +1101,14 @@ impl Engine {
         if let Some(l) = leader {
             let lv = &self.vehs[l as usize];
             let gap = lv.pos - lv.params().length - veh.pos;
-            acc = acc.min(idm::acceleration(speed, vmax, gap, lv.speed, p));
+            acc = acc.min(idm::acceleration(
+                speed,
+                vmax,
+                gap,
+                lv.speed,
+                p,
+                self.weather,
+            ));
             have_leader = true;
         }
         if veh.coop != NONE {
@@ -1114,7 +1125,7 @@ impl Engine {
             if gap < -2.0 {
                 plan.missed_stop = true;
             } else {
-                acc = acc.min(stop_at(speed, vmax, gap + 0.5, p));
+                acc = acc.min(stop_at(speed, vmax, gap + 0.5, p, self.weather));
                 plan.at_stop = gap < 2.0 && speed < 0.3;
             }
             stop_ahead = None;
@@ -1154,7 +1165,7 @@ impl Engine {
                     // No way on from this lane: wait at its end for a lane change, with the
                     // front on the lane even when it is very short.
                     let into = (0.5 * d_.lane_length[cur as usize]).min(0.5);
-                    acc = acc.min(stop_at(speed, vmax, dist + 0.5 - into, p));
+                    acc = acc.min(stop_at(speed, vmax, dist + 0.5 - into, p, self.weather));
                     break;
                 }
                 if first_link && dist < 80.0 {
@@ -1173,7 +1184,7 @@ impl Engine {
                     plan.pass = Some(go);
                 }
                 if !go {
-                    acc = acc.min(stop_at(speed, vmax, dist, p));
+                    acc = acc.min(stop_at(speed, vmax, dist, p, self.weather));
                     if first_link && matches!(state, b's' | b'w') && dist < 3.0 && speed < 0.3 {
                         plan.stopped_at = link;
                     }
@@ -1202,13 +1213,20 @@ impl Engine {
                 && !net.lane_internal[next as usize]
             {
                 let gap = dist + frac * d_.lane_length[next as usize];
-                acc = acc.min(stop_at(speed, vmax, gap + 0.5, p));
+                acc = acc.min(stop_at(speed, vmax, gap + 0.5, p, self.weather));
                 stop_ahead = None;
             }
             if let (false, Some(&r)) = (have_leader, self.lane_vehs[next as usize].first()) {
                 let rv = &self.vehs[r as usize];
                 let gap = dist + rv.pos - rv.params().length;
-                acc = acc.min(idm::acceleration(speed, vmax, gap, rv.speed, p));
+                acc = acc.min(idm::acceleration(
+                    speed,
+                    vmax,
+                    gap,
+                    rv.speed,
+                    p,
+                    self.weather,
+                ));
                 break;
             }
             dist += d_.lane_length[next as usize];
@@ -1240,6 +1258,7 @@ impl Engine {
             pos - c.params().length - veh.pos,
             c.speed,
             p,
+            self.weather,
         );
         if a < -3.0 { p.accel } else { a }
     }
@@ -2184,7 +2203,9 @@ impl Engine {
         if let Some(l) = leader {
             let lv = &self.vehs[l as usize];
             let gap = lv.pos - lv.params().length - pos;
-            if gap < 0.5 || idm::acceleration(veh.speed, vmax, gap, lv.speed, p) < -b_safe {
+            if gap < 0.5
+                || idm::acceleration(veh.speed, vmax, gap, lv.speed, p, self.weather) < -b_safe
+            {
                 return Err(None);
             }
         }
@@ -2192,7 +2213,9 @@ impl Engine {
             let fv = &self.vehs[f as usize];
             let gap = pos - p.length - fv.pos;
             let fmax = self.desired_speed(fv, target);
-            if gap < 0.5 || idm::acceleration(fv.speed, fmax, gap, veh.speed, fv.params()) < -b_safe
+            if gap < 0.5
+                || idm::acceleration(fv.speed, fmax, gap, veh.speed, fv.params(), self.weather)
+                    < -b_safe
             {
                 return Err(Some(f));
             }
@@ -2215,9 +2238,10 @@ impl Engine {
                     lv.pos - lv.params().length - veh.pos,
                     lv.speed,
                     p,
+                    self.weather,
                 )
             }
-            None => idm::acceleration(veh.speed, vmax, f32::INFINITY, 0.0, p),
+            None => idm::acceleration(veh.speed, vmax, f32::INFINITY, 0.0, p, self.weather),
         };
         let (pos, leader, follower) = self.neighbours(veh, target);
         let vmax_t = self.desired_speed(veh, target);
@@ -2228,9 +2252,9 @@ impl Engine {
                 if gap < p.min_gap {
                     return f32::NEG_INFINITY;
                 }
-                idm::acceleration(veh.speed, vmax_t, gap, lv.speed, p)
+                idm::acceleration(veh.speed, vmax_t, gap, lv.speed, p, self.weather)
             }
-            None => idm::acceleration(veh.speed, vmax_t, f32::INFINITY, 0.0, p),
+            None => idm::acceleration(veh.speed, vmax_t, f32::INFINITY, 0.0, p, self.weather),
         };
         let mut follower_loss = 0.0;
         if let Some(f) = follower {
@@ -2241,7 +2265,7 @@ impl Engine {
             if gap < 1.0 {
                 return f32::NEG_INFINITY;
             }
-            let after = idm::acceleration(fv.speed, fmax, gap, veh.speed, fp);
+            let after = idm::acceleration(fv.speed, fmax, gap, veh.speed, fp, self.weather);
             if after < -2.5 {
                 return f32::NEG_INFINITY;
             }
@@ -2254,9 +2278,10 @@ impl Engine {
                         lv.pos - lv.params().length - fv.pos,
                         lv.speed,
                         fp,
+                        self.weather,
                     )
                 }
-                None => idm::acceleration(fv.speed, fmax, f32::INFINITY, 0.0, fp),
+                None => idm::acceleration(fv.speed, fmax, f32::INFINITY, 0.0, fp, self.weather),
             };
             follower_loss = before - after;
         }

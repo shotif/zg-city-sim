@@ -14,6 +14,7 @@ export interface EngineExports {
   zg_set_time(seconds: number): void;
   zg_set_demand_scale(scale: number): void;
   zg_set_demand(dailyTrips: number): number;
+  zg_set_weather(speed: number, headway: number, accel: number): void;
   zg_add_trip(depart: number, from: number, to: number, vtype: number): void;
   zg_set_closed(edges: number, count: number): void;
   zg_set_edits(words: number, count: number): number;
@@ -162,6 +163,12 @@ export class TrafficEngine {
     if (this.exports.zg_set_demand(dailyTrips) !== 0) {
       throw new Error('The traffic engine rejected the demand data');
     }
+  }
+
+  /** The weather's effect on driving: desired speed as a share, time headway as a
+   * multiple, acceleration and braking as a share (sim/src/weather.rs). */
+  setWeather(speed: number, headway: number, accel: number): void {
+    this.exports.zg_set_weather(speed, headway, accel);
   }
 
   addTrip(depart: number, fromEdge: number, toEdge: number, vehicleType = 0): void {

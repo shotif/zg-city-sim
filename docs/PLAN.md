@@ -244,11 +244,16 @@ Known gaps:
     - Vehicles carry headlamps and tail lamps, the tail lamps bright when braking (the engine reports it), and at night a beam on the road ahead.
     - The HUD's ☀ button (key `L`) keeps the light as at midday, kept in the browser. `?start=HH:MM` starts the simulation at another time of day.
     - The simulation starts at 07:00, before sunrise from late October to early March, so the city often opens at dawn.
-- **M6b, weather.**
+- **M6b, weather** (done 2026-10-07).
   - The live-data job copies DHMZ's hourly observations for Zagreb-Grič, Maksimir and the airport (temperature, wind, and the weather in words: clear, cloudy, rain, snow, fog) to the `live-data` branch every 15 minutes.
   - The app shows today's weather and draws it: cloud dims the light, rain and snow fall near the camera, fog shortens the view, roads look wet. The player can also pick the weather.
   - Traffic drives to the weather: in rain drivers keep longer gaps and go a little slower, in snow more so, and junctions let fewer vehicles through on green, with the factors from the Highway Capacity Manual and published studies (to be cited).
   - Engine tests: a queue leaves a green light more slowly in rain and snow; free-flow speed falls.
+  - As built (`sim/src/weather.rs`, `web/src/world/weather.ts`, `precipitation.ts`, the live-data job):
+    - The live-data job reads DHMZ's `hrvatska_n.xml` every 15 minutes and publishes the three Zagreb stations as `weather.json`. The app takes Zagreb-Grič's observation and reads its words: *vedro* clear, *pretežno/djelomično oblačno* partly cloudy, *oblačno* overcast, *kiša*, *rosulja*, *pljusak* rain (*jaka* heavy), *snijeg*, *susnježica* snow, *magla* fog, *grmljavina* thunderstorm.
+    - The HUD's weather list offers the live weather (with its temperature) or any of nine kinds, kept in the browser.
+    - Cloud dims the sun by up to 65 % and greys the sky. Rain and snow fall around the point looked at in the 3D and isometric views below 2.5 km, drawn and moved by the GPU (up to 12,000 drops), larger the further out the view. Rain, snow and fog add a haze that reaches the point looked at, in every view (fog hides about half of it). Roads in rain and snow are darker and glossier. Snow does not lie.
+    - Driving: the engine multiplies every driver's desired speed, time headway, and acceleration and comfortable braking by the weather's factors. Rain: 0.95, 1.1, 0.95; heavy rain and storms: 0.92, 1.2, 0.9; snow: 0.87, 1.15, 0.85; heavy snow: 0.65, 1.4, 0.65; fog: 0.9, 1.15, 1. On the engine's test junction a queue then leaves a green light 8.8 %, 14.1 %, 13.1 %, 31 % and 12 % more slowly than in clear weather. That is within the reductions published for rain (Prevedouros and Chang: 8.3 %; the HCM: 6-10 % for medium rain), heavy rain (Ibrahim and Hall: 14-15 %), snow (5-21 % at signals, Agbolosu-Amison and others), heavy snow (Ibrahim and Hall: 30 %) and poor visibility (the HCM: 10-12 %), and free-flow speed falls 5, 8, 13, 35 and 10 %. The factors are estimates from those studies, not measured in Zagreb.
 - **M6c, vehicle models.**
   - Low-poly models in place of boxes: cars of a few shapes (hatchback, saloon, estate, SUV, van), rigid and articulated lorries, ZET's articulated buses and its low-floor trams, with brake lights when braking and indicators when changing lanes or turning (the engine already reports both).
   - Still one draw call per type, instanced.

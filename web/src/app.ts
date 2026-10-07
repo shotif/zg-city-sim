@@ -67,9 +67,19 @@ import { loadTerrain } from './world/terrain';
 import { ALWAYS_DAY, type Lighting, lighting, litShare } from './world/daylight';
 import { litUniform, nightUniform } from './world/nightLights';
 import { BuiltArea, StreetLightLayer } from './world/streetLights';
+import { Precipitation } from './world/precipitation';
 import { sunAt, zagrebOffset, zagrebToday } from './world/sun';
 import { TRAFFIC_BANDS, TrafficLayer } from './world/trafficLayer';
 import { VehicleLayer } from './world/vehicleLayer';
+import {
+  type LiveWeather,
+  WEATHER,
+  WEATHER_CREDIT,
+  type WeatherKind,
+  greyed,
+  liveWeather,
+  loadWeather,
+} from './world/weather';
 
 const SKY = new THREE.Color(0xb9cfe0);
 /** Roads a planned project adds, drawn over the map. */
@@ -92,6 +102,7 @@ const START = startOf(new URLSearchParams(location.search).get('start'));
 const START_TIME = Math.max(0, START - WARM);
 const WARM_UNTIL = START;
 const LIGHT_KEY = 'zg-city-sim:always-day';
+const WEATHER_KEY = 'zg-city-sim:weather';
 const WASM_URL = `${import.meta.env.BASE_URL}sim/zg_sim.wasm`;
 
 /** Arrays of a packed data layer (by its index path), or undefined if it fails to load. */
@@ -225,6 +236,8 @@ export interface DebugApi {
   /** The light now, and the simulated time it is for (M6a). */
   light?: Lighting & { time: number };
   streetLights?: StreetLightLayer;
+  /** The weather: the player's choice, the kind in force and the live observation (M6b). */
+  weather?: { choice: string; kind: WeatherKind; live?: LiveWeather };
 }
 
 declare global {
@@ -284,7 +297,30 @@ export async function startApp(container: HTMLElement): Promise<void> {
   } catch {
     // Storage blocked: light as the time of day.
   }
+  // The weather: as observed in Zagreb ('live'), or a kind the player picks (M6b).
+  let weatherChoice: 'live' | WeatherKind = 'live';
+  try {
+    const kept = localStorage.getItem(WEATHER_KEY);
+    if (kept && kept in WEATHER) weatherChoice = kept as WeatherKind;
+  } catch {
+    // Storage blocked: the live weather.
+  }
+  let live: LiveWeather | undefined;
+  const weatherKind = (): WeatherKind =>
+    weatherChoice === 'live' ? (live?.kind ?? 'clear') : weatherChoice;
+  /** Tell the simulations, the layers and the HUD (set once the scene exists). */
+  let applyWeather = () => {};
   const hudCallbacks: HudCallbacks = {
+    onWeather: (choice) => {
+      weatherChoice = choice === 'live' || !(choice in WEATHER) ? 'live' : (choice as WeatherKind);
+      try {
+        if (weatherChoice === 'live') localStorage.removeItem(WEATHER_KEY);
+        else localStorage.setItem(WEATHER_KEY, weatherChoice);
+      } catch {
+        // Not kept: storage blocked.
+      }
+      applyWeather();
+    },
     onAlwaysDay: (on) => {
       alwaysDay = on;
       try {
@@ -437,7 +473,16 @@ export async function startApp(container: HTMLElement): Promise<void> {
     let lightKey = '';
     /** Light the scene for simulated time `t` (s); whether it changed. */
     const applyLight = (t: number): boolean => {
-      const light: Lighting = alwaysDay ? ALWAYS_DAY : lighting(sunAt(day, t));
+      const base: Lighting = alwaysDay ? ALWAYS_DAY : lighting(sunAt(day, t));
+      // Cloud dims the sun and greys the sky (M6b).
+      const cloud = WEATHER[weatherKind()].cloud;
+      const light: Lighting = {
+        ...base,
+        intensity: base.intensity * (1 - 0.65 * cloud),
+        ambient: base.ambient * (1 + 0.1 * cloud),
+        background: greyed(base.background, 0.8 * cloud),
+        sky: greyed(base.sky, 0.7 * cloud),
+      };
       const lit = litShare(t);
       const key = `${light.color}:${light.intensity.toFixed(3)}:${light.background}:${light.night.toFixed(3)}:${lit.toFixed(2)}:${light.direction.map((v) => v.toFixed(2))}`;
       if (key === lightKey) return false;
@@ -454,6 +499,42 @@ export async function startApp(container: HTMLElement): Promise<void> {
       debug.light = { ...light, time: t };
       return true;
     };
+    const precipitation = new Precipitation();
+    scene.add(precipitation.object);
+    applyWeather = () => {
+      const kind = weatherKind();
+      const look = WEATHER[kind];
+      for (const s of [sim, baseline]) s?.setWeather(look.driving);
+      precipitation.set(look.falling, look.amount);
+      lightKey = '';
+      debug.weather = { choice: weatherChoice, kind, live };
+      const liveLabel = live
+        ? `Live: ${WEATHER[live.kind].label}${live.temperature === null ? '' : `, ${live.temperature.toFixed(0)} °C`}`
+        : liveFailed
+          ? 'Live: not available'
+          : 'Live: loading…';
+      hud.setWeatherChoices(
+        liveLabel,
+        (Object.keys(WEATHER) as WeatherKind[]).map((id) => ({ id, label: WEATHER[id].label })),
+        weatherChoice,
+      );
+      invalidateView();
+    };
+    let liveFailed = false;
+    applyWeather();
+    if (params.get('weather') !== 'off') {
+      loadWeather()
+        .then((feed) => {
+          live = liveWeather(feed);
+          if (!live) liveFailed = true;
+          applyWeather();
+        })
+        .catch((error: unknown) => {
+          console.warn('The live weather could not be loaded', error);
+          liveFailed = true;
+          applyWeather();
+        });
+    }
 
     rig = new CameraRig(renderer.domElement, {
       bounds: frame.bounds,
@@ -482,7 +563,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     resize();
 
     hud.setCredits(
-      attributions(manifest),
+      [...attributions(manifest), WEATHER_CREDIT],
       `Renderer: ${backend} · terrain mesh every ${stride * terrain.heightfield.resolution} m · data built ${manifest.generated}`,
     );
 
@@ -869,6 +950,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           const closed = map ? Array.from(closedEdges, (e) => map[e]).filter((e) => e >= 0) : [];
           todaySim.setClosures(map ? Uint32Array.from(closed) : closedEdges);
         }
+        todaySim.setWeather(WEATHER[weatherKind()].driving);
         baseline = todaySim;
         debug.baseline = todaySim;
         compared.stats = 0;
@@ -1062,6 +1144,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           /** The simulation the player sees, with the edits in force. */
           const launch = (speed: number): SimClient => {
             const running = startSimulation(net, travelData, surface, speed);
+            running.setWeather(WEATHER[weatherKind()].driving);
             // Homes and jobs grown since: with the trips they make.
             if (demandNow) running.setDemandWeights(demandNow.arrays, demandNow.dailyTrips);
             debug.sim = running;
@@ -1263,6 +1346,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
       if (buildings?.setNight(dark)) lightChanged = true;
       if (zoning?.grown.setNight(dark)) lightChanged = true;
       const lampsChanged = streetLights?.update(view.target, view.viewHeight) ?? false;
+      const look = WEATHER[weatherKind()];
+      if (roads?.setWet(look.wet ? 1 : 0)) lightChanged = true;
+      const falling = precipitation.update(
+        view.target,
+        terrain.heightfield.sample(view.target.x, view.target.z),
+        view.viewHeight,
+        activeRig.mode === 'map',
+      );
+      if (falling) lightChanged = true;
       // Both every frame: one rebuilding must not hold the other up.
       const lotsChanged = zoning?.layer.update(view.target, view.viewHeight) ?? false;
       const grownChanged = zoning?.grown.update(view.viewHeight) ?? false;
@@ -1282,10 +1374,18 @@ export async function startApp(container: HTMLElement): Promise<void> {
       }
       dirty = false;
 
-      if (camera instanceof THREE.PerspectiveCamera) {
-        // Haze that hides the edge of the data in the 3D view.
-        fog.near = Math.max(3_000, distance);
-        fog.far = Math.max(20_000, distance * 4);
+      // Haze that hides the edge of the data in the 3D view; rain, snow and fog add a haze
+      // that reaches the point looked at (in the map view too, where everything on the
+      // ground is about as far from the camera).
+      const haze = WEATHER[weatherKind()].haze;
+      if (camera instanceof THREE.PerspectiveCamera || haze > 0) {
+        fog.near = camera instanceof THREE.PerspectiveCamera ? Math.max(3_000, distance) : 0;
+        fog.far =
+          camera instanceof THREE.PerspectiveCamera ? Math.max(20_000, distance * 4) : Infinity;
+        if (haze > 0) {
+          fog.near = 0;
+          fog.far = Math.min(fog.far, distance / haze);
+        }
         scene.fog = fog;
       } else {
         scene.fog = null;

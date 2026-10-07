@@ -18,7 +18,7 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | City road closures feed | Live closures | Otvorena dozvola | ✅ copied every 15 min to the `live-data` branch (`.github/workflows/live-data.yml`); drawn in the app, routed around |
 | Croatian online news | Congestion hotspots | headlines and links only | ✅ 107 reports at 39 places (`pipeline/data/news.json`) |
 | City of Zagreb planned land use 2023 | Zoning: lots along streets, the plan's zones | Otvorena dozvola | ✅ in use (`pipeline/zoning.py`): lots kept off land the plan keeps open, each lot's planned use, the plan drawn in the Zones tool |
-| DHMZ weather XML | Live weather | Otvorena dozvola, DHMZ citation mandatory | M6 |
+| DHMZ weather XML | Live weather | Otvorena dozvola, DHMZ citation mandatory | ✅ in use: hourly observations for Zagreb copied every 15 min to the `live-data` branch (`weather.json`), shown and driven in the app (M6b) |
 | City of Zagreb budget and fee decisions; Croatian project costs | The game's money: income, building costs, upkeep | public documents and news reports; figures only | ✅ in use (`web/src/grow/economy.ts`, section 9) |
 
 ## Licences and attribution

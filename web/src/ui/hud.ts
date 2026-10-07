@@ -15,6 +15,8 @@ export interface HudCallbacks {
   onBudget?(enabled: boolean): void;
   /** Light as at midday whatever the time (true), or as the time of day. */
   onAlwaysDay?(on: boolean): void;
+  /** The weather: as observed in Zagreb now ('live'), or a kind the player picks. */
+  onWeather?(choice: string): void;
   onBuild?(enabled: boolean): void;
 }
 
@@ -100,6 +102,7 @@ export class Hud {
   private readonly pauseButton: HTMLButtonElement;
   private readonly speedButtons = new Map<number, HTMLButtonElement>();
   private readonly trafficButton: HTMLButtonElement;
+  private readonly weatherSelect: HTMLSelectElement;
   private readonly legend: HTMLElement;
   private readonly layers: HTMLElement;
   private readonly newsButton: HTMLButtonElement;
@@ -152,6 +155,12 @@ export class Hud {
     this.trafficButton.title = 'Colour roads by how fast traffic moves (T)';
     this.trafficButton.setAttribute('aria-pressed', 'false');
     this.trafficButton.addEventListener('click', () => this.toggleTrafficMap(callbacks));
+    this.weatherSelect = el('select', 'build-select hud-weather', mapRow);
+    this.weatherSelect.setAttribute('aria-label', 'Weather');
+    this.weatherSelect.title = "The weather: Zagreb's as observed now, or one to try";
+    this.weatherSelect.addEventListener('change', () =>
+      callbacks.onWeather?.(this.weatherSelect.value),
+    );
     this.legend = el('div', 'hud-legend', mapRow);
     this.legend.hidden = true;
 
@@ -354,6 +363,19 @@ export class Hud {
   enableBuild(): void {
     this.layers.hidden = false;
     this.buildButton.hidden = false;
+  }
+
+  /** The weather's choices: the live weather (its label, or why there is none) and the
+   * kinds to pick from; `chosen` is selected. */
+  setWeatherChoices(live: string, kinds: { id: string; label: string }[], chosen: string): void {
+    const options = [{ id: 'live', label: live }, ...kinds].map(({ id, label }) => {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = label;
+      return option;
+    });
+    this.weatherSelect.replaceChildren(...options);
+    this.weatherSelect.value = chosen;
   }
 
   /** Light as at midday (true) or as the time of day (`callbacks` given: tell the app). */

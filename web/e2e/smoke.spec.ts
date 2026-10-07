@@ -941,3 +941,49 @@ test('lights the city as the time of day: noon, and night with street lamps', as
 
   expect(errors).toEqual([]);
 });
+
+test("shows Zagreb's weather, and drives and looks as the weather picked", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  const ready = () =>
+    page.waitForFunction(() => window.__ZG__?.sim?.ready === true, null, { timeout: 150_000 });
+
+  await page.goto('./?start=12:00');
+  await ready();
+  // DHMZ's observation, copied by the live-data job.
+  const picker = page.getByRole('combobox', { name: 'Weather' });
+  await expect(picker.locator('option').first()).toHaveText(/^Live: (?!loading)/, {
+    timeout: 30_000,
+  });
+  const live = await page.evaluate(() => window.__ZG__!.weather!);
+  expect(live.choice).toBe('live');
+  const clearLight = await page.evaluate(() => window.__ZG__!.light!.intensity);
+
+  // Heavy snow: a dimmer sun, snow falling in the 3D view, slower traffic in the engine.
+  await picker.selectOption('heavySnow');
+  await expect.poll(() => page.evaluate(() => window.__ZG__!.weather!.kind)).toBe('heavySnow');
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__!.light!.intensity))
+    .toBeLessThan(live.kind === 'clear' ? clearLight * 0.5 : clearLight + 1);
+  await page.evaluate(() => {
+    window.__ZG__?.setView('3d');
+    window.__ZG__?.lookAt(300, 600, 500);
+  });
+  await page.waitForTimeout(4000);
+  await page.screenshot({ path: testInfo.outputPath('heavy-snow.png') });
+
+  // Kept for the next visit; back to the live weather.
+  await page.reload();
+  await ready();
+  await expect(picker).toHaveValue('heavySnow');
+  await picker.selectOption('live');
+  await expect.poll(() => page.evaluate(() => window.__ZG__!.weather!.choice)).toBe('live');
+
+  expect(errors).toEqual([]);
+});
