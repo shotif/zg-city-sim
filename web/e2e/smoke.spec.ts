@@ -873,3 +873,64 @@ test('grows buildings on zoned lots as the day goes on', async ({ page }, testIn
 
   expect(errors).toEqual([]);
 });
+
+test('lights the city as the time of day: noon, and night with street lamps', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(360_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  const ready = () =>
+    page.waitForFunction(
+      () => window.__ZG__?.sim?.ready === true && window.__ZG__?.streetLights !== undefined,
+      null,
+      { timeout: 150_000 },
+    );
+
+  // Noon: the sun high in the south, no lamps.
+  await page.goto('./?start=12:00');
+  await ready();
+  const noon = await page.evaluate(() => window.__ZG__!.light!);
+  expect(noon.night).toBe(0);
+  expect(noon.direction[1]).toBeGreaterThan(0.3);
+  expect(noon.direction[2]).toBeGreaterThan(0.3);
+  expect(await page.evaluate(() => window.__ZG__!.streetLights!.object.visible)).toBe(false);
+
+  // Half past eleven at night: dark sky, lamps along the streets, lit windows.
+  await page.goto('./?start=23:30');
+  await ready();
+  await expect(page.locator('.hud-sim-clock')).toHaveText(/^23:/);
+  const night = await page.evaluate(() => window.__ZG__!.light!);
+  expect(night.night).toBe(1);
+  expect(night.background).toBe(0x0b1424);
+  expect(await page.evaluate(() => window.__ZG__!.streetLights!.count)).toBeGreaterThan(50_000);
+  await page.evaluate(() => {
+    window.__ZG__?.setView('3d');
+    window.__ZG__?.lookAt(300, 900, 900);
+  });
+  await page.waitForFunction(() => {
+    const lamps = window.__ZG__!.streetLights!.object;
+    return lamps.visible && lamps.children.length > 0;
+  });
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: testInfo.outputPath('night.png') });
+
+  // Always day: light as at midday, whatever the time; kept for the next visit.
+  await page.getByRole('button', { name: 'Always day' }).click();
+  await expect.poll(() => page.evaluate(() => window.__ZG__!.light!.night)).toBe(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__!.streetLights!.object.visible))
+    .toBe(false);
+  await page.reload();
+  await ready();
+  await expect(page.getByRole('button', { name: 'Always day' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(await page.evaluate(() => window.__ZG__!.light!.night)).toBe(0);
+
+  expect(errors).toEqual([]);
+});

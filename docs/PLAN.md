@@ -231,11 +231,19 @@ Known gaps:
 
 **Plan (M6 Polish and live, 2026-10-07).** The city looks and sounds like the time of day and the weather it is having, its vehicles look like Zagreb's, it runs smoothly on a laptop and a phone, and ZET's trams and buses can be shown where they really are. Steps, each pushed to `main` when it works:
 
-- **M6a, day and night.**
+- **M6a, day and night** (done 2026-10-07).
   - The sun moves with the simulated time on today's date in Zagreb (45.81° N, 15.98° E): its height and direction set the light, the sky's colour and the shadows' direction. Dawn and dusk turn the sky orange; at night it is dark blue, with a little light left so the map stays readable.
   - At night street lights glow along the streets, windows light up in a share of buildings that falls through the night, and vehicles show headlights and tail lights.
   - A choice in the HUD: light as the time of day, or always day (the map as now).
   - Tests: sun position against published values for Zagreb (noon height on the solstices and equinox, sunrise and sunset times); a Playwright test at midnight and at noon.
+  - As built (`web/src/world/sun.ts`, `daylight.ts`, `nightLights.ts`, `streetLights.ts`):
+    - The sun's position comes from the Astronomical Almanac's low-precision formulas for the simulated time on today's date, on Zagreb's clock (summer time from the last Sunday of March to the last Sunday of October). It rises and sets within 2 minutes of published times (21 June: 05:06 and 20:48; 21 December: 07:34 and 16:14).
+    - The light and the sky's colour follow the sun's height through six stops set by eye: midday, golden hour, sunset, twilight, dusk and night. Below 2° under the horizon a faint moonlight from the south-west keeps the relief readable. There are no shadows yet.
+    - Street lamps: a pool of warm light every 40 m along each side of streets with a building within about 100 m (287,662 lamps before that filter). Motorways, service roads and tracks have none. They come on below the horizon and are full on 6° below it; seen from far out the pools grow, so the city glows. They are drawn after the ground and before buildings, without a depth test, so they lie on the coarse terrain however it slopes.
+    - Lit windows: a pattern on every wall drawn by the GPU (storeys 3 m high, a window every 3.2 m), each window lit or not by a hash of where it is. The share lit follows the hour, an estimate: 60 % at 20:00, 10 % from 02:00 to 05:00.
+    - Vehicles carry headlamps and tail lamps, the tail lamps bright when braking (the engine reports it), and at night a beam on the road ahead.
+    - The HUD's ☀ button (key `L`) keeps the light as at midday, kept in the browser. `?start=HH:MM` starts the simulation at another time of day.
+    - The simulation starts at 07:00, before sunrise from late October to early March, so the city often opens at dawn.
 - **M6b, weather.**
   - The live-data job copies DHMZ's hourly observations for Zagreb-Grič, Maksimir and the airport (temperature, wind, and the weather in words: clear, cloudy, rain, snow, fog) to the `live-data` branch every 15 minutes.
   - The app shows today's weather and draws it: cloud dims the light, rain and snow fall near the camera, fog shortens the view, roads look wet. The player can also pick the weather.

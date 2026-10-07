@@ -48,7 +48,7 @@ import { Hud, type HudCallbacks } from './ui/hud';
 import { NewsPanel } from './ui/newsPanel';
 import { ProjectsSection } from './ui/projectsSection';
 import { RoadDrawer } from './ui/roadDrawer';
-import { BuildingLayer, loadBuildings } from './world/buildingLayer';
+import { BuildingLayer, buildingCentres, loadBuildings } from './world/buildingLayer';
 import {
   ClosureLayer,
   type PlacedClosure,
@@ -64,6 +64,10 @@ import { RoadLayer } from './world/roadLayer';
 import { RoadNetwork, laneShapeHeights, loadRoadNetwork } from './world/roadNetwork';
 import { NewsLayer, loadNews, placeTraffic } from './world/newsLayer';
 import { loadTerrain } from './world/terrain';
+import { ALWAYS_DAY, type Lighting, lighting, litShare } from './world/daylight';
+import { litUniform, nightUniform } from './world/nightLights';
+import { BuiltArea, StreetLightLayer } from './world/streetLights';
+import { sunAt, zagrebOffset, zagrebToday } from './world/sun';
 import { TRAFFIC_BANDS, TrafficLayer } from './world/trafficLayer';
 import { VehicleLayer } from './world/vehicleLayer';
 
@@ -73,9 +77,21 @@ const PROJECT_COLOR = 0x12a4a0;
 
 /** Car trips per weekday without demand data: 767k residents × 1.84 trips × 46 % by car ÷ 1.3. */
 const DAILY_TRIPS = 500_000;
-/** The simulation starts at 07:00 after filling the streets from 06:50 at full speed. */
-const START_TIME = 6 * 3600 + 50 * 60;
-const WARM_UNTIL = 7 * 3600;
+/** The simulation starts at 07:00 after filling the streets from 06:50 at full speed, or
+ * at `?start=HH:MM` after filling them for ten minutes before. */
+const DEFAULT_START = 7 * 3600;
+const WARM = 10 * 60;
+
+/** Simulated time (s since midnight) to start at, from `?start=HH:MM`. */
+export function startOf(param: string | null): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(param ?? '');
+  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return DEFAULT_START;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60;
+}
+const START = startOf(new URLSearchParams(location.search).get('start'));
+const START_TIME = Math.max(0, START - WARM);
+const WARM_UNTIL = START;
+const LIGHT_KEY = 'zg-city-sim:always-day';
 const WASM_URL = `${import.meta.env.BASE_URL}sim/zg_sim.wasm`;
 
 /** Arrays of a packed data layer (by its index path), or undefined if it fails to load. */
@@ -206,6 +222,9 @@ export interface DebugApi {
   zoning?: ZoningTool;
   /** The City's money. */
   budget?: BudgetTool;
+  /** The light now, and the simulated time it is for (M6a). */
+  light?: Lighting & { time: number };
+  streetLights?: StreetLightLayer;
 }
 
 declare global {
@@ -259,7 +278,23 @@ export async function startApp(container: HTMLElement): Promise<void> {
   const editsFromLink = /[#&]edits=([^&]+)/.exec(location.hash)?.[1];
   let edits: Edit[] = loadSavedEdits();
   let editWordsNow: Uint32Array | undefined;
+  let alwaysDay = false;
+  try {
+    alwaysDay = localStorage.getItem(LIGHT_KEY) === '1';
+  } catch {
+    // Storage blocked: light as the time of day.
+  }
   const hudCallbacks: HudCallbacks = {
+    onAlwaysDay: (on) => {
+      alwaysDay = on;
+      try {
+        if (on) localStorage.setItem(LIGHT_KEY, '1');
+        else localStorage.removeItem(LIGHT_KEY);
+      } catch {
+        // Not kept: storage blocked.
+      }
+      invalidateView();
+    },
     onMode: (mode) => rig?.setMode(mode),
     onRotateIso: (direction) => rig?.rotateIso(direction),
     onFaceNorth: () => rig?.faceNorth(),
@@ -324,6 +359,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     },
   };
   const hud = new Hud(container, hudCallbacks);
+  hud.setAlwaysDay(alwaysDay);
   // The City's money: building costs it, what grows pays into it (M5e).
   const budgetTool = new BudgetTool({
     hud: hud.element,
@@ -391,9 +427,33 @@ export async function startApp(container: HTMLElement): Promise<void> {
     scene.add(outside);
 
     // Cartographic light from the north-west, so relief reads well on the map.
+    // By day, light from the sun where it is (M6a); always-day light comes from the
+    // north-west so relief reads well on the map.
     const sun = new THREE.DirectionalLight(0xfff3e0, 2.6);
     sun.position.set(-1, 1.4, -0.9);
-    scene.add(sun, new THREE.HemisphereLight(0xdde8f5, 0x3b3a30, 1.1));
+    const sky = new THREE.HemisphereLight(0xdde8f5, 0x3b3a30, 1.1);
+    scene.add(sun, sky);
+    const day = zagrebToday();
+    let lightKey = '';
+    /** Light the scene for simulated time `t` (s); whether it changed. */
+    const applyLight = (t: number): boolean => {
+      const light: Lighting = alwaysDay ? ALWAYS_DAY : lighting(sunAt(day, t));
+      const lit = litShare(t);
+      const key = `${light.color}:${light.intensity.toFixed(3)}:${light.background}:${light.night.toFixed(3)}:${lit.toFixed(2)}:${light.direction.map((v) => v.toFixed(2))}`;
+      if (key === lightKey) return false;
+      lightKey = key;
+      sun.position.set(...light.direction);
+      sun.color.setHex(light.color);
+      sun.intensity = light.intensity;
+      sky.color.setHex(light.sky);
+      sky.groundColor.setHex(light.ground);
+      sky.intensity = light.ambient;
+      SKY.setHex(light.background);
+      nightUniform.value = light.night;
+      litUniform.value = lit;
+      debug.light = { ...light, time: t };
+      return true;
+    };
 
     rig = new CameraRig(renderer.domElement, {
       bounds: frame.bounds,
@@ -873,6 +933,22 @@ export async function startApp(container: HTMLElement): Promise<void> {
 
     // Roads load after the terrain is on screen, then traffic starts on them.
     let roads: RoadLayer | undefined;
+    let streetLights: StreetLightLayer | undefined;
+    // Street lamps once both the roads and the buildings are in: streets among buildings.
+    let lampInputs: { net?: RoadNetwork; height?: HeightFn; centres?: Float32Array } = {};
+    const lightStreets = (net?: RoadNetwork, height?: HeightFn, centres?: Float32Array) => {
+      lampInputs = {
+        net: net ?? lampInputs.net,
+        height: height ?? lampInputs.height,
+        centres: centres ?? lampInputs.centres,
+      };
+      const { net: n, height: h, centres: c } = lampInputs;
+      if (!n || !h || !c || streetLights) return;
+      streetLights = new StreetLightLayer(n, h, new BuiltArea(c));
+      scene.add(streetLights.object);
+      debug.streetLights = streetLights;
+      invalidate();
+    };
     let vehicles: VehicleLayer | undefined;
     let news: NewsLayer | undefined;
     let speeds: Uint8Array | undefined;
@@ -896,6 +972,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         .then(async (net) => {
           roads = new RoadLayer(net, surface);
           scene.add(roads.object);
+          lightStreets(net, surface);
           debug.roads = roads;
           invalidate();
           // Roads drawn change the network: the layers drawn from it are made again.
@@ -1051,6 +1128,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         .then((data) => {
           buildings = new BuildingLayer(data, surface);
           scene.add(buildings.object);
+          lightStreets(undefined, undefined, buildingCentres(data));
           debug.buildings = buildings;
           invalidate();
         })
@@ -1174,6 +1252,17 @@ export async function startApp(container: HTMLElement): Promise<void> {
           5,
         ) ?? false;
       const trafficMapChanged = traffic?.update(view.viewHeight) ?? false;
+      // The light of the simulated time of day (the clock in Zagreb without a simulation).
+      const nowMs = Date.now();
+      const clock = sim?.cur
+        ? sim.displayTime(performance.now())
+        : (((nowMs / 1000 + zagrebOffset(nowMs) * 3600) % 86_400) + 86_400) % 86_400;
+      let lightChanged = applyLight(clock);
+      // Lit windows only while it is dark (they cost something on every wall pixel).
+      const dark = nightUniform.value > 0.01;
+      if (buildings?.setNight(dark)) lightChanged = true;
+      if (zoning?.grown.setNight(dark)) lightChanged = true;
+      const lampsChanged = streetLights?.update(view.target, view.viewHeight) ?? false;
       // Both every frame: one rebuilding must not hold the other up.
       const lotsChanged = zoning?.layer.update(view.target, view.viewHeight) ?? false;
       const grownChanged = zoning?.grown.update(view.viewHeight) ?? false;
@@ -1185,7 +1274,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
         !buildingsChanged &&
         !trafficMoving &&
         !trafficMapChanged &&
-        !zonesChanged
+        !zonesChanged &&
+        !lightChanged &&
+        !lampsChanged
       ) {
         return;
       }

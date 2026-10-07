@@ -1,8 +1,15 @@
 import * as THREE from 'three/webgpu';
 
 import { INFO, RENDER } from '../sim/wasm';
+import { GLOW_ORDER, SOLID_ORDER, glowMaterial, nightUniform } from './nightLights';
 import type { HeightFn } from './roadGeometry';
-import { PAINT, VEHICLE_PARTS, boxesGeometry, vehicleColor } from './vehicleGeometry';
+import {
+  PAINT,
+  VEHICLE_LAMPS,
+  VEHICLE_PARTS,
+  boxesGeometry,
+  vehicleColor,
+} from './vehicleGeometry';
 
 /** Vehicles sit on the road surface, which is drawn this far above the ground. */
 const ROAD_LIFT = 0.12;
@@ -73,9 +80,19 @@ export class VehicleLayer {
   readonly object = new THREE.Group();
   private readonly meshes: THREE.InstancedMesh[] = [];
   private readonly fixedMeshes: THREE.InstancedMesh[] = [];
+  /** Headlamps, tail lamps and headlight beams (M6a), sharing the vehicles' transforms. */
+  private readonly headMeshes: THREE.InstancedMesh[] = [];
+  private readonly tailMeshes: THREE.InstancedMesh[] = [];
+  private readonly beamMeshes: THREE.InstancedMesh[] = [];
   private readonly paintGeometries: THREE.BufferGeometry[];
   private readonly fixedGeometries: THREE.BufferGeometry[];
+  private readonly headGeometries: THREE.BufferGeometry[];
+  private readonly tailGeometries: THREE.BufferGeometry[];
+  private readonly beamGeometries: THREE.BufferGeometry[];
   private readonly material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  /** Lamps glow: unlit, their colour times the instance's brightness. */
+  private readonly lampMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
+  private readonly beamMaterial = glowMaterial(0xfff2cc, 0.25);
   private readonly pose = new Float64Array(4);
   private readonly color = new THREE.Color();
   /** Vehicles drawn in the last update. */
@@ -89,6 +106,14 @@ export class VehicleLayer {
     this.fixedGeometries = VEHICLE_PARTS.map((parts) =>
       boxesGeometry(parts.filter((part) => part.color !== PAINT)),
     );
+    this.headGeometries = VEHICLE_LAMPS.map((l) => boxesGeometry(l.head));
+    this.tailGeometries = VEHICLE_LAMPS.map((l) => boxesGeometry(l.tail));
+    // A beam on the road ahead: 18 m long, a little wider than the vehicle.
+    this.beamGeometries = VEHICLE_LAMPS.map((l) =>
+      new THREE.PlaneGeometry(l.halfWidth * 3.2, 18)
+        .rotateX(-Math.PI / 2)
+        .translate(0, -ROAD_LIFT + 0.05, l.front + 8),
+    );
     for (let type = 0; type < VEHICLE_PARTS.length; type++) this.makeMeshes(type, 256);
   }
 
@@ -99,7 +124,20 @@ export class VehicleLayer {
     mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     const fixed = new THREE.InstancedMesh(this.fixedGeometries[type], this.material, capacity);
     fixed.instanceMatrix = mesh.instanceMatrix;
-    for (const m of [mesh, fixed]) {
+    const lamps = (geometry: THREE.BufferGeometry, material: THREE.Material, colored: boolean) => {
+      const m = new THREE.InstancedMesh(geometry, material, capacity);
+      m.instanceMatrix = mesh.instanceMatrix;
+      if (colored) {
+        m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+        m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      }
+      return m;
+    };
+    const head = lamps(this.headGeometries[type], this.lampMaterial, true);
+    const tail = lamps(this.tailGeometries[type], this.lampMaterial, true);
+    const beam = lamps(this.beamGeometries[type], this.beamMaterial, false);
+    for (const m of [mesh, fixed, head, tail, beam]) {
+      m.renderOrder = m === beam ? GLOW_ORDER : SOLID_ORDER;
       m.frustumCulled = false;
       m.count = 0;
       m.name = `vehicles ${type}`;
@@ -107,12 +145,21 @@ export class VehicleLayer {
     }
     this.meshes[type] = mesh;
     this.fixedMeshes[type] = fixed;
+    this.headMeshes[type] = head;
+    this.tailMeshes[type] = tail;
+    this.beamMeshes[type] = beam;
   }
 
   private ensureCapacity(type: number, needed: number): THREE.InstancedMesh {
     const mesh = this.meshes[type];
     if (needed > mesh.instanceMatrix.count) {
-      for (const m of [mesh, this.fixedMeshes[type]]) {
+      for (const m of [
+        mesh,
+        this.fixedMeshes[type],
+        this.headMeshes[type],
+        this.tailMeshes[type],
+        this.beamMeshes[type],
+      ]) {
         this.object.remove(m);
         m.dispose();
       }
@@ -137,6 +184,11 @@ export class VehicleLayer {
     }
     const meshes = counts.map((n, type) => this.ensureCapacity(type, n));
     const used = [0, 0, 0, 0];
+    // Lamps: headlamps pale by day and bright at night; tail lamps dim by day, brighter at
+    // night, brightest when braking.
+    const night = nightUniform.value;
+    const headLevel = 0.55 + 0.45 * night;
+    const tailLevel = 0.3 + 0.35 * night;
     const r2 = view.radius * view.radius;
     const { x: tx, z: tz } = view.target;
     const pose = this.pose;
@@ -176,14 +228,23 @@ export class VehicleLayer {
       colors[k * 3] = this.color.r;
       colors[k * 3 + 1] = this.color.g;
       colors[k * 3 + 2] = this.color.b;
+      const head = this.headMeshes[type].instanceColor!.array as Float32Array;
+      head.fill(headLevel, k * 3, k * 3 + 3);
+      const tail = this.tailMeshes[type].instanceColor!.array as Float32Array;
+      tail.fill(info & INFO.brake ? 1 : tailLevel, k * 3, k * 3 + 3);
     }
     this.drawn = 0;
     meshes.forEach((mesh, type) => {
       mesh.count = used[type];
       this.fixedMeshes[type].count = used[type];
+      this.headMeshes[type].count = used[type];
+      this.tailMeshes[type].count = used[type];
+      this.beamMeshes[type].count = night > 0.02 ? used[type] : 0;
       this.drawn += used[type];
       mesh.instanceMatrix.needsUpdate = true;
       mesh.instanceColor!.needsUpdate = true;
+      this.headMeshes[type].instanceColor!.needsUpdate = true;
+      this.tailMeshes[type].instanceColor!.needsUpdate = true;
     });
   }
 }

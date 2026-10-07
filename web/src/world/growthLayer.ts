@@ -2,7 +2,8 @@ import * as THREE from 'three/webgpu';
 
 import { ARCHETYPES, type Grown, finished, footprint, heights, random } from '../grow/growth';
 import type { Lots } from '../grow/lots';
-import { BuildingMeshBuilder, signedArea } from './buildingLayer';
+import { BuildingMaterials, BuildingMeshBuilder, signedArea } from './buildingLayer';
+import { SOLID_ORDER } from './nightLights';
 import type { HeightFn } from './roadGeometry';
 
 const CHUNK = 500;
@@ -29,11 +30,7 @@ export class GrowthLayer {
   /** Buildings under way, to redraw when finished. */
   private readonly underway = new Set<number>();
   private now = 0;
-  private readonly material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.85,
-    metalness: 0,
-  });
+  private readonly materials = new BuildingMaterials();
 
   constructor(
     private readonly lots: Lots,
@@ -41,6 +38,11 @@ export class GrowthLayer {
     private readonly buildings: readonly (Grown | undefined)[],
   ) {
     this.object.name = 'grown buildings';
+  }
+
+  /** Lit windows while it is dark; whether anything changed. */
+  setNight(night: boolean): boolean {
+    return this.materials.set(night, this.object);
   }
 
   /** A building added (or changed). */
@@ -119,7 +121,8 @@ export class GrowthLayer {
     }
     const geometry = builder.toGeometry();
     if (!geometry) return;
-    const mesh = new THREE.Mesh(geometry, this.material);
+    const mesh = new THREE.Mesh(geometry, this.materials.current);
+    mesh.renderOrder = SOLID_ORDER;
     mesh.name = `grown ${key}`;
     this.object.add(mesh);
     this.meshes.set(key, mesh);

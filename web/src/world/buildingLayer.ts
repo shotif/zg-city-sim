@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 
 import { type PackedIndex, loadPacked } from '../data/packed';
 import { DATA_URL } from '../manifest';
+import { SOLID_ORDER, windowGlow } from './nightLights';
 import type { HeightFn } from './roadGeometry';
 
 export interface BuildingIndex extends PackedIndex {
@@ -283,16 +284,62 @@ export interface BuildingView {
   perspective: boolean;
 }
 
+/** Each building's centre (x, z pairs): the mean of its outer ring's points. */
+export function buildingCentres(data: Buildings): Float32Array {
+  const out = new Float32Array(data.count * 2);
+  const { points } = data;
+  for (let b = 0; b < data.count; b++) {
+    const { start, end } = data.rings(b)[0];
+    let [x, z] = [0, 0];
+    for (let p = start; p < end; p++) {
+      x += points[p * 2];
+      z += points[p * 2 + 1];
+    }
+    out[b * 2] = x / (end - start);
+    out[b * 2 + 1] = z / (end - start);
+  }
+  return out;
+}
+
+/**
+ * Building materials by day and by night (M6a): the night one draws lit windows, which
+ * costs something on every wall pixel, so it is used only while it is dark.
+ */
+export class BuildingMaterials {
+  private readonly day = new THREE.MeshStandardNodeMaterial({
+    vertexColors: true,
+    roughness: 0.85,
+    metalness: 0,
+  });
+  private readonly night = new THREE.MeshStandardNodeMaterial({
+    vertexColors: true,
+    roughness: 0.85,
+    metalness: 0,
+  });
+  current: THREE.Material = this.day;
+
+  constructor() {
+    this.night.emissiveNode = windowGlow();
+  }
+
+  /** Day or night for every mesh under `object`; whether it changed. */
+  set(night: boolean, object: THREE.Object3D): boolean {
+    const next = night ? this.night : this.day;
+    if (next === this.current) return false;
+    this.current = next;
+    object.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.material = next;
+    });
+    return true;
+  }
+}
+
 /** Extruded buildings, built in chunks around the camera like the roads. */
 export class BuildingLayer {
   readonly object = new THREE.Group();
   private readonly chunkBuildings = new Map<string, number[]>();
   private readonly chunks = new Map<string, { mesh: THREE.Mesh | null; lastUsed: number }>();
-  private readonly material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.85,
-    metalness: 0,
-  });
+  private readonly materials = new BuildingMaterials();
   private frame = 0;
 
   constructor(
@@ -315,6 +362,11 @@ export class BuildingLayer {
       if (list) list.push(b);
       else this.chunkBuildings.set(key, [b]);
     }
+  }
+
+  /** Lit windows while it is dark; whether anything changed. */
+  setNight(night: boolean): boolean {
+    return this.materials.set(night, this.object);
   }
 
   get builtChunks(): number {
@@ -442,7 +494,8 @@ export class BuildingLayer {
     }
     const geometry = builder.toGeometry();
     if (!geometry) return null;
-    const mesh = new THREE.Mesh(geometry, this.material);
+    const mesh = new THREE.Mesh(geometry, this.materials.current);
+    mesh.renderOrder = SOLID_ORDER;
     mesh.name = `buildings ${key}`;
     return mesh;
   }

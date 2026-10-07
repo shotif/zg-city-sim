@@ -13,6 +13,8 @@ export interface HudCallbacks {
   onClosures?(enabled: boolean): void;
   onZones?(enabled: boolean): void;
   onBudget?(enabled: boolean): void;
+  /** Light as at midday whatever the time (true), or as the time of day. */
+  onAlwaysDay?(on: boolean): void;
   onBuild?(enabled: boolean): void;
 }
 
@@ -105,6 +107,8 @@ export class Hud {
   private readonly buildButton: HTMLButtonElement;
   private readonly zonesButton: HTMLButtonElement;
   private readonly budgetButton: HTMLButtonElement;
+  private readonly dayButton: HTMLButtonElement;
+  private alwaysDay = false;
   private simState?: HudSim;
   private trafficMap = false;
   private news = false;
@@ -211,6 +215,14 @@ export class Hud {
       button.addEventListener('click', () => callbacks.onRotateIso(direction));
     }
 
+    this.dayButton = el('button', 'hud-button hud-icon', toolbar);
+    this.dayButton.type = 'button';
+    this.dayButton.textContent = '☀';
+    this.dayButton.title = 'Always day: light as at midday whatever the time (L)';
+    this.dayButton.setAttribute('aria-label', 'Always day');
+    this.dayButton.setAttribute('aria-pressed', 'false');
+    this.dayButton.addEventListener('click', () => this.setAlwaysDay(!this.alwaysDay, callbacks));
+
     this.compass = el('button', 'hud-panel hud-compass', this.root);
     this.compass.type = 'button';
     this.compass.title = 'Face north';
@@ -266,6 +278,8 @@ export class Hud {
         this.setZones(!this.zones, callbacks);
       } else if ((event.key === 'm' || event.key === 'M') && !this.budgetButton.hidden) {
         this.setBudget(!this.budget, callbacks);
+      } else if (event.key === 'l' || event.key === 'L') {
+        this.setAlwaysDay(!this.alwaysDay, callbacks);
       } else if ((event.key === '+' || event.key === '-') && this.simState) {
         const i = SIM_SPEEDS.indexOf(this.simState.speed) + (event.key === '+' ? 1 : -1);
         const speed = SIM_SPEEDS[Math.min(SIM_SPEEDS.length - 1, Math.max(0, i))];
@@ -340,6 +354,13 @@ export class Hud {
   enableBuild(): void {
     this.layers.hidden = false;
     this.buildButton.hidden = false;
+  }
+
+  /** Light as at midday (true) or as the time of day (`callbacks` given: tell the app). */
+  setAlwaysDay(on: boolean, callbacks?: HudCallbacks): void {
+    this.alwaysDay = on;
+    this.dayButton.setAttribute('aria-pressed', String(on));
+    callbacks?.onAlwaysDay?.(on);
   }
 
   /** Offer the Budget panel. */

@@ -137,6 +137,58 @@ export const VEHICLE_PARTS: Part[][] = [
   ],
 ];
 
+/** Lamps by vehicle type: headlamps at the front and tail lamps at the back (boxes in
+ * vehicle space, standing 3 cm proud of the body), and the length of the vehicle's front
+ * from its centre (where its headlight beam starts). */
+export interface Lamps {
+  head: Part[];
+  tail: Part[];
+  front: number;
+  halfWidth: number;
+}
+
+const HEAD = 0xfff6d8;
+const TAIL = 0xff2a1a;
+const pair = (
+  z0: number,
+  z1: number,
+  y0: number,
+  y1: number,
+  x0: number,
+  x1: number,
+  color: number,
+): Part[] => [
+  { min: [x0, y0, z0], max: [x1, y1, z1], color },
+  { min: [-x1, y0, z0], max: [-x0, y1, z1], color },
+];
+
+export const VEHICLE_LAMPS: Lamps[] = [
+  {
+    head: pair(2.24, 2.28, 0.55, 0.7, 0.5, 0.82, HEAD),
+    tail: pair(-2.28, -2.24, 0.6, 0.76, 0.52, 0.84, TAIL),
+    front: 2.25,
+    halfWidth: 0.9,
+  },
+  {
+    head: pair(4.99, 5.03, 0.75, 0.95, 0.75, 1.1, HEAD),
+    tail: pair(-5.03, -4.99, 0.6, 0.8, 0.85, 1.2, TAIL),
+    front: 5.0,
+    halfWidth: 1.25,
+  },
+  {
+    head: pair(5.99, 6.03, 0.5, 0.75, 0.75, 1.15, HEAD),
+    tail: pair(-6.03, -5.99, 0.6, 0.9, 0.85, 1.2, TAIL),
+    front: 6.0,
+    halfWidth: 1.27,
+  },
+  {
+    head: pair(15.99, 16.03, 0.7, 0.9, 0.55, 0.95, HEAD),
+    tail: pair(-16.03, -15.99, 0.7, 0.9, 0.55, 0.95, TAIL),
+    front: 16.0,
+    halfWidth: 1.15,
+  },
+];
+
 /** Common car colours in Croatia, weighted (white, greys, black, silver, blues, reds…). */
 const CAR_COLORS: [number, number][] = [
   [0xf2f2ef, 24],
