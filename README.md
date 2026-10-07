@@ -51,7 +51,8 @@ npm run dev
 ```
 
 Then open the URL Vite prints. Traffic starts at 07:00 on a weekday, after a few seconds of
-filling the streets; add `?start=22:30` to the address to start at another time of day.
+filling the streets; add `?start=22:30` to the address to start at another time of day, and
+`?perf` to see frames a second, draw calls, triangles and the engine's time per step.
 
 To run the engine natively on the same data (faster to iterate on, with a breakdown of where
 vehicles are held up):
@@ -61,7 +62,10 @@ gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
 cd sim
 cargo test
 cargo run --release --example run -- ../web/public/data/network 7 30   # 07:00, 30 minutes
+cargo run --release --example routes -- ../web/public/data/network     # time route searches
 ```
+
+Add `--features profile` to the `run` example to see where each step's time goes.
 
 To check the simulation against traffic counts (a full weekday takes about an hour):
 

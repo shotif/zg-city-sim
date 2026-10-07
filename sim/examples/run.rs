@@ -364,6 +364,12 @@ fn main() {
         s.routes,
         s.route_settled as f64 / s.routes.max(1) as f64
     );
+    let [searches, failed, found_settled, failed_settled] = engine.route_counts();
+    println!(
+        "route searches: {searches}, {failed} failed; {:.0} edges settled per search found, {:.0} per search failed",
+        found_settled as f64 / (searches - failed).max(1) as f64,
+        failed_settled as f64 / failed.max(1) as f64
+    );
     println!("removed vehicles were: {:?}", s.teleport_reasons);
     let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
     places.sort_unstable_by(|a, b| b.cmp(a));
@@ -421,6 +427,10 @@ fn main() {
             .zip(engine.phase_seconds)
             .map(|(n, t)| format!("{n} {:.1} s", t))
             .collect();
-        println!("time by phase: {}", parts.join(", "));
+        println!(
+            "time by phase: {}; route searches {:.1} s",
+            parts.join(", "),
+            engine.route_seconds()
+        );
     }
 }

@@ -39,8 +39,8 @@ Read these before changing anything:
 | `sim/src/transit.rs` | Trams and buses on timetable. |
 | `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
-| `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck), `day.rs` (a whole weekday, for validation) and `compare.rs` (one network through the morning peak, for a project's before and after). |
-| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles and their models, traffic map, closures, news, edits, the sun, daylight and night lights, the weather); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, roundabouts and signal programs, built into the network the engine runs) and the junctions' movements for the signal editor (`signals.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool, buildings that grow and the homes and jobs they add to the traffic's demand, land value and demand per zone, the budget); `src/ui/` the HUD and panels; `src/camera/` the views. |
+| `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck; `--features profile` times each phase and the route searches), `day.rs` (a whole weekday, for validation), `compare.rs` (one network through the morning peak, for a project's before and after) and `routes.rs` (times route searches, and how much longer routes get with other heuristic weights). |
+| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (terrain in tiles coarser with distance, roads, buildings, vehicles and their models, traffic map, closures, news, edits, the sun, daylight and night lights, the weather); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, roundabouts and signal programs, built into the network the engine runs) and the junctions' movements for the signal editor (`signals.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool, buildings that grow and the homes and jobs they add to the traffic's demand, land value and demand per zone, the budget); `src/ui/` the HUD, panels, sound and the `?perf` overlay; `src/camera/` the views. |
 | `.github/workflows/` | `deploy.yml` (build, test, deploy main) and `live-data.yml` (copies the City's closures feed and DHMZ's weather in Zagreb to the `live-data` branch every 15 minutes). |
 
 ## Commands
@@ -72,6 +72,7 @@ cd .. && python -m pipeline.projects compare <id> /tmp/p.json /tmp/today.json /t
 Environment variables for the native runs:
 - `DEMAND_SCALE=0.7` overrides the calibrated share of demand.
 - `DEBUG_EDGES=123,456` logs the vehicles removed from those edges, with what they see ahead.
+- `SEED=2` (the `day` example) runs the same day with another seed, to see how much days vary.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite
@@ -84,8 +85,10 @@ Environment variables for the native runs:
 - **Project comparisons are noisy:** two runs of today's roads with other seeds differ by about 16 % in delay over the morning peak. Compare roads near a project, not the whole network, and use the mean of two runs of today.
 - **Ids change with the network:** rebuilding the network with different netconvert options renumbers edges, lanes and links. Validate a day run against the network it ran on: `validate.py` checks the edge count.
 - **Day runs are slow:** a full simulated day takes about an hour on one core. To compare variants, run them in parallel, each built into its own `CARGO_TARGET_DIR`, so rebuilding never touches a running binary.
+- **Routes are validated too:** a faster route search that picks other routes moves the day's counts (a weighted heuristic cost 3 of 13 stations within ±25 %). Check route changes with a day run against two seeds of today's.
 - **Runs vary:** under congestion, results differ from run to run. Compare whole days, and change one thing at a time where you can.
 - **Process matching:** `pkill -f` and `pgrep -f` with a pattern that also appears in your own command line match your shell and can kill it. Use `pgrep -x day` or PIDs.
+- **Measuring speed headless:** in headless Chromium the GPU is emulated on the CPU and takes most of the cores, so frame rates mean nothing and the simulation worker runs about half as fast as it would. Count triangles and draw calls (`?perf`, `__ZG__.perf`), and time the engine natively or its WebAssembly in Node, which run at the same speed.
 - **Waiting:** foreground `sleep` is blocked in the cloud environment. Wait for long runs with a background loop or the Monitor tool.
 - **Network rules:** never disable TLS verification or unset `HTTPS_PROXY`. Report 403/407 denials instead of working around them.
 - **Untrusted downloads:** downloaded files go in their own directory, and Python that reads them runs with `-I`.

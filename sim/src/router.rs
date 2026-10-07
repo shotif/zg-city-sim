@@ -29,15 +29,28 @@ const FAR: u16 = u16::MAX;
 pub struct Landmarks {
     /// Compact index of each edge in the tables (NONE for junction-internal edges).
     slot: Vec<u32>,
-    /// Per edge slot and landmark `l`: `table[(slot * count + l) * 2]` is the time from
-    /// the landmark to the edge, `+ 1` the time from the edge to the landmark. One edge's
-    /// values are contiguous, so a bound costs one or two cache lines.
-    table: Vec<u16>,
-    count: usize,
+    /// One row of `ROW` values per edge slot: the times from each landmark to the edge, then
+    /// those from the edge to each landmark (FAR where there is no way, and for landmarks
+    /// beyond `edges.len()`). A row is contiguous, so a bound costs one or two cache lines.
+    table: Vec<Row>,
     pub edges: Vec<u32>,
     /// Free-flow time of each edge the tables were built on: bounds stay valid while no
     /// edge is faster than this.
     pub free_time: Vec<f32>,
+}
+
+/// Values per edge in the landmark tables.
+const ROW: usize = 2 * LANDMARKS;
+
+/// One edge's landmark times.
+#[derive(Clone, Copy)]
+struct Row([u16; ROW]);
+
+/// A search target's landmark times, as the bound uses them: where a time is missing, a
+/// value that makes that landmark's term negative (so it never raises the bound).
+struct Target {
+    from: [i32; LANDMARKS],
+    to: [i32; LANDMARKS],
 }
 
 impl Landmarks {
@@ -57,40 +70,50 @@ impl Landmarks {
                 .all(|(&now, &then)| now >= then * 0.999)
     }
 
-    /// Lower bound on the travel time from edge `e` to edge `t` (whose table entries are
-    /// `t_from`/`t_to`, looked up once per query).
+    /// Lower bound on the travel time from edge `e` to the target.
     #[inline]
-    fn bound(&self, e: u32, t_from: &[u16; LANDMARKS], t_to: &[u16; LANDMARKS]) -> f32 {
+    fn bound(&self, e: u32, t: &Target) -> f32 {
         let s = self.slot[e as usize];
         if s == NONE {
             return 0.0;
         }
+        let row = &self.table[s as usize].0;
         let mut best = 0i32;
-        let row = &self.table[s as usize * self.count * 2..(s as usize + 1) * self.count * 2];
-        for l in 0..self.count {
-            let (fe, te) = (row[l * 2], row[l * 2 + 1]);
-            // Triangle inequality both ways around landmark l (the -1 absorbs rounding).
-            if fe != FAR && t_from[l] != FAR {
-                best = best.max(t_from[l] as i32 - fe as i32 - 1);
-            }
-            if te != FAR && t_to[l] != FAR {
-                best = best.max(te as i32 - t_to[l] as i32 - 1);
-            }
+        // Triangle inequality both ways around each landmark (the -1 absorbs rounding). An
+        // edge's missing time is FAR: from a landmark it makes the term negative; to one it
+        // is left out. Written without branches, so it vectorises.
+        for l in 0..LANDMARKS {
+            let (fe, te) = (row[l] as i32, row[LANDMARKS + l] as i32);
+            let a = t.from[l] - fe - 1;
+            let b = if te == FAR as i32 {
+                -1
+            } else {
+                te - t.to[l] - 1
+            };
+            best = best.max(a).max(b);
         }
         best as f32
     }
 
-    fn target(&self, t: u32) -> ([u16; LANDMARKS], [u16; LANDMARKS]) {
-        let mut tf = [FAR; LANDMARKS];
-        let mut tt = [FAR; LANDMARKS];
+    fn target(&self, t: u32) -> Target {
+        // Missing at the target: from a landmark, the term goes negative; to one, likewise.
+        let mut target = Target {
+            from: [-(FAR as i32) * 2; LANDMARKS],
+            to: [FAR as i32 * 2; LANDMARKS],
+        };
         let s = self.slot[t as usize];
         if s != NONE {
-            for l in 0..self.count {
-                tf[l] = self.table[(s as usize * self.count + l) * 2];
-                tt[l] = self.table[(s as usize * self.count + l) * 2 + 1];
+            let row = &self.table[s as usize].0;
+            for l in 0..LANDMARKS {
+                if row[l] != FAR {
+                    target.from[l] = row[l] as i32;
+                }
+                if row[LANDMARKS + l] != FAR {
+                    target.to[l] = row[LANDMARKS + l] as i32;
+                }
             }
         }
-        (tf, tt)
+        target
     }
 }
 
@@ -99,7 +122,7 @@ impl Landmarks {
 pub struct LandmarkBuild {
     slot: Vec<u32>,
     edges: Vec<u32>,
-    table: Vec<u16>,
+    table: Vec<Row>,
     /// Free-flow time of each edge the tables are built on.
     free_time: Vec<f32>,
     pred_offset: Vec<u32>,
@@ -169,7 +192,7 @@ impl LandmarkBuild {
         }
         let edges: Vec<u32> = best.iter().filter(|b| b.0 != NONE).map(|b| b.0).collect();
         LandmarkBuild {
-            table: vec![FAR; edges.len() * n * 2],
+            table: vec![Row([FAR; ROW]); n],
             slot,
             edges,
             free_time: free_time.to_vec(),
@@ -192,7 +215,6 @@ impl LandmarkBuild {
             return true;
         }
         let (l, forward) = (self.done / 2, self.done.is_multiple_of(2));
-        let count = self.edges.len();
         let landmark = self.edges[l];
         let (dist, heap, table) = (&mut self.dist, &mut self.heap, &mut self.table);
         dist.fill(f32::INFINITY);
@@ -206,8 +228,8 @@ impl LandmarkBuild {
             }
             let s = self.slot[e as usize];
             if s != NONE {
-                let i = (s as usize * count + l) * 2 + usize::from(!forward);
-                table[i] = g.min(FAR as f32 - 1.0) as u16;
+                let i = if forward { l } else { LANDMARKS + l };
+                table[s as usize].0[i] = g.min(FAR as f32 - 1.0) as u16;
             }
             let mut relax = |next: u32, cost: f32| {
                 let c = g + cost;
@@ -237,7 +259,6 @@ impl LandmarkBuild {
     /// The finished tables, and the free-flow times they were built on.
     pub fn finish(self) -> Landmarks {
         Landmarks {
-            count: self.edges.len(),
             slot: self.slot,
             table: self.table,
             edges: self.edges,
@@ -246,30 +267,66 @@ impl LandmarkBuild {
     }
 }
 
+/// A heap key: the estimate's bits (non-negative floats order as their bits) above the
+/// edge's complement, so of equal estimates the higher-numbered edge comes first.
+#[inline]
+fn key(f: f32, edge: u32) -> u64 {
+    (u64::from(f.to_bits()) << 32) | u64::from(!edge)
+}
+
+/// The estimate and the edge of a heap key.
+#[inline]
+fn unkey(key: u64) -> (f32, u32) {
+    (f32::from_bits((key >> 32) as u32), !(key as u32))
+}
+
+/// Search state of one edge: the best time found to its end, the heuristic estimate from
+/// there (computed once per search), the edge before it, and the search it belongs to.
+/// Kept together so a relaxation touches one cache line.
+#[derive(Clone, Copy, Default)]
+struct Node {
+    g: f32,
+    h: f32,
+    parent: u32,
+    epoch: u32,
+}
+
 pub struct Router {
-    g: Vec<f32>,
-    parent: Vec<u32>,
-    epoch: Vec<u32>,
+    nodes: Vec<Node>,
     current: u32,
-    heap: BinaryHeap<(Reverse<u32>, u32, u32)>,
+    /// Edges to settle, smallest key first: `key(f, edge)`.
+    heap: BinaryHeap<Reverse<u64>>,
     pub landmarks: Option<Landmarks>,
     /// Edges settled by the last query (for statistics and tuning).
     pub last_settled: usize,
     /// Whether routes weigh motorway tolls (`Successor::toll`).
     pub tolls: bool,
+    /// Weight on the heuristic (`HEURISTIC_WEIGHT`; the `routes` example tries others).
+    pub weight: f32,
+    /// Time spent in `route` (s); counted only with the `profile` feature.
+    pub seconds: f64,
+    /// Searches, those that found no route, and edges settled by each kind.
+    pub searches: u64,
+    pub failed: u64,
+    pub settled_found: u64,
+    pub settled_failed: u64,
 }
 
 impl Router {
     pub fn new(edge_count: usize) -> Self {
         Router {
-            g: vec![0.0; edge_count],
-            parent: vec![NONE; edge_count],
-            epoch: vec![0; edge_count],
+            nodes: vec![Node::default(); edge_count],
             current: 0,
             heap: BinaryHeap::new(),
             landmarks: None,
             last_settled: 0,
             tolls: true,
+            weight: HEURISTIC_WEIGHT,
+            seconds: 0.0,
+            searches: 0,
+            failed: 0,
+            settled_found: 0,
+            settled_failed: 0,
         }
     }
 
@@ -289,45 +346,88 @@ impl Router {
         to: u32,
         vclass: u16,
     ) -> Option<Vec<u32>> {
+        #[cfg(feature = "profile")]
+        let start = std::time::Instant::now();
+        let route = self.search(net, travel_time, from, to, vclass);
+        self.searches += 1;
+        if route.is_some() {
+            self.settled_found += self.last_settled as u64;
+        } else {
+            self.failed += 1;
+            self.settled_failed += self.last_settled as u64;
+        }
+        #[cfg(feature = "profile")]
+        {
+            self.seconds += start.elapsed().as_secs_f64();
+        }
+        route
+    }
+
+    /// A new search: entries of earlier ones no longer count.
+    fn next_epoch(&mut self) -> u32 {
+        self.current = self.current.wrapping_add(1);
+        if self.current == 0 {
+            self.nodes.fill(Node::default());
+            self.current = 1;
+        }
+        self.heap.clear();
+        self.current
+    }
+
+    fn search(
+        &mut self,
+        net: &Network,
+        travel_time: &[f32],
+        from: u32,
+        to: u32,
+        vclass: u16,
+    ) -> Option<Vec<u32>> {
         if from == to {
             return Some(vec![from]);
         }
-        self.current = self.current.wrapping_add(1);
-        if self.current == 0 {
-            self.epoch.fill(0);
-            self.current = 1;
-        }
-        let epoch = self.current;
-        self.heap.clear();
+        let epoch = self.next_epoch();
+        let Router {
+            nodes,
+            heap,
+            landmarks,
+            tolls,
+            weight,
+            ..
+        } = self;
+        let weight = *weight;
         let (tx, tz) = net.edge_mid[to as usize];
-        let landmarks = self.landmarks.as_ref();
-        let (t_from, t_to) = landmarks
-            .map(|l| l.target(to))
-            .unwrap_or(([FAR; LANDMARKS], [FAR; LANDMARKS]));
+        let landmarks = landmarks.as_ref();
+        let target = landmarks.map(|l| l.target(to));
         let h = |e: u32| {
             let (x, z) = net.edge_mid[e as usize];
             let straight = ((x - tx).powi(2) + (z - tz).powi(2)).sqrt() / HEURISTIC_SPEED;
-            match landmarks {
-                Some(l) => straight.max(l.bound(e, &t_from, &t_to)),
-                None => straight,
+            match (landmarks, &target) {
+                (Some(l), Some(t)) => straight.max(l.bound(e, t)),
+                _ => straight,
             }
         };
 
-        self.g[from as usize] = 0.0;
-        self.parent[from as usize] = NONE;
-        self.epoch[from as usize] = epoch;
-        self.heap
-            .push((Reverse(h(from).to_bits()), from, 0f32.to_bits()));
+        let h_from = h(from);
+        nodes[from as usize] = Node {
+            g: 0.0,
+            h: h_from,
+            parent: NONE,
+            epoch,
+        };
+        heap.push(Reverse(key(h_from, from)));
         let mut settled = 0;
-        while let Some((_, e, g_bits)) = self.heap.pop() {
-            let g = self.g[e as usize];
-            // Stale entry: a better path to `e` was found after it was pushed.
-            if f32::from_bits(g_bits) > g {
+        let mut found = false;
+        while let Some(Reverse(k)) = heap.pop() {
+            let (f, e) = unkey(k);
+            let Node { g, h: rest, .. } = nodes[e as usize];
+            // Stale entry: a better path to `e` was found after it was pushed (the start's
+            // entry carries its estimate unweighted, so it is never stale).
+            if f > g + weight * rest {
                 continue;
             }
             if e == to {
-                self.last_settled = settled;
-                return Some(self.path(to));
+                found = true;
+                break;
             }
             settled += 1;
             if settled > MAX_SETTLED {
@@ -338,20 +438,27 @@ impl Router {
                     continue;
                 }
                 let next = s.edge;
-                let toll = if self.tolls { s.toll } else { 0.0 };
+                let toll = if *tolls { s.toll } else { 0.0 };
                 let cost = g + travel_time[next as usize] + s.penalty + toll;
-                let i = next as usize;
-                if self.epoch[i] != epoch || cost < self.g[i] {
-                    self.epoch[i] = epoch;
-                    self.g[i] = cost;
-                    self.parent[i] = e;
-                    let f = cost + HEURISTIC_WEIGHT * h(next);
-                    self.heap.push((Reverse(f.to_bits()), next, cost.to_bits()));
+                let n = &mut nodes[next as usize];
+                if n.epoch != epoch {
+                    *n = Node {
+                        g: cost,
+                        h: h(next),
+                        parent: e,
+                        epoch,
+                    };
+                } else if cost < n.g {
+                    n.g = cost;
+                    n.parent = e;
+                } else {
+                    continue;
                 }
+                heap.push(Reverse(key(cost + weight * n.h, next)));
             }
         }
         self.last_settled = settled;
-        None
+        found.then(|| self.path(to))
     }
 
     /// Every edge a vehicle of class `vclass` reaches from `from` within `max_time`
@@ -366,21 +473,20 @@ impl Router {
         vclass: u16,
         mut visit: impl FnMut(u32, f32),
     ) {
-        self.current = self.current.wrapping_add(1);
-        if self.current == 0 {
-            self.epoch.fill(0);
-            self.current = 1;
-        }
-        let epoch = self.current;
-        self.heap.clear();
-        self.g[from as usize] = 0.0;
-        self.parent[from as usize] = NONE;
-        self.epoch[from as usize] = epoch;
-        self.heap.push((Reverse(0), from, 0));
+        let epoch = self.next_epoch();
+        let Router { nodes, heap, .. } = self;
+        nodes[from as usize] = Node {
+            g: 0.0,
+            h: 0.0,
+            parent: NONE,
+            epoch,
+        };
+        heap.push(Reverse(key(0.0, from)));
         let mut settled = 0;
-        while let Some((_, e, g_bits)) = self.heap.pop() {
-            let g = self.g[e as usize];
-            if f32::from_bits(g_bits) > g {
+        while let Some(Reverse(k)) = heap.pop() {
+            let (cost, e) = unkey(k);
+            let g = nodes[e as usize].g;
+            if cost > g {
                 continue;
             }
             visit(e, g);
@@ -397,13 +503,15 @@ impl Router {
                 if cost > max_time {
                     continue;
                 }
-                let i = next as usize;
-                if self.epoch[i] != epoch || cost < self.g[i] {
-                    self.epoch[i] = epoch;
-                    self.g[i] = cost;
-                    self.parent[i] = e;
-                    self.heap
-                        .push((Reverse(cost.to_bits()), next, cost.to_bits()));
+                let n = &mut nodes[next as usize];
+                if n.epoch != epoch || cost < n.g {
+                    *n = Node {
+                        g: cost,
+                        h: 0.0,
+                        parent: e,
+                        epoch,
+                    };
+                    heap.push(Reverse(key(cost, next)));
                 }
             }
         }
@@ -413,8 +521,8 @@ impl Router {
     fn path(&self, to: u32) -> Vec<u32> {
         let mut path = vec![to];
         let mut e = to;
-        while self.parent[e as usize] != NONE {
-            e = self.parent[e as usize];
+        while self.nodes[e as usize].parent != NONE {
+            e = self.nodes[e as usize].parent;
             path.push(e);
         }
         path.reverse();

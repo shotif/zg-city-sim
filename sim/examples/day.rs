@@ -31,7 +31,12 @@ fn main() {
 
     let net = Network::build(run::load(&format!("{root}/network"))).expect("network");
     let demand = run::demand_for(&net, &format!("{root}/demand"), 0.0);
-    let mut engine = Engine::new(net, 1);
+    // SEED: another run of the same day (runs differ under congestion).
+    let seed = std::env::var("SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let mut engine = Engine::new(net, seed);
     match run::load_transit(&format!("{root}/transit")) {
         Some(data) if data.consistent(engine.net.edge_count()) => {
             engine.transit = Some(Transit::new(data));

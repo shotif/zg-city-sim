@@ -887,6 +887,17 @@ impl Engine {
         self.pending.push(Pending(trip));
     }
 
+    /// Time spent searching routes (s); counted only with the `profile` feature.
+    pub fn route_seconds(&self) -> f64 {
+        self.router.seconds
+    }
+
+    /// Route searches: all, those that failed, and edges settled by found and failed ones.
+    pub fn route_counts(&self) -> [u64; 4] {
+        let r = &self.router;
+        [r.searches, r.failed, r.settled_found, r.settled_failed]
+    }
+
     pub fn vehicles_on(&self, lane: u32) -> &[u32] {
         &self.lane_vehs[lane as usize]
     }
