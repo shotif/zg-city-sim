@@ -1012,6 +1012,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
 
     // The Zones tool: lots along streets, painted with zones.
     const zoningInfo = manifest.layers.zoning;
+    const demandInfo = manifest.layers.demand;
     if (zoningInfo) {
       loadLots(zoningInfo.index)
         .then((lots) => {
@@ -1042,6 +1043,11 @@ export async function startApp(container: HTMLElement): Promise<void> {
               grownDemand = added;
               applyDemand();
             },
+            sim: () => sim,
+            startTime: START_TIME,
+            // A project's network numbers its roads afresh: only the street in front counts.
+            loudOf: project ? () => -1 : undefined,
+            jobsPerResident: demandInfo ? demandInfo.jobs / demandInfo.residents : undefined,
           });
           debug.zoning = zoning;
           hud.enableZones();

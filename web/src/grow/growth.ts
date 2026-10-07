@@ -143,13 +143,17 @@ export function random(seed: number): () => number {
 
 const between = (r: () => number, [a, b]: [number, number]) => a + (b - a) * r();
 
-/** A building of type `archetype` on plot `lots`, sized from `seed`. */
+/** A building of type `archetype` on plot `lots`, sized from `seed`. Where land value is
+ * known (`value`, grow/landValue.ts) it is taller the dearer the land: storeys follow land
+ * value for 60 % and chance for 40 %. `storeys`: as many as that (a building saved). */
 export function makeBuilding(
   lots: Lots,
   plot: number[],
   archetype: number,
   seed: number,
   started: number,
+  value?: number,
+  storeys?: number,
 ): Grown {
   const a = ARCHETYPES[archetype];
   const r = random(seed);
@@ -161,13 +165,19 @@ export function makeBuilding(
   );
   const setback = between(r, a.setback);
   const depth = Math.min(between(r, a.depth), lotDepth - setback - MARGIN);
-  const storeys = Math.round(between(r, [a.storeys[0], a.storeys[1] + 0.999]) - 0.4999);
+  const chance = r();
+  const share =
+    value !== undefined && Number.isFinite(value)
+      ? 0.4 * chance + 0.6 * Math.min(1, Math.max(0, value / 100))
+      : chance;
+  const span = a.storeys[1] - a.storeys[0] + 1;
+  const grown = storeys ?? a.storeys[0] + Math.min(span - 1, Math.floor(share * span));
   const room = frontage - 2 * MARGIN - width;
   return {
     lots: plot,
     archetype,
     seed,
-    storeys: Math.max(a.storeys[0], Math.min(a.storeys[1], storeys)),
+    storeys: Math.max(a.storeys[0], Math.min(a.storeys[1], Math.round(grown))),
     width,
     depth,
     setback,
@@ -234,6 +244,11 @@ export class Growth {
   /** Building on each lot (-1: none). */
   readonly lotBuilding: Int32Array;
   private lastMinute = -1;
+  /** How fast each zone's lots start building, as a factor of `START_RATE` (per zone
+   * code; grow/zoneDemand.ts). None: the base rate. */
+  rates?: readonly number[];
+  /** Land value per lot (grow/landValue.ts): dearer lots build first and taller. */
+  value?: Float32Array;
 
   constructor(
     private readonly lots: Lots,
@@ -304,19 +319,30 @@ export class Growth {
   private startSome(zones: Uint8Array, now: number): number[] {
     const lots = this.lots;
     const r = random(this.seed * 7919 + Math.floor(now / 60));
-    // Empty zoned lots, those amid other buildings first.
+    // Empty zoned lots, those amid other buildings and on dearer land first.
     const empty: { i: number; key: number }[] = [];
+    const perZone: number[] = [];
     for (let i = 0; i < lots.count; i++) {
       if (zones[i] && this.lotBuilding[i] < 0) {
-        empty.push({ i, key: r() * (1 + lots.context[i] / 3) });
+        const v = this.value?.[i];
+        const dear = v !== undefined && Number.isFinite(v) ? 0.5 + v / 100 : 1;
+        empty.push({ i, key: r() * (1 + lots.context[i] / 3) * dear });
+        perZone[zones[i]] = (perZone[zones[i]] ?? 0) + 1;
       }
     }
     if (!empty.length) return [];
-    const want = Math.max(1, Math.round(empty.length * START_RATE));
+    // Buildings to start in each zone: at least one while its demand is not negative,
+    // fewer than one (by chance) when it is.
+    const want = perZone.map((n, zone) => {
+      const rate = this.rates?.[zone] ?? 1;
+      const expected = (n ?? 0) * START_RATE * rate;
+      const whole = Math.floor(expected) + (r() < expected % 1 ? 1 : 0);
+      return rate >= 1 ? Math.max(1, whole) : whole;
+    });
     empty.sort((a, b) => b.key - a.key);
     const started: number[] = [];
     for (const { i } of empty) {
-      if (started.length >= want) break;
+      if (!(want[zones[i]] > 0)) continue;
       if (this.lotBuilding[i] >= 0) continue;
       const free = this.run(zones, i, 4);
       const options = fitting(zones[i], free.length);
@@ -333,7 +359,8 @@ export class Growth {
       }
       const seed = Math.floor(r() * 2 ** 31);
       const plot = free.slice(0, ARCHETYPES[archetype].lots);
-      started.push(this.add(makeBuilding(lots, plot, archetype, seed, now)));
+      started.push(this.add(makeBuilding(lots, plot, archetype, seed, now, this.value?.[i])));
+      want[zones[i]]--;
     }
     return started;
   }
@@ -363,7 +390,17 @@ export function saveBuildings(lots: Lots, growth: Growth): SavedBuilding[] {
     if (!b) return [];
     const i = b.lots[0];
     const r = (v: number) => Math.round(v * 10) / 10;
-    return [[r(lots.x[i]), r(lots.z[i]), ARCHETYPES[b.archetype].id, b.seed, b.started, b.done]];
+    return [
+      [
+        r(lots.x[i]),
+        r(lots.z[i]),
+        ARCHETYPES[b.archetype].id,
+        b.seed,
+        b.started,
+        b.done,
+        b.storeys,
+      ],
+    ];
   });
 }
 
@@ -377,7 +414,7 @@ export function restoreBuildings(
   saved: readonly SavedBuilding[],
 ): number {
   let restored = 0;
-  for (const [x, z, id, seed] of saved) {
+  for (const [x, z, id, seed, , , storeys] of saved) {
     const archetype = ARCHETYPES.findIndex((a) => a.id === id);
     if (archetype < 0) continue;
     const first = lots.within(x, z, 2)[0];
@@ -386,7 +423,7 @@ export function restoreBuildings(
     if (zones[first] !== zoneCode(a.zone)) continue;
     const plot = growth.run(zones, first, a.lots);
     if (plot.length < a.lots) continue;
-    const b = makeBuilding(lots, plot, archetype, seed, 0);
+    const b = makeBuilding(lots, plot, archetype, seed, 0, undefined, storeys);
     b.done = 0;
     growth.add(b);
     restored++;

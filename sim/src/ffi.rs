@@ -330,6 +330,37 @@ pub extern "C" fn zg_route_time(from: u32, to: u32) -> f64 {
     })
 }
 
+/// Homes and jobs within reach by car of `n` roads at `sources` on the measured travel
+/// times (`Engine::reach`: weighted by `exp(-time / decay)`, up to `max` seconds), written
+/// to `out` as two f32 per road. Returns 0, or -1 without an engine.
+///
+/// # Safety
+/// `sources` must point to `n` u32 values and `out` to room for `2 * n` f32 values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_reach(
+    sources: *const u32,
+    n: usize,
+    decay: f32,
+    max: f32,
+    out: *mut f32,
+) -> i32 {
+    if n == 0 || sources.is_null() || out.is_null() {
+        return 0;
+    }
+    let list = unsafe { std::slice::from_raw_parts(sources, n) };
+    let out = unsafe { std::slice::from_raw_parts_mut(out, 2 * n) };
+    with_state(|s| {
+        let Some(e) = s.engine.as_mut() else {
+            return -1;
+        };
+        for (k, r) in e.reach(list, decay, max).into_iter().enumerate() {
+            out[2 * k] = r[0];
+            out[2 * k + 1] = r[1];
+        }
+        0
+    })
+}
+
 /// Pointer to the number of vehicles that have driven onto each edge since the start
 /// (u32 per edge, `zg_edge_count` of them).
 #[unsafe(no_mangle)]

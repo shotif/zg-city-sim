@@ -80,7 +80,8 @@ export class SimClient {
         this.onEdgeSpeeds?.(message.speeds);
         break;
       case 'routeTimes':
-      case 'volumes': {
+      case 'volumes':
+      case 'reach': {
         const resolve = this.waiting.get(message.id);
         this.waiting.delete(message.id);
         resolve?.(message);
@@ -181,6 +182,24 @@ export class SimClient {
       type: 'volumes',
       id: ++this.requestId,
       at,
+    });
+  }
+
+  /** Homes and jobs within reach by car of each source edge on the travel times the
+   * simulation measures (two numbers per source; see wasm.ts `reach`), and the simulated
+   * time they were measured by. A new request replaces one not yet answered, which then
+   * never resolves. */
+  reach(
+    sources: Uint32Array,
+    decay: number,
+    max: number,
+  ): Promise<{ time: number; values: Float32Array }> {
+    return this.ask<Extract<FromWorker, { type: 'reach' }>>({
+      type: 'reach',
+      id: ++this.requestId,
+      sources,
+      decay,
+      max,
     });
   }
 

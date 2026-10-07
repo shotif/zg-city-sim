@@ -774,6 +774,40 @@ test('grows buildings on zoned lots as the day goes on', async ({ page }, testIn
   // In the 3D view, and listed in the Zones panel.
   await page.keyboard.press('z');
   await expect(page.locator('.zones-growth')).toContainText('Grown:');
+
+  // Demand per kind of zone, and land value measured on the traffic simulated (M5d):
+  // Novi Zagreb, by the centre, is better placed than Samobor, 20 km out.
+  await expect(page.getByRole('meter')).toHaveCount(3);
+  await expect(page.getByRole('meter', { name: 'Demand for homes' })).toHaveAttribute(
+    'aria-valuenow',
+    /^-?\d+$/,
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__!.zoning!.landValue.access.measured), {
+      timeout: 240_000,
+      intervals: [5_000],
+    })
+    .toBe(true);
+  const placed = await page.evaluate(({ x, z }) => {
+    const zoning = window.__ZG__!.zoning!;
+    const access = zoning.landValue.access;
+    const near = zoning.lots.within(x, z, 100);
+    return {
+      here: access.at(x, z),
+      samobor: access.at(-20701, 1177),
+      value: zoning.landValue.mean(near),
+      used: zoning.growth.value === zoning.landValue.value,
+    };
+  }, spot);
+  expect(placed.here).toBeGreaterThan(placed.samobor);
+  expect(placed.value).toBeGreaterThan(0);
+  expect(placed.used).toBe(true);
+  await page.getByRole('checkbox', { name: 'Land value' }).check();
+  await expect(page.locator('.zones-value')).toContainText('best-placed land');
+  await page.evaluate(({ x, z }) => window.__ZG__?.lookAt(x, z, 2500), spot);
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: testInfo.outputPath('land-value.png') });
+  await page.getByRole('checkbox', { name: 'Land value' }).uncheck();
   await page.keyboard.press('z');
   await page.evaluate(({ x, z }) => {
     window.__ZG__?.setView('iso');

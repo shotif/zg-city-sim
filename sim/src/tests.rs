@@ -1874,3 +1874,47 @@ fn homes_and_jobs_added_while_running_make_and_draw_trips() {
     run_until(&mut engine, 120.0, |e| to_down = to_down.max(ends_down(e)));
     assert!(to_down > 0, "the new jobs draw trips");
 }
+
+#[test]
+fn reach_counts_homes_and_jobs_by_travel_time_measured() {
+    use crate::demand::Demand;
+    let (mut engine, [direct, up, down, last]) = two_ways();
+    assert_eq!(engine.reach(&[up], 360.0, 1200.0), vec![[0.0, 0.0]]);
+    // Homes past the junction the roads meet at, jobs on the way down to it.
+    engine.demand = Some(Demand::new(
+        &engine.net,
+        vec![direct, down, last],
+        &[200.0, 0.0, 1000.0],
+        &[0.0, 500.0, 0.0],
+        10_000.0,
+    ));
+    // From the last road: its own homes, nothing it cannot drive to.
+    assert_eq!(engine.reach(&[last], 360.0, 1200.0), vec![[1000.0, 0.0]]);
+    // From the road up: jobs one road on, homes two roads on, each weighted by the time
+    // to get to the end of its road.
+    let t_down = engine.travel_time[down as usize];
+    let t_last = engine.travel_time[last as usize];
+    assert!(t_down > 30.0 && t_last > 30.0);
+    let [homes, jobs] = engine.reach(&[up], 360.0, 1200.0)[0];
+    assert!(
+        (jobs - 500.0 * (-t_down / 360.0).exp()).abs() < 1.0,
+        "{jobs}"
+    );
+    assert!(
+        (homes - 1000.0 * (-(t_down + t_last) / 360.0).exp()).abs() < 2.0,
+        "{homes}"
+    );
+    // Not beyond the time allowed.
+    let [homes, jobs] = engine.reach(&[up], 360.0, t_down + 1.0)[0];
+    assert!(jobs > 0.0 && homes == 0.0);
+    // A jam on the road down puts both further away.
+    engine.travel_time[down as usize] *= 3.0;
+    let [later_homes, later_jobs] = engine.reach(&[up], 360.0, 1200.0)[0];
+    assert!(later_jobs < 0.8 * jobs && later_homes > 0.0);
+    // Closed, nothing past it is in reach; sources off the network count nothing.
+    engine.set_closed(&[down]);
+    assert_eq!(
+        engine.reach(&[up, 9999], 360.0, 1200.0),
+        vec![[0.0, 0.0]; 2]
+    );
+}

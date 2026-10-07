@@ -129,9 +129,10 @@ export function zoneTotals(lots: Lots, zones: Uint8Array): { lots: number; area:
 
 // ---- saving and sharing ----------------------------------------------------------------
 
-/** A grown building as saved (grow/growth.ts `SavedBuilding`): its first lot's centre, its
- * type, its seed, and when it started and is finished (simulated s). */
-export type SavedBuilding = [number, number, string, number, number, number];
+/** A grown building as saved (grow/growth.ts `saveBuildings`): its first lot's centre, its
+ * type, its seed, when it started and is finished (simulated s), and its storeys (saved
+ * since land value sets them; older saves take them from the seed). */
+export type SavedBuilding = [number, number, string, number, number, number, number?];
 
 /** Zoning and the buildings grown on it, as saved or shared. */
 export interface SavedCity {
@@ -159,7 +160,7 @@ export function serializeZoning(
 
 const isBuilding = (b: unknown): b is SavedBuilding =>
   Array.isArray(b) &&
-  b.length === 6 &&
+  (b.length === 6 || (b.length === 7 && Number.isInteger(b[6]) && b[6] > 0 && b[6] < 100)) &&
   typeof b[2] === 'string' &&
   [0, 1, 3, 4, 5].every((k) => Number.isFinite(b[k]));
 

@@ -42,7 +42,10 @@ export type ToWorker =
   | { type: 'routeTimes'; id: number; pairs: Uint32Array }
   /** Vehicles that have driven onto each edge since the start, once the simulation has
    * reached simulated time `at` (s). */
-  | { type: 'volumes'; id: number; at: number };
+  | { type: 'volumes'; id: number; at: number }
+  /** Homes and jobs within reach by car of each source edge on the measured travel times,
+   * weighted by exp(-time / decay) up to `max` seconds (engine `reach`). */
+  | { type: 'reach'; id: number; sources: Uint32Array; decay: number; max: number };
 
 export interface FrameMessage {
   type: 'frame';
@@ -67,4 +70,7 @@ export type FromWorker =
   /** Seconds per pair asked for (-1: no route), at simulated time `time`. */
   | { type: 'routeTimes'; id: number; time: number; times: Float64Array }
   | { type: 'volumes'; id: number; time: number; counts: Uint32Array }
+  /** Homes and jobs within reach of each source asked for (two numbers each), measured
+   * over a few batches ending at simulated time `time`. */
+  | { type: 'reach'; id: number; time: number; values: Float32Array }
   | { type: 'error'; message: string };

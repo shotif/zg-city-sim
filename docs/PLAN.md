@@ -197,7 +197,6 @@ Known gaps:
     - A building's lots are taken from the lot it starts on along the street, as many as its type needs. The type is picked among those whose plot fits, by weight.
     - Residents and jobs come from floor area (80 % of the gross is usable): 30 m² of home per resident, and per job 20 m² in offices, 35 m² in shops and 80-120 m² in industry. These are estimates, from the 2021 census's dwelling space per person and typical employment densities.
     - A lot zoned for something else loses its building. Buildings are saved in the browser and in the zoning's share link; a visit starts the simulated day again, so they come back finished.
-    - The growth rate is fixed until demand drives it (M5d).
 - **M5c, growth makes trips** (done 2026-10-07).
   - Each new building adds residents or jobs from its floor area, at today's densities by kind, on the street its lot faces.
   - The engine takes new home and work weights and a new daily trip total while it runs, so new residents' trips and new jobs' commuters, including those from beyond the map, join the traffic.
@@ -208,9 +207,17 @@ Known gaps:
     - The engine replaces its weights and daily total in place (`Demand::set_weights`) and keeps the gateways and the gravity model. New homes' trips start at once; new jobs draw trips, including commuters from beyond the map, without adding any (as today's jobs do).
     - With a planned project open, a lot's trips use the street in front of it on the project's network, found by position.
     - The simulation compared in Before and after runs today's demand without what grew.
-- **M5d, demand and land value.**
+- **M5d, demand and land value** (done 2026-10-07).
   - Demand per zone: homes are wanted where jobs outnumber workers, shops where residents spend, offices and industry where workers can reach them. It comes from the city's totals and simulated travel times.
   - Land value per lot from accessibility (jobs and residents reachable by car in 20 minutes on measured travel times), parks and water nearby, and noise from traffic volumes. It is drawn as a map. Buildings grow taller where land is dearer.
+  - As built (`web/src/grow/landValue.ts`, `web/src/grow/zoneDemand.ts`, `Engine::reach`, `zg_reach`):
+    - *Accessibility*: the engine searches outward from a street (Dijkstra on the travel times it measures, as routes use them) and sums the residents and jobs of the streets it reaches within 20 minutes, each weighted by exp(-time / 6 min): gravity accessibility. Free-flowing, the centre reaches about 4 times as much as Sesvete and 6 times as much as Samobor.
+    - It is measured from one street in each square 1.5 km across that has lots (1,092 of them), the street of the lot nearest the square's centre, and interpolated between squares. The worker measures a few streets per batch, 8 ms at most, so the traffic keeps moving; a measurement takes about a minute and is repeated every half an hour of simulated time while there is zoning. Each counts half against those before, so land value follows the day's traffic slowly.
+    - *Land value* is 100 × (accessibility / the best square's at the first measurement)^0.75, plus up to 10 % for green land cover within 200 m (trees, grass, water: the zoning step counts it from WorldCover), less 0.6 % per dB of traffic noise above 55 dB(A), at most 25 %. The power is chosen so building land near the centre comes out several times dearer than on the City's edge; the noise and green weights are in the range hedonic price studies find. All are estimates.
+    - *Noise*: the hourly equivalent level from the vehicles measured on the lot's street (12 m away) or on the nearest motorway, trunk or primary road within 250 m (the zoning step finds it), whichever is louder: 39.2 + 10 log₁₀(vehicles an hour) dB(A) at 10 m, 3 dB less per doubling of distance (the UK's CRTN, without speed, lorries or surface).
+    - *Demand*: from -1 to 1 for homes, shops, and offices and industry. Today's map holds 0.5 jobs per resident; homes are wanted when what grew adds more jobs than residents to fill them, shops when residents grow beyond 0.08 shop jobs each (retail is about a sixth of Croatia's employment), offices and industry when residents grow beyond the other jobs. 2,000 people out of balance (400 for shops) move demand by 1. The base, set by hand for Zagreb today: homes 0.4, shops 0.2, offices and industry 0.3.
+    - Each zone's lots start building at the base rate times 1 + its demand: none at -1, twice as fast at 1 (mixed answers to homes and shops). Lots on dearer land start first. Storeys follow land value for 60 % and chance for 40 % within each type's range, and are saved with the building.
+    - The Zones panel shows the three demands as bars and colours every lot by land value on request.
 - **M5e, economy.**
   - A budget: income from property tax and the local income tax on residents and jobs; costs of the roads, junctions and bridges the player builds, from real Croatian project costs, and their upkeep.
   - Building needs money. The panel shows the balance over time.

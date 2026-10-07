@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 
+import { valueColor } from '../grow/landValue';
 import type { Lots } from '../grow/lots';
 import { ZONES } from '../grow/zones';
 import type { HeightFn } from './roadGeometry';
@@ -30,6 +31,8 @@ export class ZoneLayer {
   /** Building on each lot (-1: none): built lots are not filled unless all are shown. */
   private built?: Int32Array;
   private showAll = false;
+  /** Land value per lot, when lots are coloured by it rather than by zone. */
+  private values?: Float32Array;
   private readonly colors: THREE.Color[];
   private readonly material = new THREE.MeshBasicMaterial({
     vertexColors: true,
@@ -104,6 +107,14 @@ export class ZoneLayer {
     for (const key of this.meshes.keys()) this.dirty.add(key);
   }
 
+  /** Colour every lot by land value (`values` per lot), or by zone again (undefined). Call
+   * again when the values change. */
+  setValues(values: Float32Array | undefined): void {
+    if (!values && !this.values) return;
+    this.values = values;
+    for (const key of this.meshes.keys()) this.dirty.add(key);
+  }
+
   /** The brush at (x, z), `radius` m (undefined: hidden). */
   setBrush(at: { x: number; z: number } | undefined, radius: number): void {
     this.brush.visible = at !== undefined;
@@ -170,16 +181,29 @@ export class ZoneLayer {
       });
     }
     const ids = this.chunkLots.get(key) ?? [];
+    const group = new THREE.Group();
+    group.name = `lots ${key}`;
+    this.object.add(group);
+    this.meshes.set(key, group);
+    const values = this.values;
+    if (values) {
+      // Every lot, by land value.
+      if (ids.length) group.add(this.fill(ids, (i) => valueColor(values[i])));
+      return;
+    }
     const zoned = ids.filter(
       (i) => this.zones[i] > 0 && (this.showAll || !this.built || this.built[i] < 0),
     );
     const open = this.showAll ? ids.filter((i) => this.zones[i] === 0) : [];
-    const group = new THREE.Group();
-    group.name = `lots ${key}`;
-    if (zoned.length) group.add(this.fill(zoned));
+    if (zoned.length) {
+      group.add(
+        this.fill(zoned, (i) => {
+          const c = this.colors[this.zones[i]];
+          return [c.r, c.g, c.b];
+        }),
+      );
+    }
     if (open.length) group.add(this.outline(open));
-    this.object.add(group);
-    this.meshes.set(key, group);
   }
 
   /** Corners of lot `i` on the ground, a little inside its edges. */
@@ -202,16 +226,16 @@ export class ZoneLayer {
     });
   }
 
-  /** Zoned lots, filled in their zone's colour. */
-  private fill(ids: number[]): THREE.Mesh {
+  /** Lots filled, each in its colour (r, g, b in 0-1). */
+  private fill(ids: number[], colorOf: (i: number) => [number, number, number]): THREE.Mesh {
     const positions = new Float32Array(ids.length * 12);
     const colors = new Float32Array(ids.length * 12);
     const index = new Uint32Array(ids.length * 6);
     ids.forEach((i, k) => {
-      const color = this.colors[this.zones[i]];
+      const color = colorOf(i);
       this.cornersOf(i).forEach((p, c) => {
         positions.set(p, (k * 4 + c) * 3);
-        colors.set([color.r, color.g, color.b], (k * 4 + c) * 3);
+        colors.set(color, (k * 4 + c) * 3);
       });
       const v = k * 4;
       index.set([v, v + 2, v + 1, v, v + 3, v + 2], k * 6);

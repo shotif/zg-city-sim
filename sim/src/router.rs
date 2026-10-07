@@ -354,6 +354,62 @@ impl Router {
         None
     }
 
+    /// Every edge a vehicle of class `vclass` reaches from `from` within `max_time`
+    /// seconds on `travel_time`, and how long it takes to reach its end (Dijkstra; `from`
+    /// itself at 0 s).
+    pub fn reach(
+        &mut self,
+        net: &Network,
+        travel_time: &[f32],
+        from: u32,
+        max_time: f32,
+        vclass: u16,
+        mut visit: impl FnMut(u32, f32),
+    ) {
+        self.current = self.current.wrapping_add(1);
+        if self.current == 0 {
+            self.epoch.fill(0);
+            self.current = 1;
+        }
+        let epoch = self.current;
+        self.heap.clear();
+        self.g[from as usize] = 0.0;
+        self.parent[from as usize] = NONE;
+        self.epoch[from as usize] = epoch;
+        self.heap.push((Reverse(0), from, 0));
+        let mut settled = 0;
+        while let Some((_, e, g_bits)) = self.heap.pop() {
+            let g = self.g[e as usize];
+            if f32::from_bits(g_bits) > g {
+                continue;
+            }
+            visit(e, g);
+            settled += 1;
+            if settled > MAX_SETTLED {
+                break;
+            }
+            for s in net.successors(e) {
+                if s.allow & vclass == 0 {
+                    continue;
+                }
+                let next = s.edge;
+                let cost = g + travel_time[next as usize] + s.penalty;
+                if cost > max_time {
+                    continue;
+                }
+                let i = next as usize;
+                if self.epoch[i] != epoch || cost < self.g[i] {
+                    self.epoch[i] = epoch;
+                    self.g[i] = cost;
+                    self.parent[i] = e;
+                    self.heap
+                        .push((Reverse(cost.to_bits()), next, cost.to_bits()));
+                }
+            }
+        }
+        self.last_settled = settled;
+    }
+
     fn path(&self, to: u32) -> Vec<u32> {
         let mut path = vec![to];
         let mut e = to;

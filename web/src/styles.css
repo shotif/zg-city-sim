@@ -589,6 +589,59 @@ a.news-headline:hover {
   border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
+.zone-ramp {
+  width: 120px !important;
+  height: 8px !important;
+}
+
+.zone-demand {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+
+.zone-demand-row {
+  display: grid;
+  grid-template-columns: 9.5em 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A bar from -1 to 1, zero in the middle. */
+.zone-demand-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.zone-demand-bar::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.zone-demand-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+}
+
+.zone-demand-bar i.up {
+  background: #6cc46c;
+}
+
+.zone-demand-bar i.down {
+  background: #d9634f;
+}
+
 .zone-totals {
   list-style: none;
   margin: 4px 0 8px;
@@ -609,6 +662,7 @@ a.news-headline:hover {
 .zones-hint,
 .zones-status,
 .zones-growth,
+.zones-value,
 .build-note,
 .build-road-info,
 .build-missing,

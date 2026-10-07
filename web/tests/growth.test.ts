@@ -129,6 +129,36 @@ describe('growth', () => {
     expect(occupants(perimeter).jobs).toBeCloseTo((perimeter.width * perimeter.depth * 0.8) / 35);
   });
 
+  it('builds taller where land is dearer, and keeps the storeys it built', () => {
+    const lots = street(4);
+    const tower = ARCHETYPES.findIndex((a) => a.id === 'tower');
+    const at = (value: number) =>
+      Array.from({ length: 50 }, (_, seed) => makeBuilding(lots, [0, 1], tower, seed, 0, value));
+    // Towers have 12-19 storeys: land value sets 60 % of where in that range.
+    expect(Math.max(...at(0).map((b) => b.storeys))).toBeLessThanOrEqual(15);
+    expect(Math.min(...at(100).map((b) => b.storeys))).toBeGreaterThanOrEqual(16);
+    expect(makeBuilding(lots, [0, 1], tower, 3, 0, 0, 18).storeys).toBe(18);
+  });
+
+  it('starts building as fast as demand asks, on dearer land first', () => {
+    const lots = street(200);
+    const zones = zoned(lots, 'houses');
+    const built = (rate: number, value?: Float32Array) => {
+      const g = new Growth(lots, 4);
+      g.rates = [0, rate, 1, 1, 1, 1, 1, 1];
+      g.value = value;
+      g.tick(zones, 0);
+      g.tick(zones, 10 * 60);
+      return g.buildings.filter((b) => b !== undefined);
+    };
+    expect(built(0)).toHaveLength(0);
+    expect(built(2).length).toBeGreaterThan(built(1).length * 1.5);
+    // Half the lots are worth 100, the others 5: the dear ones go first.
+    const value = Float32Array.from({ length: 200 }, (_, i) => (i % 2 ? 100 : 5));
+    const dear = built(1, value).filter((b) => b.lots[0] % 2 === 1).length;
+    expect(dear).toBeGreaterThan(built(1, value).length * 0.6);
+  });
+
   it('takes buildings down when their lots are zoned for something else, and keeps them', () => {
     const lots = street();
     const zones = zoned(lots, 'industry');
@@ -142,7 +172,7 @@ describe('growth', () => {
     const again = new Growth(lots);
     expect(restoreBuildings(lots, again, zones, saved)).toBe(saved.length);
     // Back finished: the simulated day starts again on every visit.
-    const finished = saved.map((b) => [b[0], b[1], b[2], b[3], 0, 0]);
+    const finished = saved.map((b) => [b[0], b[1], b[2], b[3], 0, 0, b[6]]);
     expect(saveBuildings(lots, again)).toEqual(finished);
 
     const first = growth.buildings.find((b) => b !== undefined)!;

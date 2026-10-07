@@ -7,6 +7,8 @@
 //! the afternoon, residents doing the opposite, errands both ways, and through traffic
 //! between two gateways (mostly on the motorway ring).
 
+use std::cell::OnceCell;
+
 use crate::engine::{Trip, trip};
 use crate::network::{NONE, Network, vclass};
 use crate::rng::Rng;
@@ -126,6 +128,8 @@ pub struct Demand {
     through: Flow,
     /// Through traffic leaving at each gateway (vehicles per day).
     through_exit: Vec<f32>,
+    /// Home and work weights by edge id, made when first asked for.
+    by_edge: OnceCell<(Vec<f32>, Vec<f32>)>,
 }
 
 fn cumulative(w: &[f32]) -> Vec<f64> {
@@ -217,6 +221,7 @@ impl Demand {
             outbound: Flow::default(),
             through: Flow::default(),
             through_exit: Vec::new(),
+            by_edge: OnceCell::new(),
         }
     }
 
@@ -240,6 +245,31 @@ impl Demand {
         self.work_cum = fresh.work_cum;
         self.any_cum = fresh.any_cum;
         self.daily_trips = daily_trips;
+        self.by_edge = OnceCell::new();
+    }
+
+    /// The home and work weights by edge id (0 on edges without any; edges past the last
+    /// with a weight are left out).
+    pub fn weights_by_edge(&self) -> (&[f32], &[f32]) {
+        let (home, work) = self.by_edge.get_or_init(|| {
+            let n = self
+                .edges
+                .iter()
+                .map(|&e| e as usize + 1)
+                .max()
+                .unwrap_or(0);
+            let mut home = vec![0.0; n];
+            let mut work = vec![0.0; n];
+            let (mut h0, mut w0) = (0.0, 0.0);
+            for (i, &e) in self.edges.iter().enumerate() {
+                let (h1, w1) = (self.home_cum[i], self.work_cum[i]);
+                home[e as usize] += (h1 - h0) as f32;
+                work[e as usize] += (w1 - w0) as f32;
+                (h0, w0) = (h1, w1);
+            }
+            (home, work)
+        });
+        (home, work)
     }
 
     /// Placeholder demand from the network alone: homes along local streets, work along

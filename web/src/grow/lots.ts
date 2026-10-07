@@ -20,6 +20,9 @@ export interface ZoningIndex extends PackedIndex {
   stats: Record<string, unknown>;
 }
 
+/** No edge (`loudEdge`). */
+export const NO_EDGE = 0xffffffff;
+
 /** Size (m) of the grid cells lots are found by. */
 const CELL = 100;
 
@@ -39,6 +42,12 @@ export class Lots {
   readonly cover: Uint8Array;
   /** Median storeys of the buildings within 150 m (0: none). */
   readonly context: Uint8Array;
+  /** Green land cover within 200 m (percent). */
+  readonly green: Uint8Array;
+  /** The nearest motorway, trunk or primary road within 250 m (`NO_EDGE`: none), and how
+   * far it is (m). */
+  readonly loudEdge: Uint32Array;
+  readonly loudDistance: Uint8Array;
   readonly planClasses: PlanClass[];
   readonly noPlan: number;
   /** The plan's polygons: per polygon its first ring, per ring its first point, points x, z. */
@@ -61,6 +70,12 @@ export class Lots {
     this.plan = arrays.lotPlan as Uint8Array;
     this.cover = arrays.lotCover as Uint8Array;
     this.context = arrays.lotContext as Uint8Array;
+    const n = this.x.length;
+    this.green = (arrays.lotGreen as Uint8Array | undefined) ?? new Uint8Array(n);
+    this.loudEdge =
+      (arrays.lotLoudEdge as Uint32Array | undefined) ?? new Uint32Array(n).fill(NO_EDGE);
+    this.loudDistance =
+      (arrays.lotLoudDistance as Uint8Array | undefined) ?? new Uint8Array(n).fill(255);
     this.planPolygonRings = arrays.planPolygonRings as Uint32Array;
     this.planRingPoints = arrays.planRingPoints as Uint32Array;
     this.planPoints = arrays.planPoints as Float32Array;

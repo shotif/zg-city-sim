@@ -5,13 +5,16 @@
  */
 import type * as THREE from 'three/webgpu';
 
+import type { SimClient } from '../sim/client';
 import { ZonesPanel } from '../ui/zonesPanel';
 import { GrowthLayer } from '../world/growthLayer';
 import type { HeightFn } from '../world/roadGeometry';
 import { ZoneLayer } from '../world/zoneLayer';
 import { type EdgeDemand, addedDemand } from './demand';
 import { Growth, restoreBuildings, saveBuildings } from './growth';
+import { LandValue, REACH_DECAY, REACH_MAX } from './landValue';
 import type { Lots } from './lots';
+import { BASE_DEMAND, type ZoneDemand, grownPeople, startRates, zoneDemand } from './zoneDemand';
 import {
   type Brush,
   type SavedBuilding,
@@ -46,6 +49,15 @@ export interface ZoningDeps {
   edgeOf?(lot: number): number;
   /** What the finished buildings add to the city's homes and jobs, per edge. */
   onDemand?(added: EdgeDemand): void;
+  /** The simulation the player sees (none yet: undefined), which land value is measured
+   * on, and the simulated time it starts at (s). */
+  sim?(): SimClient | undefined;
+  startTime?: number;
+  /** The nearest loud road's edge on the network running (-1: none); the pipeline's if
+   * not given. */
+  loudOf?(lot: number): number;
+  /** Jobs per resident on today's map. */
+  jobsPerResident?: number;
 }
 
 export interface ZoningTool {
@@ -54,6 +66,9 @@ export interface ZoningTool {
   layer: ZoneLayer;
   growth: Growth;
   grown: GrowthLayer;
+  landValue: LandValue;
+  /** Demand per kind of zone now. */
+  readonly demand: ZoneDemand;
   setVisible(on: boolean): void;
   /** Simulated time passed (s): buildings start and are finished. */
   tick(now: number): void;
@@ -68,6 +83,10 @@ export interface ZoningTool {
 const POINT_SPACING = 0.3;
 /** Simulated seconds between updates of the traffic's homes and jobs, at most. */
 const DEMAND_EVERY = 300;
+/** Simulated seconds between measurements of land value. */
+const VALUE_EVERY = 1800;
+/** Jobs per resident on today's map (pipeline/demand.py), if the manifest has none. */
+const JOBS_PER_RESIDENT = 0.5;
 
 export function setUpZoning(deps: ZoningDeps): ZoningTool {
   const { lots } = deps;
@@ -81,6 +100,44 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
   layer.setBuilt(growth.lotBuilding);
   /** Simulated time (s) last seen. */
   let now = 0;
+  const landValue = new LandValue(lots, deps.edgeOf, deps.loudOf);
+  let demand: ZoneDemand = { ...BASE_DEMAND };
+  let valueShown = false;
+
+  const zonedLots = () => {
+    const out: number[] = [];
+    for (let i = 0; i < lots.count; i++) if (zones[i]) out.push(i);
+    return out;
+  };
+  const showValue = () => {
+    panel.setLandValue(landValue.access.measured, landValue.mean(zonedLots()));
+    if (valueShown) layer.setValues(landValue.value);
+    deps.invalidate();
+  };
+  // Land value is measured on the simulation running, every half an hour of simulated time
+  // while there is zoning or its map is shown.
+  let measuring: SimClient | undefined;
+  let measuredAt = -Infinity;
+  const measure = (t: number) => {
+    const client = deps.sim?.();
+    if (!client || !client.ready || client.warming || measuring === client) return;
+    if (t >= measuredAt && t - measuredAt < VALUE_EVERY) return;
+    if (!valueShown && !zones.some((z) => z > 0)) return;
+    measuring = client;
+    measuredAt = t;
+    const start = deps.startTime ?? t;
+    void Promise.all([
+      client.reach(landValue.access.sources, REACH_DECAY, REACH_MAX),
+      client.volumes(0),
+    ]).then(([reach, volumes]) => {
+      if (measuring !== client) return;
+      measuring = undefined;
+      landValue.setVolumes(volumes.counts, (volumes.time - start) / 3600);
+      landValue.setReach(reach.values);
+      growth.value = landValue.value;
+      showValue();
+    });
+  };
 
   const show = () => {
     panel.setTotals(zoneTotals(lots, zones), strokes.length);
@@ -135,6 +192,12 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     onPlan: (on) => {
       layer.setPlanVisible(on);
       deps.invalidate();
+    },
+    onValue: (on) => {
+      valueShown = on;
+      layer.setValues(on ? landValue.value : undefined);
+      showValue();
+      measure(now);
     },
     onUndo: () => use(strokes.slice(0, -1)),
     onClear: () => use([]),
@@ -209,6 +272,7 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
       })
       .catch(() => panel.setStatus('The link has no zoning that could be read.'))
       .finally(() => history.replaceState(null, '', location.pathname + location.search));
+  panel.setDemand(demand);
   const fromLink = linked();
   if (fromLink) void loadFromLink(fromLink);
   else use(loadSavedZoning(), loadSavedGrowth());
@@ -223,6 +287,10 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     layer,
     growth,
     grown,
+    landValue,
+    get demand() {
+      return demand;
+    },
     tick: (t) => {
       // Growth goes by the simulated minute.
       const sameMinute = Math.floor(t / 60) === Math.floor(now / 60);
@@ -240,6 +308,10 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
       }
       panel.setGrowth(growth.totals(t));
       sendDemand();
+      demand = zoneDemand(grownPeople(growth, t), deps.jobsPerResident ?? JOBS_PER_RESIDENT);
+      growth.rates = startRates(demand);
+      panel.setDemand(demand);
+      measure(t);
       deps.invalidate();
     },
     setVisible: (on) => {

@@ -4,6 +4,7 @@ import shapely
 from pipeline.zoning import (
     DEPTH,
     FRONTAGE,
+    NO_EDGE,
     NO_PLAN,
     PLAN_IDS,
     SIDEWALK,
@@ -123,6 +124,26 @@ def test_lots_line_free_land_along_streets():
     by_house = np.hypot(lots["lotX"] - 107, lots["lotZ"] - 14) < 150
     assert np.all(lots["lotContext"][by_house] == 2)
     assert np.all(lots["lotContext"][~by_house] == 0)
+
+
+def test_lots_know_the_green_around_them_and_loud_roads_near():
+    net, index, footprints, plan, cover, points, *_ = town()
+    grid = cover[0].copy()
+    grid[:, (200 + 100) // 10 :] = 50  # built up east of x 200
+    lots = make_lots(net, index, footprints, plan, (grid, *cover[1:]), points)
+    lots.pop("_stats")
+    west = lots["lotX"] < 100
+    east = lots["lotX"] > 380
+    assert west.any() and east.any()
+    assert lots["lotGreen"][west].min() > 60 and lots["lotGreen"][east].max() < 15
+    # The motorway 200 m north of Ulica is the loud road near it, as the crow flies.
+    road = shapely.LineString([(0, -200), (300, -200)])
+    d = shapely.distance(shapely.points(np.column_stack([lots["lotX"], lots["lotZ"]])), road)
+    near = d < 249
+    assert near.any() and (d > 251).any()
+    assert np.all(lots["lotLoudEdge"][near] == 3)
+    assert np.allclose(lots["lotLoudDistance"][near], np.round(d[near]), atol=1)
+    assert np.all(lots["lotLoudEdge"][d > 251] == NO_EDGE)
 
 
 def test_plan_uses_are_grouped():

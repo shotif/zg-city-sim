@@ -1,4 +1,6 @@
+import { VALUE_STOPS } from '../grow/landValue';
 import type { PlanClass } from '../grow/lots';
+import type { ZoneDemand } from '../grow/zoneDemand';
 import { type Brush, ZONES } from '../grow/zones';
 import { button, el, fmt } from './buildPanel';
 
@@ -15,6 +17,8 @@ export interface ZonesPanelCallbacks {
   onRadius(radius: number): void;
   /** Show or hide the City's planned land use. */
   onPlan(on: boolean): void;
+  /** Colour lots by land value, or by zone. */
+  onValue(on: boolean): void;
   onUndo(): void;
   onClear(): void;
   shareLink(): Promise<string>;
@@ -33,6 +37,9 @@ export class ZonesPanel {
   private readonly status: HTMLElement;
   private readonly legend: HTMLElement;
   private readonly planToggle: HTMLInputElement;
+  private readonly valueToggle: HTMLInputElement;
+  private readonly valueNote: HTMLElement;
+  private readonly demandBars = new Map<keyof ZoneDemand, HTMLElement>();
   private brushNow?: Brush;
   private radiusNow = BRUSH_SIZES[1].radius;
   private shown = false;
@@ -114,6 +121,42 @@ export class ZonesPanel {
       callbacks.onPlan(this.planToggle.checked);
     });
 
+    const valueRow = el('label', 'build-check', this.panel);
+    this.valueToggle = el('input', '', valueRow);
+    this.valueToggle.type = 'checkbox';
+    valueRow.append(' Land value');
+    const valueLegend = el('div', 'hud-legend build-legend zone-value-legend', this.panel);
+    valueLegend.hidden = true;
+    const ramp = el('i', 'zone-ramp', valueLegend);
+    ramp.style.background = `linear-gradient(90deg, ${VALUE_STOPS.map((c) => c[1]).join(', ')})`;
+    valueLegend.prepend('Low ');
+    valueLegend.append(' high');
+    this.valueNote = el('p', 'zones-value', this.panel);
+    this.valueNote.hidden = true;
+    this.valueToggle.addEventListener('change', () => {
+      valueLegend.hidden = !this.valueToggle.checked;
+      this.valueNote.hidden = !this.valueToggle.checked;
+      callbacks.onValue(this.valueToggle.checked);
+    });
+
+    const demand = el('section', 'zone-demand', this.panel);
+    el('h3', 'build-count', demand).textContent = 'Demand';
+    for (const [key, label] of [
+      ['homes', 'Homes'],
+      ['shops', 'Shops'],
+      ['work', 'Offices and industry'],
+    ] as const) {
+      const row = el('div', 'zone-demand-row', demand);
+      el('span', 'zone-demand-label', row).textContent = label;
+      const bar = el('span', 'zone-demand-bar', row);
+      bar.setAttribute('role', 'meter');
+      bar.setAttribute('aria-label', `Demand for ${label.toLowerCase()}`);
+      bar.setAttribute('aria-valuemin', '-100');
+      bar.setAttribute('aria-valuemax', '100');
+      el('i', '', bar);
+      this.demandBars.set(key, bar);
+    }
+
     const zoned = el('section', 'build-edits', this.panel);
     el('h3', 'build-count', zoned).textContent = 'Zoned';
     this.totals = el('ul', 'zone-totals', zoned);
@@ -184,6 +227,29 @@ export class ZonesPanel {
       (t.building ? `, ${fmt(t.building, 0)} being built` : '') +
       `; about ${fmt(Math.round(t.residents / 10) * 10, 0)} residents and ` +
       `${fmt(Math.round(t.jobs / 10) * 10, 0)} jobs (estimated from floor area).`;
+  }
+
+  /** Demand per kind of zone (-1 to 1). */
+  setDemand(d: ZoneDemand): void {
+    for (const [key, bar] of this.demandBars) {
+      const v = Math.round(d[key] * 100);
+      bar.setAttribute('aria-valuenow', String(v));
+      bar.title = v > 25 ? 'Wanted' : v > -25 ? 'Some' : 'Not wanted';
+      bar.setAttribute('aria-valuetext', bar.title);
+      const fill = bar.firstElementChild as HTMLElement;
+      fill.style.left = `${50 + Math.min(0, v) / 2}%`;
+      fill.style.width = `${Math.abs(v) / 2}%`;
+      fill.className = v >= 0 ? 'up' : 'down';
+    }
+  }
+
+  /** Land value: not measured yet, or the mean of the zoned lots (NaN: none zoned). */
+  setLandValue(measured: boolean, meanZoned: number): void {
+    this.valueNote.textContent = !measured
+      ? 'Measuring how far homes and jobs are by car on the traffic simulated…'
+      : 'From homes and jobs within reach by car, green land around and traffic noise; ' +
+        '100 is the best-placed land when first measured.' +
+        (Number.isFinite(meanZoned) ? ` Zoned lots: ${fmt(meanZoned, 0)} on average.` : '');
   }
 
   setStatus(text: string): void {

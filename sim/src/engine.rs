@@ -3030,6 +3030,40 @@ impl Engine {
         )
     }
 
+    /// Homes and jobs within reach by car of each road in `sources` on the travel times
+    /// measured now (gravity accessibility): the demand's home and work weights (residents
+    /// and jobs) of the roads reached within `max` seconds, each weighted by
+    /// `exp(-time / decay)`. Without demand, or from a road the network does not have, none.
+    pub fn reach(&mut self, sources: &[u32], decay: f32, max: f32) -> Vec<[f32; 2]> {
+        let n = self.net.edge_count();
+        let Some(demand) = self.demand.as_ref() else {
+            return vec![[0.0; 2]; sources.len()];
+        };
+        let (home, work) = demand.weights_by_edge();
+        let decay = decay.max(1.0);
+        sources
+            .iter()
+            .map(|&from| {
+                let mut sum = [0.0f32; 2];
+                if (from as usize) < n {
+                    self.router.reach(
+                        &self.net,
+                        &self.travel_time,
+                        from,
+                        max,
+                        vclass::PASSENGER,
+                        |e, t| {
+                            let w = (-t / decay).exp();
+                            sum[0] += w * home.get(e as usize).copied().unwrap_or(0.0);
+                            sum[1] += w * work.get(e as usize).copied().unwrap_or(0.0);
+                        },
+                    );
+                }
+                sum
+            })
+            .collect()
+    }
+
     /// Edits in force.
     pub fn edits(&self) -> &[Edit] {
         &self.edits

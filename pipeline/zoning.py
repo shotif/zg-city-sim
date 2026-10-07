@@ -68,6 +68,15 @@ STOREY = 3.0
 NO_LOT_COVER = (80, 90)
 # Map resolution (m) of the land cover lots are checked against.
 COVER_RESOLUTION = 10.0
+# Land cover counted as green around a lot (WorldCover: trees, shrubs, grass, water and
+# wetland), and the half width (m) of the square it is counted over.
+GREEN_COVER = (10, 20, 30, 80, 90)
+GREEN_RADIUS = 200.0
+# Roads loud enough to lower the value of land near them, and how far (m) they are looked
+# for: motorways, trunk and primary roads, without their slip roads.
+LOUD_ROAD_TYPES = ("highway.motorway", "highway.trunk", "highway.primary")
+LOUD_DISTANCE = 250.0
+NO_EDGE = 0xFFFFFFFF
 # Simplification (m) of the plan's outlines for the app's map.
 PLAN_SIMPLIFY = 2.0
 
@@ -190,6 +199,50 @@ def lot_streets(net: dict[str, np.ndarray], index: dict) -> np.ndarray:
         & (net["laneLength"][lane0] >= 2 * END_CLEAR + FRONTAGE)
     )
     return np.flatnonzero(ok)
+
+
+def green_share(points: np.ndarray, cover: tuple[np.ndarray, float, float, float]) -> np.ndarray:
+    """Share (0-1) of green land cover in the square `GREEN_RADIUS` around each point."""
+    grid, res, west, north = cover
+    green = np.isin(grid, GREEN_COVER)
+    # Summed-area table, with a row and a column of zeros in front.
+    table = np.zeros((grid.shape[0] + 1, grid.shape[1] + 1), np.int32)
+    np.cumsum(np.cumsum(green, axis=0, dtype=np.int32), axis=1, out=table[1:, 1:])
+    r = int(round(GREEN_RADIUS / res))
+    col = ((points[:, 0] - west) / res).astype(np.int64)
+    row = ((points[:, 1] - north) / res).astype(np.int64)
+    c0 = np.clip(col - r, 0, grid.shape[1])
+    c1 = np.clip(col + r + 1, 0, grid.shape[1])
+    r0 = np.clip(row - r, 0, grid.shape[0])
+    r1 = np.clip(row + r + 1, 0, grid.shape[0])
+    count = table[r1, c1] - table[r0, c1] - table[r1, c0] + table[r0, c0]
+    area = np.maximum((r1 - r0) * (c1 - c0), 1)
+    return count / area
+
+
+def loud_roads(
+    net: dict[str, np.ndarray], index: dict, lines: list[np.ndarray], points: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """The nearest loud road's edge within `LOUD_DISTANCE` of each point (`NO_EDGE`: none),
+    and its distance (m)."""
+    types = index["types"]
+    loud_type = np.array(
+        [t.startswith(LOUD_ROAD_TYPES) and "_link" not in t.split("|")[0] for t in types]
+    )
+    internal = (net["edgeFlags"] & index["flags"]["internal"]) != 0
+    edges = np.flatnonzero(loud_type[net["edgeType"]] & ~internal & (net["edgeLaneCount"] > 0))
+    edge = np.full(len(points), NO_EDGE, np.uint32)
+    dist = np.full(len(points), LOUD_DISTANCE, np.float32)
+    if not len(edges) or not len(points):
+        return edge, dist
+    lane0 = net["edgeLaneStart"].astype(np.int64)[edges]
+    tree = shapely.STRtree(_lines([lines[k] for k in lane0]))
+    (i, g), d = tree.query_nearest(
+        shapely.points(points), max_distance=LOUD_DISTANCE, return_distance=True, all_matches=False
+    )
+    edge[i] = edges[g]
+    dist[i] = d
+    return edge, dist
 
 
 def along(points: np.ndarray, distances: np.ndarray) -> np.ndarray:
@@ -358,6 +411,9 @@ def make_lots(
         near = tree.query_ball_point(centre_xy[keep], CONTEXT_RADIUS)
         context[keep] = [min(255, round(float(np.median(storeys[n])))) if n else 0 for n in near]
 
+    green = green_share(centre_xy[keep], cover)
+    loud_edge, loud_dist = loud_roads(net, index, lines, centre_xy[keep])
+
     u = lots["end"] - lots["start"]
     sel = keep
     out = {
@@ -371,6 +427,10 @@ def make_lots(
         "lotPlan": lot_plan[sel],
         "lotCover": lot_cover[sel].astype(np.uint8),
         "lotContext": context[sel],
+        # Green land cover around (percent), and the nearest loud road and how far (m).
+        "lotGreen": np.round(green * 100).astype(np.uint8),
+        "lotLoudEdge": loud_edge,
+        "lotLoudDistance": np.minimum(np.round(loud_dist), 255).astype(np.uint8),
     }
     stats["lots"] = int(sel.sum())
     out["_stats"] = stats  # type: ignore[assignment]

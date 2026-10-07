@@ -33,13 +33,13 @@ Read these before changing anything:
 | `sim/` | Rust traffic engine, compiled to WebAssembly (C ABI in `ffi.rs`) and run natively. |
 | `sim/src/engine.rs` | Vehicles, IDM/MOBIL, junction right of way, signals (`merge_signal_phases`, `retime_signals`, actuated control), routing calls, closures, statistics. |
 | `sim/src/network.rs` | The network built from the packed arrays: routing successors, toll time. |
-| `sim/src/router.rs` | ALT A* with weighted heuristic. |
+| `sim/src/router.rs` | ALT A* with weighted heuristic; `reach`, the time-limited search behind land value's accessibility (`Engine::reach`). |
 | `sim/src/demand.rs` | Trip generation: `HOURLY` profile, gravity model, gateways. |
 | `sim/src/transit.rs` | Trams and buses on timetable. |
 | `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
 | `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck), `day.rs` (a whole weekday, for validation) and `compare.rs` (one network through the morning peak, for a project's before and after). |
-| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles, traffic map, closures, news, edits); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, roundabouts and signal programs, built into the network the engine runs) and the junctions' movements for the signal editor (`signals.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool, buildings that grow and the homes and jobs they add to the traffic's demand); `src/ui/` the HUD and panels; `src/camera/` the views. |
+| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles, traffic map, closures, news, edits); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, roundabouts and signal programs, built into the network the engine runs) and the junctions' movements for the signal editor (`signals.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool, buildings that grow and the homes and jobs they add to the traffic's demand, land value and demand per zone); `src/ui/` the HUD and panels; `src/camera/` the views. |
 | `.github/workflows/` | `deploy.yml` (build, test, deploy main) and `live-data.yml` (copies the City's closures feed to the `live-data` branch every 15 minutes). |
 
 ## Commands
@@ -104,3 +104,6 @@ Environment variables for the native runs:
 | Signal re-timing (`MIN_GREEN`, `LONG_CYCLE`, `MAX_EXTENSION`, `TRAM_TRACK_SHARE`) | `sim/src/engine.rs` | 6 s, 120 s, 20 s, 0.25 |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
 | Driver parameters | `sim/src/vtype.rs` | |
+| Growth rate (`START_RATE`), people per floor area | `web/src/grow/growth.ts` | 2 % of empty zoned lots a minute; 30 m² a resident, 20/35/80-120 m² a job |
+| Land value (`REACH_DECAY`, `REACH_MAX`, `ACCESS_POWER`, `GREEN_BONUS`, `NOISE_LOSS`) | `web/src/grow/landValue.ts` | 6 min, 20 min, 0.75, 10 %, 0.6 %/dB above 55 dB(A) |
+| Demand per zone (`BASE_DEMAND`, `SWING`) | `web/src/grow/zoneDemand.ts` | homes 0.4, shops 0.2, work 0.3; 2,000 people |

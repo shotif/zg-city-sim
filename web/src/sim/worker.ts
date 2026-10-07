@@ -37,6 +37,18 @@ let render = true;
 /** Travel-time queries being answered a few per batch, so frames keep coming. */
 let routeJob: { id: number; pairs: Uint32Array; times: Float64Array; next: number } | undefined;
 const ROUTES_PER_BATCH = 24;
+/** Accessibility being measured a few milliseconds' worth of sources per batch. */
+let reachJob:
+  | {
+      id: number;
+      sources: Uint32Array;
+      decay: number;
+      max: number;
+      values: Float32Array;
+      next: number;
+    }
+  | undefined;
+const REACH_MS = 8;
 /** Volume requests waiting for their simulated time. */
 let volumeAsks: { id: number; at: number }[] = [];
 
@@ -151,6 +163,20 @@ function tick(): void {
       ]);
     }
   }
+  const reach = reachJob;
+  if (reach) {
+    const t0 = performance.now();
+    while (reach.next < reach.sources.length && performance.now() - t0 < REACH_MS) {
+      const k = reach.next++;
+      reach.values.set(sim.reach(reach.sources.subarray(k, k + 1), reach.decay, reach.max), 2 * k);
+    }
+    if (reach.next >= reach.sources.length) {
+      reachJob = undefined;
+      post({ type: 'reach', id: reach.id, time: sim.stats()[0], values: reach.values }, [
+        reach.values.buffer,
+      ]);
+    }
+  }
   setTimeout(tick, Math.max(0, TICK_MS - (performance.now() - start)));
 }
 
@@ -201,6 +227,13 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
       break;
     case 'volumes':
       volumeAsks.push({ id: message.id, at: message.at });
+      break;
+    case 'reach':
+      reachJob = {
+        ...message,
+        values: new Float32Array(2 * message.sources.length),
+        next: 0,
+      };
       break;
   }
 };

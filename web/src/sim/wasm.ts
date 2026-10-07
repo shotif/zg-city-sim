@@ -21,6 +21,7 @@ export interface EngineExports {
   zg_signal_ptr(which: number): number;
   zg_signal_len(which: number): number;
   zg_route_time(from: number, to: number): number;
+  zg_reach(sources: number, count: number, decay: number, max: number, out: number): number;
   zg_edge_entered_ptr(): number;
   zg_step(steps: number): number;
   zg_dt(): number;
@@ -245,6 +246,22 @@ export class TrafficEngine {
   /** Seconds by car from one edge to another on the measured travel times (-1: no route). */
   routeTime(from: number, to: number): number {
     return this.exports.zg_route_time(from, to);
+  }
+
+  /** Homes and jobs within reach by car of each source edge on the measured travel times,
+   * weighted by `exp(-time / decay)` up to `max` seconds: two numbers per source. */
+  reach(sources: Uint32Array, decay: number, max: number): Float32Array {
+    const ex = this.exports;
+    const n = sources.length;
+    if (n === 0) return new Float32Array(0);
+    const ptr = ex.zg_alloc(4 * n);
+    const out = ex.zg_alloc(8 * n);
+    new Uint32Array(this.memory, ptr, n).set(sources);
+    ex.zg_reach(ptr, n, decay, max, out);
+    const result = new Float32Array(this.memory, out, 2 * n).slice();
+    ex.zg_free(ptr, 4 * n);
+    ex.zg_free(out, 8 * n);
+    return result;
   }
 
   /** Vehicles that have driven onto each edge since the start. */
