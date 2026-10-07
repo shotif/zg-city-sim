@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test';
 
-// Live road closures come from the repository's live-data branch; tests use a fixed copy.
+// Live road closures and the weather come from the repository's live-data branch; tests
+// use fixed copies (clear weather, so the light is as the time of day makes it).
 test.beforeEach(async ({ page }) => {
   await page.route('**/live-data/closures.json', (route) =>
     route.fulfill({ path: 'e2e/fixtures/closures.json', contentType: 'application/json' }),
+  );
+  await page.route('**/live-data/weather.json', (route) =>
+    route.fulfill({ path: 'e2e/fixtures/weather.json', contentType: 'application/json' }),
   );
 });
 
@@ -917,10 +921,20 @@ test('lights the city as the time of day: noon, and night with street lamps', as
       { timeout: 150_000 },
     );
 
+  // The light for simulated time `at` (s): until the first frame comes, it follows the clock.
+  const lightAt = async (at: number) => {
+    await page.waitForFunction(
+      (t) => Math.abs((window.__ZG__?.light?.time ?? -1e9) - t) < 1200,
+      at,
+      { timeout: 150_000 },
+    );
+    return page.evaluate(() => window.__ZG__!.light!);
+  };
+
   // Noon: the sun high in the south, no lamps.
   await page.goto('./?start=12:00');
   await ready();
-  const noon = await page.evaluate(() => window.__ZG__!.light!);
+  const noon = await lightAt(12 * 3600);
   expect(noon.night).toBe(0);
   expect(noon.direction[1]).toBeGreaterThan(0.3);
   expect(noon.direction[2]).toBeGreaterThan(0.3);
@@ -930,7 +944,7 @@ test('lights the city as the time of day: noon, and night with street lamps', as
   await page.goto('./?start=23:30');
   await ready();
   await expect(page.locator('.hud-sim-clock')).toHaveText(/^23:/);
-  const night = await page.evaluate(() => window.__ZG__!.light!);
+  const night = await lightAt(23.5 * 3600);
   expect(night.night).toBe(1);
   expect(night.background).toBe(0x0b1424);
   expect(await page.evaluate(() => window.__ZG__!.streetLights!.count)).toBeGreaterThan(50_000);
@@ -988,6 +1002,8 @@ test("shows Zagreb's weather, and drives and looks as the weather picked", async
   });
   const live = await page.evaluate(() => window.__ZG__!.weather!);
   expect(live.choice).toBe('live');
+  expect(live.kind).toBe('clear');
+  await expect(picker.locator('option').first()).toHaveText('Live: Clear, 18 °C');
   const clearLight = await page.evaluate(() => window.__ZG__!.light!.intensity);
 
   // Heavy snow: a dimmer sun, snow falling in the 3D view, slower traffic in the engine.
@@ -995,7 +1011,7 @@ test("shows Zagreb's weather, and drives and looks as the weather picked", async
   await expect.poll(() => page.evaluate(() => window.__ZG__!.weather!.kind)).toBe('heavySnow');
   await expect
     .poll(() => page.evaluate(() => window.__ZG__!.light!.intensity))
-    .toBeLessThan(live.kind === 'clear' ? clearLight * 0.5 : clearLight + 1);
+    .toBeLessThan(clearLight * 0.5);
   await page.evaluate(() => {
     window.__ZG__?.setView('3d');
     window.__ZG__?.lookAt(300, 600, 500);

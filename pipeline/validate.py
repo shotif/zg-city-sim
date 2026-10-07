@@ -635,7 +635,9 @@ def report(
             "in the hour.",
             "",
             "The junctions holding up most traffic other than at red lights, with the "
-            'queues they back up (vehicle-hours over the day; "Slow road": the road '
+            'queues they back up (vehicle-hours over the day; "Exit full": the full roads '
+            "beyond go on for more than 12 junctions or round in a circle, as in a gridlock; "
+            '"Slow road": the road '
             "beyond is full of slow traffic, not of a queue at the next junction):",
             "",
             "| Junction | Control | Held up | Exit full | Giving way | Blocked past the line "
