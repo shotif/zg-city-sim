@@ -8,6 +8,7 @@ import {
   addRibbon,
   groundPath,
   pathDistances,
+  simplify,
   slicePath,
 } from '../src/world/roadGeometry';
 
@@ -94,5 +95,15 @@ describe('addPolygon', () => {
     expect(b.vertexCount).toBe(4);
     expect(b.indices.length).toBe(6);
     expect(facesUp(b)).toBe(true);
+  });
+});
+
+describe('simplify', () => {
+  it('keeps the ends and the corners, drops points within the tolerance', () => {
+    // A straight run with a wobble of 0.5 m, then a right-angle corner.
+    const xz = [0, 0, 10, 0.5, 20, 0, 30, 0, 30, 10, 30, 20];
+    expect(simplify(xz, 1)).toEqual([0, 3, 5]);
+    expect(simplify(xz, 0.1)).toEqual([0, 1, 2, 3, 5]);
+    expect(simplify([0, 0, 5, 5], 1)).toEqual([0, 1]);
   });
 });

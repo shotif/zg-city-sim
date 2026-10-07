@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { CARS, MODELS, PAINT, modelOf, partsGeometry } from '../src/world/vehicleModels';
+import { CARS, MODELS, PAINT, farModel, modelOf, partsGeometry } from '../src/world/vehicleModels';
 
 /** Every triangle's normal points away from the part's centre, and is wound to face it. */
 function outward(geometry: ReturnType<typeof partsGeometry>, centre: [number, number, number]) {
@@ -63,5 +63,28 @@ describe('vehicle models', () => {
     expect(modelOf(0, 12_345)).toBe(modelOf(0, 12_345));
     expect(modelOf(2, 99)).toBe(0);
     expect([modelOf(1, 4), modelOf(1, 5)].sort()).toEqual([0, 1]);
+  });
+});
+
+describe('far models', () => {
+  const triangles = (parts: Parameters<typeof partsGeometry>[0]) =>
+    partsGeometry(parts).getAttribute('position').count / 3;
+
+  it('draw each type as a box with a roof and two lamps, a fraction of the triangles', () => {
+    for (const models of MODELS) {
+      const near = models[0];
+      const far = farModel(near);
+      const all = (m: typeof near) =>
+        triangles(m.parts) + triangles(m.head) + triangles(m.tail) + triangles(m.left);
+      expect(all(far)).toBeLessThanOrEqual(48);
+      expect(all(far)).toBeLessThan(all(near) / 3);
+      expect(far.parts).toHaveLength(2);
+      expect(far.front).toBe(near.front);
+    }
+  });
+
+  it('keep the roof colour seen from above: painted on cars, white on trams', () => {
+    expect(farModel(MODELS[0][0]).parts[1].color).toBe(PAINT);
+    expect(farModel(MODELS[3][0]).parts[1].color).not.toBe(PAINT);
   });
 });

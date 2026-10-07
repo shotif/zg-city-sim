@@ -4,6 +4,7 @@ import { valueColor } from '../grow/landValue';
 import type { Lots } from '../grow/lots';
 import { ZONES } from '../grow/zones';
 import type { HeightFn } from './roadGeometry';
+import type { Extent, TerrainLayer } from './terrainLod';
 
 /** Chunk size (m) lots are drawn in, and the farthest view (view height, m) they show at. */
 const CHUNK = 500;
@@ -51,7 +52,9 @@ export class ZoneLayer {
     opacity: 0.55,
     depthWrite: false,
   });
-  private plan?: THREE.Mesh;
+  /** The City's planned land use, drawn into the terrain once asked for. */
+  private plan?: { map: THREE.Texture; extent: Extent };
+  private planShown = false;
   private readonly brush: THREE.Mesh;
   /** Chunks around the view still to build after the last update. */
   private waiting = 0;
@@ -59,7 +62,7 @@ export class ZoneLayer {
   constructor(
     private readonly lots: Lots,
     private readonly height: HeightFn,
-    private readonly terrain: THREE.BufferGeometry,
+    private readonly terrain: Pick<TerrainLayer, 'setOverlay'>,
   ) {
     this.object.name = 'zoning';
     this.zones = new Uint8Array(lots.count);
@@ -127,15 +130,13 @@ export class ZoneLayer {
 
   /** Draw the City's planned land use under the lots. */
   setPlanVisible(on: boolean): void {
-    if (on && !this.plan) {
-      this.plan = this.buildPlan();
-      this.object.add(this.plan);
-    }
-    if (this.plan) this.plan.visible = on;
+    if (on && !this.plan) this.plan = this.buildPlan();
+    this.planShown = on;
+    if (this.plan) this.terrain.setOverlay(on ? this.plan.map : undefined, this.plan.extent, 0.5);
   }
 
   get planVisible(): boolean {
-    return this.plan?.visible ?? false;
+    return this.planShown;
   }
 
   /** Build the chunks around the view; whether anything changed. */
@@ -283,8 +284,8 @@ export class ZoneLayer {
     return lines;
   }
 
-  /** The planned land use as a map draped over the terrain. */
-  private buildPlan(): THREE.Mesh {
+  /** The planned land use as a map to drape over the terrain. */
+  private buildPlan(): { map: THREE.Texture; extent: Extent } {
     const lots = this.lots;
     const pts = lots.planPoints;
     let [minX, minZ, maxX, maxZ] = [Infinity, Infinity, -Infinity, -Infinity];
@@ -325,33 +326,9 @@ export class ZoneLayer {
     texture.flipY = false;
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
-    // The terrain's grid, with its own map coordinates over the plan.
-    const position = this.terrain.getAttribute('position');
-    const uv = new Float32Array(position.count * 2);
-    for (let v = 0; v < position.count; v++) {
-      uv[v * 2] = (position.getX(v) - minX) / (maxX - minX);
-      uv[v * 2 + 1] = (position.getZ(v) - minZ) / (maxZ - minZ);
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', position);
-    geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    geometry.setIndex(this.terrain.getIndex());
-    geometry.boundingSphere = this.terrain.boundingSphere;
-    const mesh = new THREE.Mesh(
-      geometry,
-      new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        opacity: 0.5,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
-      }),
-    );
-    mesh.name = 'planned land use';
-    mesh.renderOrder = 1;
-    return mesh;
+    return {
+      map: texture,
+      extent: { west: minX, north: minZ, width: maxX - minX, height: maxZ - minZ },
+    };
   }
 }

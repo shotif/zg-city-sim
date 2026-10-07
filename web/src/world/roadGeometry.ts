@@ -254,3 +254,40 @@ export function addPolygon(b: MeshBuilder, ring: Float32Array, color: THREE.Colo
     b.triUp(base + i, base + j, base + k);
   }
 }
+
+/**
+ * Douglas-Peucker: the indices of the points of a polyline (x, z pairs) to keep so that
+ * none left out is further than `tolerance` (m) from the line kept; the ends always stay.
+ */
+export function simplify(xz: ArrayLike<number>, tolerance: number): number[] {
+  const n = xz.length / 2;
+  if (n <= 2) return n === 2 ? [0, 1] : n === 1 ? [0] : [];
+  const keep = new Uint8Array(n);
+  keep[0] = keep[n - 1] = 1;
+  const stack: [number, number][] = [[0, n - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const [ax, az, bx, bz] = [xz[a * 2], xz[a * 2 + 1], xz[b * 2], xz[b * 2 + 1]];
+    const len = Math.hypot(bx - ax, bz - az);
+    let far = tolerance;
+    let best = -1;
+    for (let i = a + 1; i < b; i++) {
+      const [px, pz] = [xz[i * 2], xz[i * 2 + 1]];
+      const d =
+        len > 1e-9
+          ? Math.abs((bx - ax) * (az - pz) - (ax - px) * (bz - az)) / len
+          : Math.hypot(px - ax, pz - az);
+      if (d > far) {
+        far = d;
+        best = i;
+      }
+    }
+    if (best >= 0) {
+      keep[best] = 1;
+      stack.push([a, best], [best, b]);
+    }
+  }
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push(i);
+  return out;
+}

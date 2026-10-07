@@ -38,8 +38,8 @@ export class Heightfield {
   }
 
   /**
-   * Height function of the terrain mesh built with `stride` (buildTerrainGeometry): same
-   * vertices and the same triangle split, so things placed on it sit exactly on the surface.
+   * Height function of the terrain's finest tiles at `stride` (terrainLod.ts): same vertices
+   * and the same triangle split, so things placed on it sit exactly on the surface.
    */
   meshSurface(stride: number): (x: number, z: number) => number {
     const cols = Math.floor((this.cols - 1) / stride) + 1;

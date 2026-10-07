@@ -43,6 +43,13 @@ test('renders Zagreb terrain, roads and buildings in the map, isometric and 3D v
     await page.waitForTimeout(4000);
     await page.screenshot({ path: testInfo.outputPath(`${mode}.png`) });
     await expect(page.locator(`.hud-toolbar .hud-button[aria-pressed="true"]`)).toHaveCount(1);
+    // The terrain in tiles coarser with distance (M6f): 1.9 million triangles before.
+    const terrain = await page.evaluate(() => [
+      window.__ZG__?.terrain?.drawn ?? 0,
+      window.__ZG__?.terrain?.triangles ?? 0,
+    ]);
+    expect(terrain[0]).toBeGreaterThan(0);
+    expect(terrain[1]).toBeLessThan(500_000);
   }
   const chunks = await page.evaluate(() => [
     window.__ZG__?.roads?.builtChunks ?? 0,

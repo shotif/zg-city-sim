@@ -4,12 +4,17 @@ import { INFO, RENDER } from '../sim/wasm';
 import { GLOW_ORDER, SOLID_ORDER, glowMaterial, nightUniform } from './nightLights';
 import type { HeightFn } from './roadGeometry';
 import { vehicleColor } from './vehicleGeometry';
-import { MODELS, PAINT, modelOf, partsGeometry } from './vehicleModels';
+import { MODELS, PAINT, type Model, farModel, modelOf, partsGeometry } from './vehicleModels';
 
 /** Vehicles sit on the road surface, which is drawn this far above the ground. */
 const ROAD_LIFT = 0.12;
 /** Vehicles are drawn when the view shows less than this many metres. */
 export const VEHICLE_MAX_VIEW = 6_000;
+/** Above this view height (m) vehicles are drawn as boxes (`farModel`): a car is then a
+ * few pixels long. */
+export const VEHICLE_FAR_VIEW = 1_200;
+/** The model number of each type's far model. */
+const FAR = 15;
 
 export interface VehicleView {
   target: THREE.Vector3;
@@ -119,23 +124,26 @@ export class VehicleLayer {
 
   constructor(private readonly height: HeightFn) {
     this.object.name = 'vehicles';
-    MODELS.forEach((models, type) =>
-      models.forEach((model, k) => {
-        this.geometries.set(keyOf(type, k), {
-          paint: partsGeometry(model.parts.filter((part) => part.color === PAINT)),
-          fixed: partsGeometry(model.parts.filter((part) => part.color !== PAINT)),
-          head: partsGeometry(model.head),
-          tail: partsGeometry(model.tail),
-          left: partsGeometry(model.left),
-          right: partsGeometry(model.right),
-          // A beam on the road ahead: 18 m long, a little wider than the vehicle.
-          beam: new THREE.PlaneGeometry(model.halfWidth * 3.2, 18)
-            .rotateX(-Math.PI / 2)
-            .translate(0, -ROAD_LIFT + 0.05, model.front + 8),
-        });
-        this.makeMeshes(keyOf(type, k), 64);
-      }),
-    );
+    const add = (key: number, model: Model) => {
+      this.geometries.set(key, {
+        paint: partsGeometry(model.parts.filter((part) => part.color === PAINT)),
+        fixed: partsGeometry(model.parts.filter((part) => part.color !== PAINT)),
+        head: partsGeometry(model.head),
+        tail: partsGeometry(model.tail),
+        left: partsGeometry(model.left),
+        right: partsGeometry(model.right),
+        // A beam on the road ahead: 18 m long, a little wider than the vehicle.
+        beam: new THREE.PlaneGeometry(model.halfWidth * 3.2, 18)
+          .rotateX(-Math.PI / 2)
+          .translate(0, -ROAD_LIFT + 0.05, model.front + 8),
+      });
+      this.makeMeshes(key, 64);
+    };
+    MODELS.forEach((models, type) => {
+      models.forEach((model, k) => add(keyOf(type, k), model));
+      // Each type's far model, from its first model.
+      add(keyOf(type, FAR), farModel(models[0]));
+    });
   }
 
   private makeMeshes(key: number, capacity: number): void {
@@ -191,12 +199,15 @@ export class VehicleLayer {
       return;
     }
     const slots = cur.length / RENDER.stride;
+    const far = view.viewHeight > VEHICLE_FAR_VIEW;
+    const keyFor = (info: number) =>
+      keyOf(info & 0xff, far ? FAR : modelOf(info & 0xff, info >>> 16));
     const counts = new Map<number, number>();
     for (let slot = 0; slot < slots; slot++) {
       const o = slot * RENDER.stride;
       if (cur[o + RENDER.serial] === 0) continue;
       const info = cur[o + RENDER.info];
-      const key = keyOf(info & 0xff, modelOf(info & 0xff, info >>> 16));
+      const key = keyFor(info);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     const sets = new Map<number, ModelMeshes>();
@@ -225,7 +236,7 @@ export class VehicleLayer {
         if (type === 3) near.trams++;
         near.speed += asFloat(cur[slot * RENDER.stride + RENDER.speed]);
       }
-      const key = keyOf(type, modelOf(type, info >>> 16));
+      const key = keyFor(info);
       const set = sets.get(key);
       if (!set) continue;
       const k = used.get(key) ?? 0;
@@ -272,7 +283,10 @@ export class VehicleLayer {
     this.drawn = 0;
     for (const [key, set] of sets) {
       const n = used.get(key) ?? 0;
-      for (const mesh of Object.values(set)) mesh.count = n;
+      // Far models have no indicators: nothing to draw there.
+      for (const mesh of Object.values(set)) {
+        mesh.count = mesh.geometry.getAttribute('position').count > 0 ? n : 0;
+      }
       set.beam.count = night > 0.02 ? n : 0;
       this.drawn += n;
       set.paint.instanceMatrix.needsUpdate = true;

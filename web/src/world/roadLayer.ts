@@ -10,12 +10,17 @@ import {
   addPolygon,
   addRibbon,
   groundPath,
+  simplify,
 } from './roadGeometry';
 import type { RoadClass, RoadNetwork } from './roadNetwork';
 
 const CHUNK = 1000; // metres per chunk side
 const DETAIL_MAX_VIEW = 5_000; // detailed roads below this visible height
 const OVERVIEW_MIN_VIEW = 2_500; // overview lines above this visible height
+/** Overview lines are simplified within this (m): under a pixel from 2.5 km up. */
+const OVERVIEW_TOLERANCE = 2;
+/** Minor roads' overview lines in squares this wide (m), so those off the screen are culled. */
+const OVERVIEW_TILE = 4000;
 const MAX_CACHED_CHUNKS = 600;
 
 const LANE_LIFT = 0.12;
@@ -48,8 +53,10 @@ const OVERVIEW: {
   color: number;
   width: number;
   maxView: number;
+  /** In tiles (OVERVIEW_TILE), for classes only shown close in. */
+  tiled?: boolean;
 }[] = [
-  { classes: ['minor'], color: 0xd9d6cf, width: 1, maxView: 9_000 },
+  { classes: ['minor'], color: 0xd9d6cf, width: 1, maxView: 9_000, tiled: true },
   { classes: ['tertiary'], color: 0xf1efe8, width: 1.4, maxView: 30_000 },
   { classes: ['rail'], color: 0x55585c, width: 1.5, maxView: Infinity },
   { classes: ['tram'], color: 0x2f6fd6, width: 1.8, maxView: Infinity },
@@ -307,7 +314,10 @@ export class RoadLayer {
 
   private buildOverview() {
     const { net, height } = this;
-    const byClass = new Map<RoadClass, number[]>();
+    const tiled = new Set(OVERVIEW.filter((s) => s.tiled).flatMap((s) => s.classes));
+    // Segments by class, and by tile for tiled classes ('' otherwise).
+    const byClass = new Map<RoadClass, Map<string, number[]>>();
+    const xz: number[] = [];
     for (let e = 0; e < net.edgeCount; e++) {
       const cls = net.edgeClass[e];
       if (cls === 'service' || net.isInternal(e)) continue;
@@ -315,31 +325,50 @@ export class RoadLayer {
       if (net.hasFlag(e, 'hasOpposite') && net.edgeFrom[e] > net.edgeTo[e]) continue;
       const lane = net.edgeLaneStart[e] + (net.edgeLaneCount[e] >> 1);
       const { start, count } = net.lanePoints(lane);
-      let list = byClass.get(cls);
-      if (!list) byClass.set(cls, (list = []));
-      for (let k = 0; k < count - 1; k++) {
-        for (const p of [start + k, start + k + 1]) {
-          const x = net.laneShape[p * 3];
-          const z = net.laneShape[p * 3 + 1];
-          list.push(x, height(x, z) + net.laneShape[p * 3 + 2] + 3, z);
+      xz.length = 0;
+      for (let k = 0; k < count; k++) {
+        xz.push(net.laneShape[(start + k) * 3], net.laneShape[(start + k) * 3 + 1]);
+      }
+      const tile = tiled.has(cls)
+        ? `${Math.floor(xz[0] / OVERVIEW_TILE)},${Math.floor(xz[1] / OVERVIEW_TILE)}`
+        : '';
+      let tiles = byClass.get(cls);
+      if (!tiles) byClass.set(cls, (tiles = new Map()));
+      let list = tiles.get(tile);
+      if (!list) tiles.set(tile, (list = []));
+      const kept = simplify(xz, OVERVIEW_TOLERANCE);
+      for (let k = 0; k + 1 < kept.length; k++) {
+        for (const i of [kept[k], kept[k + 1]]) {
+          const [x, z] = [xz[i * 2], xz[i * 2 + 1]];
+          list.push(x, height(x, z) + net.laneShape[(start + i) * 3 + 2] + 3, z);
         }
       }
     }
     for (const style of OVERVIEW) {
-      const positions = style.classes.flatMap((c) => byClass.get(c) ?? []);
-      if (positions.length === 0) continue;
-      const geometry = new LineSegmentsGeometry();
-      geometry.setPositions(new Float32Array(positions));
+      const tiles = new Map<string, number[]>();
+      for (const cls of style.classes) {
+        for (const [tile, list] of byClass.get(cls) ?? []) {
+          const all = tiles.get(tile);
+          if (all) all.push(...list);
+          else tiles.set(tile, list);
+        }
+      }
       const material = new THREE.Line2NodeMaterial({
         color: style.color,
         linewidth: style.width,
         worldUnits: false,
       });
-      const lines = new LineSegments2(geometry, material);
-      lines.name = `overview ${style.classes.join('+')}`;
-      lines.frustumCulled = false;
-      this.overview.add(lines);
-      this.overviewLayers.push({ lines, maxView: style.maxView });
+      for (const [tile, positions] of tiles) {
+        if (positions.length === 0) continue;
+        const geometry = new LineSegmentsGeometry();
+        geometry.setPositions(new Float32Array(positions));
+        const lines = new LineSegments2(geometry, material);
+        lines.name = `overview ${style.classes.join('+')}${tile ? ` ${tile}` : ''}`;
+        // Tiles are culled by their bounds; whole-map lines are always in view.
+        lines.frustumCulled = tile !== '';
+        this.overview.add(lines);
+        this.overviewLayers.push({ lines, maxView: style.maxView });
+      }
     }
   }
 }

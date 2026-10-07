@@ -351,6 +351,72 @@ export const TRAM: Model = {
   halfWidth: 1.15,
 }; // prettier-ignore
 
+/** A part's extent: [x0, y0, z0, x1, y1, z1]. */
+function extent(parts: Part[]): number[] {
+  const e = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  const add = (x: number, y: number, z: number) => {
+    e[0] = Math.min(e[0], x);
+    e[1] = Math.min(e[1], y);
+    e[2] = Math.min(e[2], z);
+    e[3] = Math.max(e[3], x);
+    e[4] = Math.max(e[4], y);
+    e[5] = Math.max(e[5], z);
+  };
+  for (const p of parts) {
+    if (isBox(p)) {
+      add(...p.min);
+      add(...p.max);
+    } else {
+      for (const [z, y] of p.profile) {
+        add(p.x[0], y, z);
+        add(p.x[1], y, z);
+      }
+    }
+  }
+  return e;
+}
+
+const extentOf = (p: Part) => extent([p]);
+
+/**
+ * A model as seen from far out (M6f): its body as one box with a roof in the colour of its
+ * highest long part (white on buses and trams), and one box for each pair of lamps. About
+ * 48 triangles against 200 for a car and 500 for a tram.
+ */
+export function farModel(model: Model): Model {
+  const [x0, y0, z0, x1, , z1] = extent(model.parts);
+  const length = z1 - z0;
+  // The roof: of the parts near the top of the body (its long parts' highest), the colour
+  // covering most of the view from above, glass left out.
+  const long = model.parts.map(extentOf).filter((e) => e[5] - e[2] >= 0.15 * length);
+  const top = Math.max(...long.map((e) => e[4]));
+  const area = new Map<number, number>();
+  for (const p of model.parts) {
+    const e = extentOf(p);
+    if (p.color === GLASS || e[4] < 0.85 * top) continue;
+    area.set(p.color, (area.get(p.color) ?? 0) + (e[3] - e[0]) * (e[5] - e[2]));
+  }
+  const roof = [...area.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? PAINT;
+  const eaves = y0 + (top - y0) * 0.75;
+  const box = (parts: Part[], color: number): Part[] => {
+    if (parts.length === 0) return [];
+    const [a, b, c, d, e, f] = extent(parts);
+    return [{ min: [a, b, c], max: [d, e, f], color }];
+  };
+  return {
+    ...model,
+    name: `${model.name}, far`,
+    parts: [
+      { min: [x0, y0, z0], max: [x1, eaves, z1], color: PAINT },
+      { min: [x0, eaves, z0], max: [x1, top, z1], color: roof },
+    ],
+    head: box(model.head, 0xfff6d8),
+    tail: box(model.tail, 0xff2a1a),
+    left: [],
+    right: [],
+  };
+}
+
 /** The models for each engine vehicle type (car, lorry, bus, tram). */
 export const MODELS: Model[][] = [CARS.map((c) => c.model), LORRIES, [BUS], [TRAM]];
 

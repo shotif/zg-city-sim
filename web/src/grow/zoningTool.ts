@@ -9,6 +9,7 @@ import type { SimClient } from '../sim/client';
 import { ZonesPanel } from '../ui/zonesPanel';
 import { GrowthLayer } from '../world/growthLayer';
 import type { HeightFn } from '../world/roadGeometry';
+import type { TerrainLayer } from '../world/terrainLod';
 import { ZoneLayer } from '../world/zoneLayer';
 import { type EdgeDemand, addedDemand } from './demand';
 import { Growth, restoreBuildings, saveBuildings } from './growth';
@@ -36,7 +37,7 @@ export interface ZoningDeps {
   hud: HTMLElement;
   canvas: HTMLCanvasElement;
   surface: HeightFn;
-  terrain: THREE.BufferGeometry;
+  terrain: Pick<TerrainLayer, 'setOverlay'>;
   /** The ground point under a screen point (CSS pixels in the canvas). */
   groundAt(x: number, y: number): { x: number; z: number } | undefined;
   /** Stop or restart the map's own dragging while a stroke is painted. */

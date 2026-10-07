@@ -25,6 +25,9 @@ let owed = 0;
 let last = 0;
 let msPerStep = 2;
 let rate = 0;
+/** Simulated and real seconds since the rate was last measured. */
+let rateSim = 0;
+let rateReal = 0;
 let lastEdgeSpeeds = -Infinity;
 /** Closed edges and edits, kept until the engine is built. */
 let closed: Uint32Array | undefined;
@@ -133,6 +136,13 @@ function tick(): void {
       owed = Math.min(owed, steps * sim.dt * 2);
     }
   }
+  // The rate over the last second or so (steps come every few ticks at low speeds).
+  rateSim += steps * sim.dt;
+  rateReal += elapsed;
+  if (rateReal >= 1) {
+    rate = rateSim / rateReal;
+    rateSim = rateReal = 0;
+  }
   if (steps > 0) {
     const t0 = performance.now();
     const time = sim.step(steps);
@@ -140,7 +150,6 @@ function tick(): void {
     msPerStep = 0.7 * msPerStep + 0.3 * (ms / steps);
     if (!warming) owed -= steps * sim.dt;
     const frame = render ? sim.render() : new Uint32Array(0);
-    rate = 0.8 * rate + 0.2 * ((steps * sim.dt) / Math.max(elapsed, 0.001));
     post(
       { type: 'frame', time, render: frame, stats: sim.stats(), rate, stepMs: msPerStep, warming },
       [frame.buffer],

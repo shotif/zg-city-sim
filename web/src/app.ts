@@ -65,6 +65,7 @@ import { RoadLayer } from './world/roadLayer';
 import { RoadNetwork, laneShapeHeights, loadRoadNetwork } from './world/roadNetwork';
 import { NewsLayer, loadNews, placeTraffic } from './world/newsLayer';
 import { loadTerrain } from './world/terrain';
+import { type TerrainLayer, outsideGeometry } from './world/terrainLod';
 import { ALWAYS_DAY, type Lighting, lighting, litShare } from './world/daylight';
 import { litUniform, nightUniform } from './world/nightLights';
 import { BuiltArea, StreetLightLayer } from './world/streetLights';
@@ -244,6 +245,8 @@ export interface DebugApi {
   weather?: { choice: string; kind: WeatherKind; live?: LiveWeather };
   /** How fast the app runs, with `?perf` (M6f): refreshed twice a second. */
   perf?: Perf;
+  /** The terrain's tiles (M6f). */
+  terrain?: TerrainLayer;
 }
 
 declare global {
@@ -464,11 +467,12 @@ export async function startApp(container: HTMLElement): Promise<void> {
 
     const scene = new THREE.Scene();
     scene.background = SKY;
-    scene.add(terrain.mesh);
+    scene.add(terrain.layer.object);
+    debug.terrain = terrain.layer;
 
     // Ground beyond the data extent, so the world doesn't end in a void.
     const outside = new THREE.Mesh(
-      new THREE.PlaneGeometry(600_000, 600_000).rotateX(-Math.PI / 2),
+      outsideGeometry(terrain.layer.tree, 300_000),
       new THREE.MeshStandardMaterial({ color: 0x55603f, roughness: 1 }),
     );
     outside.position.y = terrain.minHeight - 3;
@@ -576,7 +580,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
 
     hud.setCredits(
       [...attributions(manifest), WEATHER_CREDIT],
-      `Renderer: ${backend} · terrain mesh every ${stride * terrain.heightfield.resolution} m · data built ${manifest.generated}`,
+      `Renderer: ${backend} · terrain mesh every ${stride * terrain.heightfield.resolution} m near the view · data built ${manifest.generated}`,
     );
 
     /** The ground point under a screen point (CSS pixels in the canvas). */
@@ -1247,7 +1251,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
             hud: hud.element,
             canvas: renderer.domElement,
             surface: terrain.heightfield.meshSurface(stride),
-            terrain: terrain.mesh.geometry,
+            terrain: terrain.layer,
             groundAt,
             setMapDragging: (on) => {
               activeRig.controls.enabled = on;
@@ -1327,6 +1331,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
           });
         }
       }
+      // The terrain's tiles for this view (M6f).
+      const terrainChanged = terrain.layer.update(camera, container.clientHeight);
       if (roads) roads.overviewHidden = traffic?.shows(view.viewHeight) ?? false;
       const roadsChanged =
         roads?.update({
@@ -1392,7 +1398,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
         !trafficMapChanged &&
         !zonesChanged &&
         !lightChanged &&
-        !lampsChanged
+        !lampsChanged &&
+        !terrainChanged
       ) {
         return false;
       }
