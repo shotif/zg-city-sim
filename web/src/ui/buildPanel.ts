@@ -1,8 +1,11 @@
+import type { NetworkEdit } from '../edit/builder';
 import { type Edit, type ResolvedEdit, describeEdit, withEdit, sameTarget } from '../edit/edits';
+import { junctionSignals, signalEdit } from '../edit/signals';
 import { type CompareRow, DIFF_BANDS, type TravelTimeSummary, change } from '../edit/compare';
 import type { RoadIndex } from '../edit/roadIndex';
 import type { SignalPrograms } from '../sim/wasm';
 import { formatClock } from './hud';
+import { SignalEditor } from './signalEditor';
 
 /** Speed limits on offer (km/h). */
 export const SPEED_LIMITS = [30, 40, 50, 60, 70, 80, 90, 100, 110, 130];
@@ -51,6 +54,9 @@ function roadKind(type: string): string {
 export interface BuildPanelCallbacks {
   /** The list of edits changed. */
   onEdits(edits: Edit[]): void;
+  /** A junction made a roundabout or its lights set, replacing the edits `replaces` picks:
+   * built into the network if it can be, else the reason it cannot. */
+  onNetworkEdit(edit: NetworkEdit, replaces?: (e: Edit) => boolean): string | undefined;
   /** A road was chosen (undefined: none). */
   onSelect(edge: number | undefined): void;
   /** The panel was closed. */
@@ -93,6 +99,9 @@ export class BuildPanel {
   private readonly lanes: HTMLElement;
   private readonly turns: HTMLElement;
   private readonly signal: HTMLElement;
+  private readonly junction: HTMLElement;
+  private readonly editorSlot: HTMLElement;
+  private editor?: { junction: number; view: SignalEditor };
   private readonly count: HTMLElement;
   private readonly list: HTMLElement;
   private readonly missingNote: HTMLElement;
@@ -147,6 +156,8 @@ export class BuildPanel {
     this.lanes = el('div', 'build-lanes', this.road);
     this.turns = el('div', 'build-turns', this.road);
     this.signal = el('div', 'build-signal', this.road);
+    this.junction = el('div', 'build-junction', this.road);
+    this.editorSlot = el('div', 'build-editor-slot', this.road);
 
     const edits = el('section', 'build-edits', this.panel);
     this.count = el('h3', 'build-count', edits);
@@ -228,7 +239,10 @@ export class BuildPanel {
   /** The network changed (roads drawn): roads are picked and described on this index. */
   setIndex(index: RoadIndex): void {
     this.index = index;
-    this.select(undefined);
+    this.closeEditor();
+    // Roads loaded keep their ids from build to build: keep the one chosen.
+    const edge = this.selectedEdge;
+    this.select(edge !== undefined && index.editable(edge) ? edge : undefined);
   }
 
   /** The map runs a planned project's network: compare it (and the edits) with today's. */
@@ -341,9 +355,42 @@ export class BuildPanel {
   }
 
   select(edge: number | undefined): void {
+    if (edge !== this.selectedEdge) this.closeEditor();
     this.selectedEdge = edge;
     this.renderRoad();
     this.callbacks.onSelect(edge);
+  }
+
+  private closeEditor(): void {
+    this.editor = undefined;
+    this.editorSlot.replaceChildren();
+  }
+
+  /** The signal editor for junction `j`. */
+  private openEditor(j: number): void {
+    this.closeEditor();
+    const signals = junctionSignals(this.index.net, j, this.signals);
+    const tls = signals.tls;
+    const view = new SignalEditor(this.editorSlot, signals, {
+      onApply: (phases) => {
+        // Green times set before on these lights go: the editor sets them all.
+        const replaces = (e: Edit) =>
+          e.kind === 'green' && this.resolved.some((r) => r.edit === e && r.tls === tls);
+        const problem = this.callbacks.onNetworkEdit(signalEdit(signals, phases), replaces);
+        if (!problem) {
+          this.closeEditor();
+          this.setStatus(
+            phases.length
+              ? `Traffic lights set at ${signals.junction.name}.`
+              : `Traffic lights taken away at ${signals.junction.name}.`,
+          );
+        }
+        return problem;
+      },
+      onClose: () => this.closeEditor(),
+    });
+    this.editor = { junction: j, view };
+    view.element.scrollIntoView?.({ block: 'nearest' });
   }
 
   private setEditsAndNotify(edits: Edit[]): void {
@@ -498,6 +545,7 @@ export class BuildPanel {
     this.signal.replaceChildren();
     const tls = index.signalAt(edge);
     const signals = this.signals;
+    const playerSet = tls !== undefined && (net.arrays.tlsFixed as Uint8Array | undefined)?.[tls];
     if (tls !== undefined && signals && tls + 1 < signals.phaseOffsets.length) {
       const junction = index.junctionRef(tls, ref.name ? `Signals at ${ref.name}` : undefined);
       const title = el('div', 'build-subtitle', this.signal);
@@ -506,8 +554,10 @@ export class BuildPanel {
       let cycle = 0;
       for (let p = a; p < b; p++) cycle += signals.duration[p];
       title.textContent = `Signals ahead: ${b - a} phases, ${Math.round(cycle)} s cycle`;
+      // Lights the player set are changed in the signal editor.
+      if (playerSet) title.textContent += ', set by you';
       const row = el('div', 'build-row', this.signal);
-      for (let p = a; p < b; p++) {
+      for (let p = a; p < b && !playerSet; p++) {
         const states = String.fromCharCode(
           ...signals.states.subarray(signals.stateOffsets[p], signals.stateOffsets[p + 1]),
         );
@@ -531,6 +581,43 @@ export class BuildPanel {
         });
       }
     }
+
+    // The junction ahead: a roundabout, traffic lights.
+    this.junction.replaceChildren();
+    const j = net.edgeTo[edge];
+    const ring = (e: number) => (net.edgeFlags[e] & net.index.flags.roundabout) !== 0;
+    const onRing = ring(edge) || turns.some((t) => ring(t.to));
+    if (this.editor && this.editor.junction !== j) this.closeEditor();
+    if (turns.length === 0 || onRing) return;
+    const { junction: point, tls: lights } = junctionSignals(net, j, this.signals);
+    const title = el('div', 'build-subtitle', this.junction);
+    title.textContent = `The junction ahead: ${point.name}`;
+    const row = el('div', 'build-row', this.junction);
+    const ringLanes = el('select', 'build-select', row);
+    ringLanes.setAttribute('aria-label', 'Roundabout lanes');
+    for (const n of [1, 2]) {
+      const o = el('option', '', ringLanes);
+      o.value = String(n);
+      o.textContent = `${n} lane${n === 1 ? '' : 's'}`;
+    }
+    button(
+      'Make a roundabout',
+      row,
+      () => {
+        const problem = this.callbacks.onNetworkEdit({
+          kind: 'roundabout',
+          junction: point,
+          lanes: Number(ringLanes.value),
+        });
+        this.setStatus(
+          problem ?? `${point.name} is now a roundabout: traffic re-plans its routes.`,
+        );
+      },
+      'Replace the junction with a roundabout that traffic entering gives way on',
+    );
+    button(lights === undefined ? 'Add traffic lights' : 'Edit traffic lights', row, () =>
+      this.openEditor(j),
+    );
   }
 
   private async share(): Promise<void> {

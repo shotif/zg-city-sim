@@ -109,7 +109,8 @@ Known gaps:
 - Routing is a third of the engine's time in the peak; a compact routing graph or contraction hierarchies would help.
 - Buses stop in whatever lane they are in, not at the kerb; one bus terminal (Črnomerec) is unreachable in the converted network, so its stop is skipped.
 - Trams and cars do not share lanes yet: tram tracks are separate edges (joining them into street lanes broke tram connectivity), so cars only meet trams at junctions.
-- Drawn roads join other roads only at their ends, and new junctions have no signals (a road joining a signalled junction gets a phase there). The tram lines planned on Jarunski most and Sarajevska cesta are not built.
+- Drawn roads join other roads only at their ends, and the junctions they make have no signals until the player sets some (a road joining a signalled junction gets a phase there). The tram lines planned on Jarunski most and Sarajevska cesta are not built.
+- Junctions with tram or rail tracks through them cannot be made roundabouts, and a roundabout's ring is a fixed template (14 m radius with one lane, 18 m with two, larger where roads meet at sharp angles), not drawn by the player.
 - A project's numbers come from the morning peak only, with today as the mean of two runs; more runs, and the afternoon, would narrow the noise.
 
 **Plan (M4 Build, 2026-10-06).** Netconvert builds the network offline and cannot run in the browser, so edits take their own path: the engine changes the arrays it already has (lanes, links, signal programs, the routing graph) while it runs. Steps, each pushed to `main` when it works:
@@ -148,9 +149,16 @@ Known gaps:
   - A drawn road is an edit like the others: kept, shared and undone with them; edits on other roads are matched to the network with the roads drawn.
   - Building and swapping the network takes about 1-4 s on the whole city in the browser (most of it the road index and road layer made again).
   - Compare runs today's roads as loaded next to the network with the roads drawn, matching roads between them by position and heading.
-- **M4e, roundabouts and signals.**
+- **M4e, roundabouts and signals** (done 2026-10-07: The junction ahead, in the Build panel's road section).
   - Convert a junction into a roundabout from a template (a ring of one-way edges, yield at entry).
   - Edit a signal program's phases and green splits, with the engine's re-timing as the starting point.
+  - As built: both are edits of the junction ahead of the road chosen, built into the network by the junction builder after the roads drawn, and kept, shared and undone like the others.
+    - *Roundabouts*: the roads meeting are grouped into legs by their bearing from the junction (ends within 25° are one leg; at least three legs). Each leg gets a junction of its own on a ring 14 m in radius with one lane, 18 m with two (more where legs are close together, up to 40 m), and the ring runs anticlockwise between them in one-way arcs at 25 or 30 km/h. The roads are shortened to end clear of the ring. Traffic entering gives way to traffic on the ring; traffic on the ring goes round or turns off. The old junction loses its links, and vehicles inside it leave. Junctions with tram or rail tracks through them are refused.
+    - *Signals*: the editor lists the junction's movements (the links from one road onto another, by approach) and its phases as the engine runs them, or, for a junction without lights, opposite approaches together. The player ticks the movements each phase lets go and sets its length (5-180 s). A 3 s yellow follows each phase for what turns red; movements crossing one with priority in the same phase get a permissive green (`g`) and give way. Road movements never green are closed; tram movements stay red. A junction whose program also controls others (netconvert's clusters) is edited with them. The lights can also be taken away, leaving right of way to the road classes.
+    - The engine runs a program the player set as given (`tlsFixed`), without merging or re-timing its phases or extending its greens.
+    - Movements are stored by points 10 m from the junction on each road and their headings, so they are found again after a road is drawn across one further away. Movements the edit does not know (a road drawn to the junction afterwards) go green with their approach, or get a phase of their own.
+    - Swapping the network now also drops vehicles beyond the new end of a road shortened, and buses and trams whose way on no longer joins up take the shortest way across, keeping their stops.
+  - Tests: engine tests on a hand-built crossroads made a roundabout while cars and a bus drive (the car where the ring now is leaves, the others re-plan round the ring and arrive, the bus keeps its stop) and on a player's program running as given; builder unit tests (the ring and its right of way, lights on a junction without them, closing movements never green, taking lights away); a Playwright test that makes a junction in Novi Zagreb a roundabout, sees traffic drive round it, lengthens a phase of lights near the centre and checks the engine runs it, then undoes both.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.

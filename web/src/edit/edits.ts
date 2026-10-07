@@ -6,7 +6,14 @@
  * shared list is matched to the network it is loaded on (`resolveEdits`). The list is kept
  * in local storage and shared as a link (compressed into the URL's fragment) or a file.
  */
-import { NEW_ROAD_TYPES, type RoadEdit } from './builder';
+import {
+  NEW_ROAD_TYPES,
+  type NetworkEdit,
+  type RoadEdit,
+  type RoundaboutEdit,
+  type SignalEdit,
+  type WayRef,
+} from './builder';
 import type { RoadIndex } from './roadIndex';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
@@ -51,8 +58,16 @@ export type Edit =
   | { kind: 'ban'; from: RoadRef; to: RoadRef }
   /** Green time of one phase of a junction's signal program. */
   | { kind: 'green'; junction: JunctionRef; phase: number; seconds: number }
-  /** A new road (edit/builder.ts): built into the network before the other edits apply. */
-  | RoadEdit;
+  /** A new road, a junction made a roundabout, a junction's traffic lights as the player
+   * sets them (edit/builder.ts): built into the network before the other edits apply. */
+  | RoadEdit
+  | RoundaboutEdit
+  | SignalEdit;
+
+/** Edits built into the network (`buildNetwork`), not applied by the engine. */
+export function isNetworkEdit(edit: Edit): edit is NetworkEdit {
+  return edit.kind === 'road' || edit.kind === 'roundabout' || edit.kind === 'signal';
+}
 
 /** Record kinds the engine reads (sim/src/edits.rs `kind`). */
 const KIND = { close: 1, closeLane: 2, speed: 3, laneClasses: 4, ban: 5, green: 6 } as const;
@@ -76,7 +91,7 @@ function floatBits(value: number): number {
 }
 
 /** Match edits to the network: those whose roads or junction it has, and the rest. New
- * roads are left out: they are built into the network (`buildNetwork`). */
+ * roads and junctions are left out: they are built into the network (`buildNetwork`). */
 export function resolveEdits(
   index: RoadIndex,
   edits: readonly Edit[],
@@ -84,7 +99,7 @@ export function resolveEdits(
   const resolved: ResolvedEdit[] = [];
   const missing: Edit[] = [];
   for (const edit of edits) {
-    if (edit.kind === 'road') continue;
+    if (isNetworkEdit(edit)) continue;
     const r = resolveEdit(index, edit);
     if (r) resolved.push(r);
     else missing.push(edit);
@@ -92,7 +107,7 @@ export function resolveEdits(
   return { resolved, missing };
 }
 
-function resolveEdit(index: RoadIndex, edit: Exclude<Edit, RoadEdit>): ResolvedEdit | undefined {
+function resolveEdit(index: RoadIndex, edit: Exclude<Edit, NetworkEdit>): ResolvedEdit | undefined {
   switch (edit.kind) {
     case 'close':
     case 'closeLane':
@@ -141,6 +156,12 @@ export function sameTarget(a: Edit, b: Edit): boolean {
   const sameRoad = (p: RoadRef, q: RoadRef) =>
     near(p, q) && Math.abs(((p.heading - q.heading + 540) % 360) - 180) < 5;
   if (a.kind !== b.kind) {
+    // A junction is a roundabout or has the lights set, not both.
+    const junctions = ['roundabout', 'signal'];
+    if (junctions.includes(a.kind) && junctions.includes(b.kind)) {
+      const [p, q] = [a, b] as (RoundaboutEdit | SignalEdit)[];
+      return near(p.junction, q.junction);
+    }
     // A lane can be closed or a bus lane, not both.
     const lanes = ['closeLane', 'busLane'];
     if (lanes.includes(a.kind) && lanes.includes(b.kind)) {
@@ -164,6 +185,9 @@ export function sameTarget(a: Edit, b: Edit): boolean {
       const q = (b as typeof a).points;
       return a.points.length === q.length && a.points.every((p, i) => near(p, q[i]));
     }
+    case 'roundabout':
+    case 'signal':
+      return near(a.junction, (b as typeof a).junction);
   }
 }
 
@@ -202,6 +226,14 @@ export function describeEdit(edit: Edit): string {
         : `New ${NEW_ROAD_TYPES[edit.type].label.toLowerCase()}`;
       return `${what}, ${(metres / 1000).toFixed(1)} km, ${lanes}, ${edit.kmh} km/h`;
     }
+    case 'roundabout':
+      return `Roundabout at ${edit.junction.name ?? 'a junction'}, ${edit.lanes} lane${edit.lanes === 1 ? '' : 's'}`;
+    case 'signal': {
+      const at = edit.junction.name ?? 'a junction';
+      if (edit.phases.length === 0) return `No traffic lights at ${at}`;
+      const cycle = edit.phases.reduce((acc, p) => acc + p.seconds + 3, 0);
+      return `Traffic lights at ${at}: ${edit.phases.length} phase${edit.phases.length === 1 ? '' : 's'}, about ${cycle} s cycle`;
+    }
   }
 }
 
@@ -223,9 +255,22 @@ function compact(edit: Edit): Edit {
     heading: Math.round(r.heading),
     ...(r.name ? { name: r.name } : {}),
   });
+  const junction = <T extends { x: number; z: number }>(j: T): T => ({
+    ...j,
+    x: round(j.x),
+    z: round(j.z),
+  });
   switch (edit.kind) {
     case 'ban':
       return { ...edit, from: road(edit.from), to: road(edit.to) };
+    case 'roundabout':
+      return { ...edit, junction: junction(edit.junction) };
+    case 'signal':
+      return {
+        ...edit,
+        junction: junction(edit.junction),
+        movements: edit.movements.map((m) => ({ from: road(m.from), to: road(m.to) })),
+      };
     case 'green':
       return {
         ...edit,
@@ -243,7 +288,17 @@ export function serializeEdits(edits: readonly Edit[]): string {
   return JSON.stringify(saved);
 }
 
-const KINDS = new Set(['close', 'closeLane', 'speed', 'busLane', 'ban', 'green', 'road']);
+const KINDS = new Set([
+  'close',
+  'closeLane',
+  'speed',
+  'busLane',
+  'ban',
+  'green',
+  'road',
+  'roundabout',
+  'signal',
+]);
 
 /** Edits from a saved list; throws if it is not one. Unknown kinds are dropped. */
 export function parseEdits(text: string): Edit[] {
@@ -251,12 +306,17 @@ export function parseEdits(text: string): Edit[] {
   if (typeof saved !== 'object' || saved === null || !Array.isArray(saved.edits)) {
     throw new Error('Not a list of edits');
   }
-  const isRoad = (r: unknown): r is RoadRef =>
+  const isRoad = (r: unknown): r is RoadRef | WayRef =>
     typeof r === 'object' &&
     r !== null &&
     Number.isFinite((r as RoadRef).x) &&
     Number.isFinite((r as RoadRef).z) &&
     Number.isFinite((r as RoadRef).heading);
+  const isJunction = (j: unknown) =>
+    typeof j === 'object' &&
+    j !== null &&
+    Number.isFinite((j as RoadRef).x) &&
+    Number.isFinite((j as RoadRef).z);
   return saved.edits.filter((e): e is Edit => {
     if (typeof e !== 'object' || e === null || !KINDS.has(e.kind)) return false;
     switch (e.kind) {
@@ -286,6 +346,21 @@ export function parseEdits(text: string): Edit[] {
           typeof e.oneway === 'boolean' &&
           Number.isFinite(e.kmh) &&
           typeof e.bridge === 'boolean'
+        );
+      case 'roundabout':
+        return isJunction(e.junction) && (e.lanes === 1 || e.lanes === 2);
+      case 'signal':
+        return (
+          isJunction(e.junction) &&
+          Array.isArray(e.movements) &&
+          e.movements.every((m) => isRoad(m?.from) && isRoad(m?.to)) &&
+          Array.isArray(e.phases) &&
+          e.phases.every(
+            (p) =>
+              Number.isFinite(p?.seconds) &&
+              Array.isArray(p.green) &&
+              p.green.every((k) => Number.isInteger(k) && k >= 0 && k < e.movements.length),
+          )
         );
       default:
         return isRoad(e.road);

@@ -18,6 +18,8 @@ export const EDIT_COLORS: Record<Edit['kind'] | 'selected', number> = {
   ban: 0xf2c12e,
   green: 0x2fbf71,
   road: 0x12a4a0,
+  roundabout: 0x12a4a0,
+  signal: 0x2fbf71,
 };
 
 /** Roads changed by edits, and the road being edited, drawn over the map. */

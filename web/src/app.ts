@@ -8,11 +8,13 @@ import {
   decodeEditsFromUrl,
   editWords,
   encodeEditsForUrl,
+  isNetworkEdit,
   loadSavedEdits,
   parseEdits,
   resolveEdits,
   saveEdits,
   serializeEdits,
+  withEdit,
 } from './edit/edits';
 import {
   DIFF_BANDS,
@@ -26,7 +28,7 @@ import {
 import {
   type BuiltNetwork,
   type LaneOrigin,
-  type RoadEdit,
+  type NetworkEdit,
   buildNetwork,
   lanePieces,
 } from './edit/builder';
@@ -401,13 +403,27 @@ export async function startApp(container: HTMLElement): Promise<void> {
         layer.show(groups);
         invalidate();
       };
-      /** The network loaded with these roads (built once per list of roads). */
-      const buildRoads = (roads: RoadEdit[]): BuiltNetwork => {
+      /** The network loaded with these roads and junctions (built once per list). */
+      const buildRoads = (roads: NetworkEdit[]): BuiltNetwork => {
         const key = JSON.stringify(roads);
         if (built?.key !== key) {
           built = { key, result: buildNetwork(loaded.net, roads, loaded.index) };
         }
         return built.result;
+      };
+      /** A new road or junction edit added to those in force (in place of those `replaces`
+       * picks), if it can be built; else why not. */
+      const tryNetworkEdit = (
+        edit: NetworkEdit,
+        replaces?: (e: Edit) => boolean,
+      ): string | undefined => {
+        const list = withEdit(replaces ? edits.filter((e) => !replaces(e)) : edits, edit);
+        const network = list.filter(isNetworkEdit);
+        const result = buildRoads(network);
+        const problem = result.problems.find((p) => p.road === network.indexOf(edit));
+        if (problem) return problem.reason;
+        apply(list);
+        return undefined;
       };
       sendNetwork = (target, fresh) => {
         if (fresh) simOrigins = new Map();
@@ -416,9 +432,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
         target.setNetwork(networkArrays(current.net, surface), pieceWords(pieces));
         simOrigins = current.origins;
       };
-      /** Build the roads in the list into the network the player's simulation runs. */
+      /** Build the roads and junctions in the list into the network the player's
+       * simulation runs. */
       const useRoads = (list: Edit[]): BuiltNetwork['problems'] => {
-        const roads = list.filter((e): e is RoadEdit => e.kind === 'road');
+        const roads = list.filter(isNetworkEdit);
         const key = JSON.stringify(roads);
         if (key === current.key) return [];
         let problems: BuiltNetwork['problems'] = [];
@@ -474,6 +491,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       };
       const panel = new BuildPanel(hud.element, loaded.index, {
         onEdits: apply,
+        onNetworkEdit: tryNetworkEdit,
         onSelect: () => redraw(),
         onClose: () => {
           hud.setBuild(false);
@@ -506,14 +524,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           drawLayer.show(points);
           invalidate();
         },
-        onRoad: (road) => {
-          const roads = edits.filter((e): e is RoadEdit => e.kind === 'road');
-          const result = buildRoads([...roads, road]);
-          const problem = result.problems.find((p) => p.road === roads.length);
-          if (problem) return problem.reason;
-          apply([...edits, road]);
-          return undefined;
-        },
+        onRoad: (road) => tryNetworkEdit(road),
       });
       debug.drawer = drawer;
       if (projects.length) {
@@ -902,6 +913,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
             running.onEdited = (applied, signals) => {
               buildPanel?.setSignals(signals);
               buildPanel?.setInForce(applied);
+            };
+            running.onNetwork = (signals, error) => {
+              buildPanel?.setSignals(signals);
+              if (error) {
+                console.error(error);
+                buildPanel?.setStatus(`The roads could not be built: ${error}`);
+              }
             };
             running.onFrame = () => {
               simChanged = true;

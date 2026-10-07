@@ -430,8 +430,14 @@ const LONG_CYCLE: f32 = 120.0;
 /// phases by the incoming lanes they let go (at least `MIN_GREEN` each), with a longer cycle
 /// for programs with four or more green phases. Yellow and all-red phases keep their length.
 fn retime_signals(net: &mut Network, tls_link_offsets: &[u32], tls_links: &[u32]) {
+    let fixed: Vec<bool> = (0..net.d.tls_offset.len())
+        .map(|t| net.tls_fixed(t))
+        .collect();
     let d = &mut net.d;
     for t in 0..d.tls_offset.len() {
+        if fixed[t] {
+            continue;
+        }
         let (a, b) = (
             d.tls_phase_offsets[t] as usize,
             d.tls_phase_offsets[t + 1] as usize,
@@ -530,6 +536,9 @@ fn merge_signal_phases(net: &mut Network, tls_link_offsets: &[u32], tls_links: &
     let n_tls = net.d.tls_offset.len();
     let programs: Vec<Option<Vec<ProgramPhase>>> = (0..n_tls)
         .map(|t| {
+            if net.tls_fixed(t) {
+                return None;
+            }
             let links = &tls_links[tls_link_offsets[t] as usize..tls_link_offsets[t + 1] as usize];
             merged_program(net, t, links)
         })

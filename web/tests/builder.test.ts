@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { type RoadEdit, buildNetwork, lanePieces } from '../src/edit/builder';
+import {
+  type NetworkEdit,
+  type RoadEdit,
+  type RoundaboutEdit,
+  buildNetwork,
+  lanePieces,
+} from '../src/edit/builder';
 import { RoadIndex } from '../src/edit/roadIndex';
+import { defaultPhases, junctionSignals, signalEdit } from '../src/edit/signals';
 import { RoadNetwork } from '../src/world/roadNetwork';
 import { NetMaker } from './fixtures';
 
@@ -52,7 +59,7 @@ const ROAD: RoadEdit = {
   bridge: false,
 };
 
-function rebuilt(net: RoadNetwork, roads: RoadEdit[]) {
+function rebuilt(net: RoadNetwork, roads: NetworkEdit[]) {
   const built = buildNetwork(net, roads, new RoadIndex(net));
   const next = new RoadNetwork({ ...net.index, types: built.types }, built.arrays, {
     lane: built.laneShape,
@@ -233,5 +240,218 @@ describe('the junction builder', () => {
       { road: 0, reason: 'Start and end the road on a road or at a junction.' },
     ]);
     expect(next.edgeCount).toBe(net.edgeCount);
+  });
+});
+
+/**
+ * Ilica (east-west) crosses Savska cesta (north-south) at C (0, 0): two-way roads 200 m
+ * long, one lane each way; straight on both ways, and left from Ilica. Savska cesta gives
+ * way to Ilica, left turns to oncoming traffic. `signals`: lights, Ilica then Savska cesta.
+ */
+function crossroads(signals = false) {
+  const m = new NetMaker();
+  const c = m.junction(0, 0);
+  const [w, e, n, s] = [
+    m.junction(-200, 0),
+    m.junction(200, 0),
+    m.junction(0, -200),
+    m.junction(0, 200),
+  ];
+  const ids = {
+    c,
+    we: m.road(w, c, 1, 'Ilica'),
+    ce: m.road(c, e, 1, 'Ilica'),
+    ec: m.road(e, c, 1, 'Ilica'),
+    cw: m.road(c, w, 1, 'Ilica'),
+    sn: m.road(s, c, 1, 'Savska cesta', 2),
+    cn: m.road(c, n, 1, 'Savska cesta', 2),
+    ns: m.road(n, c, 1, 'Savska cesta', 2),
+    cs: m.road(c, s, 1, 'Savska cesta', 2),
+  };
+  const lane = (x: number) => m.lane(x, 0);
+  const links = [
+    m.connect(lane(ids.we), lane(ids.ce), c, 's'),
+    m.connect(lane(ids.ec), lane(ids.cw), c, 's'),
+    m.connect(lane(ids.sn), lane(ids.cn), c, 's', 'm'),
+    m.connect(lane(ids.ns), lane(ids.cs), c, 's', 'm'),
+    m.connect(lane(ids.we), lane(ids.cn), c, 'l', 'm'),
+    m.connect(lane(ids.ec), lane(ids.cs), c, 'l', 'm'),
+  ];
+  // (response, foes) as links were made, in requests (by the lane they leave): Ilica
+  // west 0 and its left 1, Ilica east 2 and its left 3, Savska cesta north 4, south 5.
+  m.logic.set(c, [
+    [0, 0b111000],
+    [0, 0b110010],
+    [0b001111, 0b001111],
+    [0b001111, 0b001111],
+    [0b000100, 0b110100],
+    [0b000001, 0b110001],
+  ]);
+  if (signals) {
+    m.signals.push({
+      links,
+      phases: [
+        [25, 'GGrrgg'],
+        [3, 'yyrryy'],
+        [20, 'rrGGrr'],
+        [3, 'rryyrr'],
+      ],
+    });
+  }
+  return { net: m.network(), ids };
+}
+
+/** A signal program's phases as (state of each movement by from and to edge, seconds). */
+function program(net: RoadNetwork, t: number) {
+  const a = net.arrays as unknown as Record<string, Uint32Array>;
+  const durations = net.arrays.phaseDuration as Float32Array;
+  return Array.from({ length: a.tlsPhaseOffsets[t + 1] - a.tlsPhaseOffsets[t] }, (_, k) => {
+    const p = a.tlsPhaseOffsets[t] + k;
+    const states = String.fromCharCode(
+      ...a.phaseStates.subarray(a.phaseStateOffsets[p], a.phaseStateOffsets[p + 1]),
+    );
+    const of = (from: number, to: number) => {
+      for (let l = 0; l < a.linkFrom.length; l++) {
+        if (a.linkTls[l] !== t) continue;
+        if (net.laneEdge[a.linkFrom[l]] === from && net.laneEdge[a.linkTo[l]] === to) {
+          return states[a.linkTlsIndex[l]];
+        }
+      }
+      return undefined;
+    };
+    return { of, seconds: durations[p] };
+  });
+}
+
+describe('junctions changed', () => {
+  const C = { x: 0, z: 0, name: 'Ilica / Savska cesta' };
+
+  it('makes a crossroads a roundabout', () => {
+    const { net, ids } = crossroads();
+    const edit: RoundaboutEdit = { kind: 'roundabout', junction: C, lanes: 1 };
+    const { built, next } = rebuilt(net, [edit]);
+    expect(built.problems).toEqual([]);
+    expectConsistent(next);
+    const ring = built.roads[0];
+    expect(ring).toHaveLength(4);
+    for (const e of ring) expect(next.edgeFlags[e] & net.index.flags.roundabout).not.toBe(0);
+    // Nothing crosses C any more: each road ends or starts at a junction on the ring.
+    expect(linksAt(next, ids.c)).toEqual([]);
+    const nodes = new Set(ring.map((e) => next.edgeFrom[e]));
+    expect(nodes.size).toBe(4);
+    for (const e of [ids.we, ids.ec, ids.sn, ids.ns]) expect(nodes.has(next.edgeTo[e])).toBe(true);
+    for (const e of [ids.ce, ids.cw, ids.cn, ids.cs]) {
+      expect(nodes.has(next.edgeFrom[e])).toBe(true);
+    }
+    // Anticlockwise: from the east to the north.
+    const pos = (j: number) => [next.junctionPos[j * 2], next.junctionPos[j * 2 + 1]];
+    const east = [...nodes].find((j) => pos(j)[0] > 5)!;
+    const fromEast = ring.find((e) => next.edgeFrom[e] === east)!;
+    expect(pos(next.edgeTo[fromEast])[1]).toBeLessThan(-5);
+    // At the east: Ilica westbound comes on giving way; round, and off onto Ilica eastbound.
+    const intoEast = ring.find((e) => next.edgeTo[e] === east)!;
+    const at = linksAt(next, east);
+    expect(at).toContainEqual([ids.ec, fromEast, 'r', 'm']);
+    expect(at).toContainEqual([intoEast, fromEast, 's', 'M']);
+    expect(at).toContainEqual([intoEast, ids.ce, 'r', 'M']);
+    expect(at).toHaveLength(3);
+    // The roads end and start clear of the ring, and the engine is told where they went.
+    const into = next.edgeLaneStart[ids.we];
+    const out = next.edgeLaneStart[ids.ce];
+    expect(next.laneLength[into]).toBeLessThan(net.laneLength[into] - 5);
+    expect(built.origins.get(into)).toMatchObject({ key: `b${into}`, start: 0 });
+    const pieces = lanePieces(new Map(), built.origins, (l) => net.laneLength[l]);
+    expect(pieces).toContainEqual({ old: into, from: 0, lane: into, shift: 0 });
+    const outPiece = pieces.find((p) => p.old === out)!;
+    expect(outPiece.lane).toBe(out);
+    expect(outPiece.shift).toBeLessThan(-5);
+    // The lanes across C go, with whatever is on them.
+    for (let l = 0; l < net.laneCount; l++) {
+      if (net.isInternal(net.laneEdge[l])) {
+        expect(pieces).toContainEqual({ old: l, from: 0, lane: NONE, shift: 0 });
+      }
+    }
+    // Undone: back to the lanes as loaded.
+    const back = lanePieces(built.origins, new Map(), (l) => net.laneLength[l]);
+    expect(back.find((p) => p.old === out)).toMatchObject({ lane: out, from: 0 });
+    const ringLane = built.arrays.edgeLaneStart[ring[0]];
+    expect(back).toContainEqual({ old: ringLane, from: 0, lane: NONE, shift: 0 });
+  });
+
+  it('needs three roads for a roundabout', () => {
+    const { net } = town();
+    const { built, next } = rebuilt(net, [{ kind: 'roundabout', junction: C, lanes: 2 }]);
+    expect(built.problems).toEqual([
+      { road: 0, reason: 'A roundabout needs at least three roads meeting.' },
+    ]);
+    expect(next.edgeCount).toBe(net.edgeCount);
+  });
+
+  it('puts traffic lights on a junction, opposite approaches together', () => {
+    const { net, ids } = crossroads();
+    const signals = junctionSignals(net, ids.c);
+    expect(signals.tls).toBeUndefined();
+    expect(signals.movements.map((m) => m.label)).toContain(
+      'Ilica from the west: left onto Savska cesta',
+    );
+    const phases = defaultPhases(signals.movements);
+    expect(phases).toHaveLength(2);
+    const { built, next } = rebuilt(net, [signalEdit(signals, phases)]);
+    expect(built.problems).toEqual([]);
+    expectConsistent(next);
+    expect(next.arrays.tlsFixed).toEqual(Uint8Array.from([1]));
+    expect(next.index.junctionTypes[next.junctionType[ids.c]]).toBe('traffic_light');
+    const p = program(next, 0);
+    expect(p.map((x) => x.seconds)).toEqual([20, 3, 20, 3]);
+    const ilicaFirst = p[0].of(ids.we, ids.ce) === 'G';
+    const [ilica, savska] = ilicaFirst ? [p[0], p[2]] : [p[2], p[0]];
+    // Turning left on a permissive green, giving way to oncoming traffic.
+    expect([ilica.of(ids.we, ids.ce), ilica.of(ids.we, ids.cn), ilica.of(ids.sn, ids.cn)]).toEqual([
+      'G',
+      'g',
+      'r',
+    ]);
+    expect([
+      savska.of(ids.sn, ids.cn),
+      savska.of(ids.ns, ids.cs),
+      savska.of(ids.ec, ids.cw),
+    ]).toEqual(['G', 'G', 'r']);
+    expect(p[1].of(ids.we, ids.cn)).toBe(ilicaFirst ? 'y' : 'r');
+  });
+
+  it('closes movements never green, and changes lights already there', () => {
+    const { net, ids } = crossroads(true);
+    const signals = junctionSignals(net, ids.c);
+    expect(signals.tls).toBe(0);
+    expect(signals.phases.map((x) => x.seconds)).toEqual([25, 20]);
+    // Ilica's green longer, and no left turns.
+    const lefts = signals.movements.flatMap((m, k) => (m.dir === 'l' ? [k] : []));
+    const phases = signals.phases.map((x, k) => ({
+      seconds: k === 0 ? 40 : x.seconds,
+      green: x.green.filter((g) => !lefts.includes(g)),
+    }));
+    const { built, next } = rebuilt(net, [signalEdit(signals, phases)]);
+    expect(built.problems).toEqual([]);
+    expectConsistent(next);
+    expect(next.arrays.tlsFixed).toEqual(Uint8Array.from([1]));
+    const p = program(next, 0);
+    expect(p.map((x) => x.seconds)).toEqual([40, 3, 20, 3]);
+    expect(p[0].of(ids.we, ids.ce)).toBe('G');
+    expect(linksAt(next, ids.c).some(([f, t]) => f === ids.we && t === ids.cn)).toBe(false);
+    expect(linksAt(next, ids.c)).toHaveLength(4);
+  });
+
+  it('takes traffic lights away: right of way rules', () => {
+    const { net, ids } = crossroads(true);
+    const signals = junctionSignals(net, ids.c);
+    const { built, next } = rebuilt(net, [signalEdit(signals, [])]);
+    expect(built.problems).toEqual([]);
+    expectConsistent(next);
+    const a = next.arrays as unknown as Record<string, Uint32Array>;
+    expect(Array.from(a.linkTls).every((t) => t === NONE)).toBe(true);
+    const at = linksAt(next, ids.c);
+    expect(at).toContainEqual([ids.we, ids.ce, 's', 'M']);
+    expect(at).toContainEqual([ids.sn, ids.cn, 's', 'm']);
+    expect(at).toContainEqual([ids.ec, ids.cs, 'l', 'm']);
   });
 });

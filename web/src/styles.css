@@ -693,6 +693,30 @@ a.news-headline:hover {
   color: var(--text-dim);
 }
 
+/* The signal editor: movements down the side, phases across. */
+.build-signals {
+  margin-top: 8px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--panel-border);
+}
+
+.build-phases-wrap {
+  max-height: 45vh;
+  overflow: auto;
+}
+
+.build-phases td {
+  text-align: center;
+}
+
+.build-phases th:first-child {
+  min-width: 12em;
+}
+
+.build-phases .build-number {
+  width: 3.6em;
+}
+
 .build-better {
   color: #6fd08c;
 }

@@ -56,12 +56,57 @@ export interface RoadEdit {
   bridge: boolean;
 }
 
+/** A junction, by its position (scene x, z), with a name to show. */
+export interface JunctionPoint {
+  x: number;
+  z: number;
+  name?: string;
+}
+
+/** A road one way at a point on it (scene x, z) and its heading (degrees, 0 = north). */
+export interface WayRef {
+  x: number;
+  z: number;
+  heading: number;
+  name?: string;
+}
+
+/** The junction made a roundabout (M4e): a ring of one-way roads, `lanes` wide, that
+ * traffic entering gives way to. */
+export interface RoundaboutEdit {
+  kind: 'roundabout';
+  junction: JunctionPoint;
+  lanes: number;
+}
+
+/** A movement across a junction: from one road onto another. */
+export interface Movement {
+  from: WayRef;
+  to: WayRef;
+}
+
+/** The junction's traffic lights as the player set them (M4e): its movements, and the
+ * movements green in each phase (indices into `movements`) and the phase's length; a
+ * yellow follows each phase for what turns red. Movements never green are closed. No
+ * phases: no traffic lights. */
+export interface SignalEdit {
+  kind: 'signal';
+  junction: JunctionPoint;
+  movements: Movement[];
+  phases: { seconds: number; green: number[] }[];
+}
+
+/** Edits the junction builder makes into the network. */
+export type NetworkEdit = RoadEdit | RoundaboutEdit | SignalEdit;
+
 /** Where a lane of a build lies on the lane it was made from: `key` names that lane (a
- * lane loaded, or a lane of a drawn road), `start` and `end` are metres along it. */
+ * lane loaded, or a lane of a drawn road), `start` and `end` are metres along it. `gone`:
+ * the lane is still there but nothing leads onto it (a junction made again). */
 export interface LaneOrigin {
   key: string;
   start: number;
   end: number;
+  gone?: boolean;
 }
 
 /** Where part of a lane of the previous build is in the next (sim/src/patch.rs). */
@@ -79,9 +124,9 @@ export interface BuiltNetwork {
   junctionShape: Float32Array;
   /** Origin of every lane that is not a whole lane as loaded. */
   origins: Map<number, LaneOrigin>;
-  /** Edges of each road drawn (both ways), in the order of the edits. */
+  /** Edges of each edit (a road's both ways, a roundabout's ring), in the edits' order. */
   roads: number[][];
-  /** Roads that could not be built, with why (index into the edits). */
+  /** Edits that could not be built, with why (index into the edits). */
   problems: { road: number; reason: string }[];
   /** Edge types (the loaded network's, and any a drawn road needed). */
   types: string[];
@@ -313,6 +358,15 @@ class Draft {
    * (response, foes) request sets per request. */
   logic = new Map<number, { links: number[]; response: Set<number>[]; foes: Set<number>[] }>();
   programs = new Map<number, Program>();
+  /** Signal programs added, after those loaded, and those the player set. */
+  newPrograms: Program[] = [];
+  fixedPrograms = new Set<number>();
+  linkTls = new Map<number, { tls: number; index: number }>();
+  /** Links taken away (loaded or added), roads moved to start elsewhere, and road ranks set
+   * (a roundabout's ring goes first). */
+  removedLinks = new Set<number>();
+  edgeFrom = new Map<number, number>();
+  rankOverride = new Map<number, number>();
   /** Lanes not whole as loaded, and where they lie. */
   origins = new Map<number, LaneOrigin>();
   // Lookups over the network as loaded.
@@ -398,9 +452,8 @@ class Draft {
     return Array.from({ length: count }, (_, k) => start + k);
   }
   fromOf(edge: number): number {
-    return edge >= this.baseEdges
-      ? this.edges[edge - this.baseEdges].from
-      : this.net.edgeFrom[edge];
+    if (edge >= this.baseEdges) return this.edges[edge - this.baseEdges].from;
+    return this.edgeFrom.get(edge) ?? this.net.edgeFrom[edge];
   }
   toOf(edge: number): number {
     if (edge >= this.baseEdges) return this.edges[edge - this.baseEdges].to;
@@ -417,6 +470,8 @@ class Draft {
       : this.net.isInternal(edge);
   }
   rankOf(edge: number): number {
+    const own = this.rankOverride.get(edge);
+    if (own !== undefined) return own;
     const type = this.types[this.typeOf(edge)] ?? '';
     const highway = type
       .split('|')[0]
@@ -440,11 +495,13 @@ class Draft {
     return [...new Set([...loaded, ...cut, ...added])].filter((e) => this.carries(e));
   }
   outgoing(j: number): number[] {
-    const loaded = j < this.baseJunctions ? this.outEdges[j] : [];
+    const loaded =
+      j < this.baseJunctions ? this.outEdges[j].filter((e) => this.fromOf(e) === j) : [];
+    const moved = [...this.edgeFrom].filter(([, from]) => from === j).map(([e]) => e);
     const added = this.edges
       .map((_, k) => this.baseEdges + k)
       .filter((e) => !this.isInternal(e) && this.fromOf(e) === j);
-    return [...loaded, ...added].filter((e) => this.carries(e));
+    return [...new Set([...loaded, ...moved, ...added])].filter((e) => this.carries(e));
   }
   carries(edge: number): boolean {
     return this.lanesOf(edge).some((l) => (this.allowOf(l) & PASSENGER) !== 0);
@@ -453,6 +510,7 @@ class Draft {
   link(id: number): Link {
     if (id >= this.baseLinks) return this.links[id - this.baseLinks];
     const a = this.a;
+    const tls = this.linkTls.get(id);
     return {
       from: this.linkFrom.get(id) ?? (a.linkFrom as Uint32Array)[id],
       to: (a.linkTo as Uint32Array)[id],
@@ -461,8 +519,8 @@ class Draft {
       request: (a.linkRequest as Uint16Array)[id],
       dir: (a.linkDir as Uint8Array)[id],
       state: this.linkState.get(id) ?? (a.linkState as Uint8Array)[id],
-      tls: (a.linkTls as Uint32Array)[id],
-      tlsIndex: (a.linkTlsIndex as Uint16Array)[id],
+      tls: tls?.tls ?? (a.linkTls as Uint32Array)[id],
+      tlsIndex: tls?.index ?? (a.linkTlsIndex as Uint16Array)[id],
     };
   }
   linksAt(j: number): number[] {
@@ -471,7 +529,24 @@ class Draft {
       .map((l, k) => [l, this.baseLinks + k] as const)
       .filter(([l]) => l.junction === j)
       .map(([, id]) => id);
-    return [...loaded, ...added];
+    return [...loaded, ...added].filter((l) => !this.removedLinks.has(l));
+  }
+  /** Every link signal program `t` controls (it can span a cluster of junctions). */
+  linksOfProgram(t: number): number[] {
+    const out: number[] = [];
+    const linkTls = this.a.linkTls as Uint32Array;
+    for (let l = 0; l < this.baseLinks; l++) {
+      if (this.removedLinks.has(l)) continue;
+      if ((this.linkTls.get(l)?.tls ?? linkTls[l]) === t) out.push(l);
+    }
+    this.links.forEach((link, k) => {
+      if (link.tls === t && !this.removedLinks.has(this.baseLinks + k))
+        out.push(this.baseLinks + k);
+    });
+    return out;
+  }
+  get programCount(): number {
+    return (this.a.tlsPhaseOffsets as Uint32Array).length - 1 + this.newPrograms.length;
   }
   /** The path of a link across its junction: its internal lanes' shapes end to end. */
   pathOf(id: number): Shape {
@@ -484,6 +559,46 @@ class Draft {
       lane = this.nextOf(lane);
     }
     return out;
+  }
+
+  // -- changing
+
+  setState(id: number, state: string): void {
+    const s = Math.max(0, this.net.index.linkStates.indexOf(state));
+    if (id >= this.baseLinks) this.links[id - this.baseLinks].state = s;
+    else this.linkState.set(id, s);
+  }
+  setTls(id: number, tls: number, index: number): void {
+    if (id >= this.baseLinks)
+      Object.assign(this.links[id - this.baseLinks], { tls, tlsIndex: index });
+    else this.linkTls.set(id, { tls, index });
+  }
+  setEdgeTo(edge: number, j: number): void {
+    if (edge >= this.baseEdges) this.edges[edge - this.baseEdges].to = j;
+    else this.edgeTo.set(edge, j);
+  }
+  setEdgeFrom(edge: number, j: number): void {
+    if (edge >= this.baseEdges) this.edges[edge - this.baseEdges].from = j;
+    else this.edgeFrom.set(edge, j);
+  }
+  /** A lane's new shape and length (in its own measure), and where it now lies. */
+  setLane(lane: number, shape: Shape, length: number, origin: LaneOrigin): void {
+    if (lane >= this.baseLanes) Object.assign(this.lanes[lane - this.baseLanes], { shape, length });
+    else {
+      this.laneShape.set(lane, shape);
+      this.laneLength.set(lane, length);
+    }
+    this.origins.set(lane, origin);
+  }
+  /** Take a link away; vehicles on the lanes across its junction leave. */
+  removeLink(id: number): void {
+    this.removedLinks.add(id);
+    let lane = this.link(id).via;
+    for (let guard = 0; lane !== NONE && guard < 8; guard++) {
+      if (!this.isInternal(this.edgeOfLane(lane))) break;
+      this.origins.set(lane, { ...this.originOf(lane), gone: true });
+      lane = this.nextOf(lane);
+    }
   }
 
   // -- adding
@@ -823,40 +938,55 @@ function connectJunction(d: Draft, j: number, added: Set<number>): number[] {
   return made;
 }
 
+interface RightOfWay {
+  /** Link ids by request (-1: none). */
+  links: number[];
+  /** Per request, the requests it gives way to, and those it crosses or merges with. */
+  response: Set<number>[];
+  foes: Set<number>[];
+}
+
+/** Right of way at junction `j` as it stands (a copy), leaving out the links in `skip`. */
+function rightOfWay(d: Draft, j: number, skip: readonly number[] = []): RightOfWay {
+  const existing = d.logic.get(j);
+  if (existing) {
+    return {
+      links: [...existing.links],
+      response: existing.response.map((s) => new Set(s)),
+      foes: existing.foes.map((s) => new Set(s)),
+    };
+  }
+  const a = d.a;
+  const count = j < d.baseJunctions ? (a.junctionLinkCount as Uint16Array)[j] : 0;
+  const offset = j < d.baseJunctions ? (a.junctionLogicOffset as Uint32Array)[j] : 0;
+  const words = Math.max(1, Math.ceil(count / 32));
+  const logic = a.logic as Uint32Array;
+  const links: number[] = new Array(count).fill(-1);
+  const response = Array.from({ length: count }, () => new Set<number>());
+  const foes = Array.from({ length: count }, () => new Set<number>());
+  for (const l of d.linksAt(j)) {
+    const r = d.link(l).request;
+    if (r >= 0 && r < count && !skip.includes(l)) links[r] = l;
+  }
+  for (let r = 0; r < count; r++) {
+    for (let w = 0; w < words; w++) {
+      const resp = logic[offset + r * 2 * words + w];
+      const foe = logic[offset + r * 2 * words + words + w];
+      for (let b = 0; b < 32; b++) {
+        if (resp & (1 << b)) response[r].add(w * 32 + b);
+        if (foe & (1 << b)) foes[r].add(w * 32 + b);
+      }
+    }
+  }
+  return { links, response, foes };
+}
+
 /** Right of way and signal states at a junction where `added` links were made. */
 function junctionLogic(d: Draft, j: number, added: number[]): void {
   const links = d.linksAt(j);
   const oldLinks = links.filter((l) => !added.includes(l));
-  const a = d.a;
-  const count = d.net.junctionCount > j ? (a.junctionLinkCount as Uint16Array)[j] : 0;
-  const offset = d.net.junctionCount > j ? (a.junctionLogicOffset as Uint32Array)[j] : 0;
-  const words = Math.max(1, Math.ceil(count / 32));
-  const logic = a.logic as Uint32Array;
-  const existing = d.logic.get(j);
   // Requests: those there keep their numbers, new links come after.
-  const byRequest: number[] = existing ? [...existing.links] : new Array(count).fill(-1);
-  const response: Set<number>[] = existing
-    ? existing.response.map((s) => new Set(s))
-    : Array.from({ length: count }, () => new Set());
-  const foes: Set<number>[] = existing
-    ? existing.foes.map((s) => new Set(s))
-    : Array.from({ length: count }, () => new Set());
-  if (!existing) {
-    for (const l of oldLinks) {
-      const r = d.link(l).request;
-      if (r < count) byRequest[r] = l;
-    }
-    for (let r = 0; r < count; r++) {
-      for (let w = 0; w < words; w++) {
-        const resp = logic[offset + r * 2 * words + w];
-        const foe = logic[offset + r * 2 * words + words + w];
-        for (let b = 0; b < 32; b++) {
-          if (resp & (1 << b)) response[r].add(w * 32 + b);
-          if (foe & (1 << b)) foes[r].add(w * 32 + b);
-        }
-      }
-    }
-  }
+  const { links: byRequest, response, foes } = rightOfWay(d, j, added);
   for (const l of added) {
     const link = d.link(l);
     link.request = byRequest.length;
@@ -1007,22 +1137,483 @@ function setChar(s: string, i: number, c: string): string {
   return s.slice(0, i) + c + s.slice(i + 1);
 }
 
-/** Build the network loaded with `roads` added, in order. `index` finds roads to join. */
+/** The corners of the lane ends at junction `j`, for its surface. */
+function laneEnds(d: Draft, j: number): Point[] {
+  const points: Point[] = [];
+  for (const e of [...d.incoming(j), ...d.outgoing(j)]) {
+    for (const lane of d.lanesOf(e)) {
+      const s = d.shapeOf(lane);
+      const end = d.toOf(e) === j;
+      const k = end ? s.length - 3 : 0;
+      const dir = direction(s, end);
+      const w = LANE_WIDTH / 2;
+      points.push(
+        { x: s[k] - dir.z * w, z: s[k + 1] + dir.x * w },
+        { x: s[k] + dir.z * w, z: s[k + 1] - dir.x * w },
+      );
+    }
+  }
+  return points;
+}
+
+function setJunction(d: Draft, j: number, type: string, shape?: Point[]): void {
+  const t = Math.max(0, d.net.index.junctionTypes.indexOf(type));
+  if (j >= d.baseJunctions) {
+    const own = d.junctions[j - d.baseJunctions];
+    own.type = t;
+    if (shape) own.shape = shape;
+  } else {
+    d.junctionType.set(j, t);
+    if (shape) d.junctionShape.set(j, shape);
+  }
+}
+
+// ---- roundabouts -------------------------------------------------------------------------
+
+/** Tram and rail tracks: a junction they cross is not made a roundabout. */
+const TRACKS = 4 | 16;
+/** Roads whose ends at a junction are this close in bearing (radians) are one leg. */
+const LEG_ANGLE = (25 * Math.PI) / 180;
+/** Roundabout ring radius (m, to the middle of the ring) by lanes, and the largest. */
+const RING_RADIUS = [14, 18];
+const MAX_RING_RADIUS = 40;
+/** Speed on the ring (m/s): 25 km/h with one lane, 30 with two. */
+const RING_SPEED = [6.9, 8.3];
+/** Rank of a ring's roads: traffic on it goes before traffic entering. */
+const RING_RANK = 9;
+
+function edgeFlagsOf(d: Draft, e: number): number {
+  return e >= d.baseEdges ? d.edges[e - d.baseEdges].flags : d.net.edgeFlags[e];
+}
+
+/** Turn of `b` from `a`, in radians, between -π and π. */
+function angleDiff(a: number, b: number): number {
+  return Math.atan2(Math.sin(b - a), Math.cos(b - a));
+}
+
+/** Parameter along segment a→b where its distance from `c` crosses `r`: the first crossing,
+ * or the last (`last`). */
+function crossing(a: Point, b: Point, c: Point, r: number, last: boolean): number {
+  const [dx, dz] = [b.x - a.x, b.z - a.z];
+  const [fx, fz] = [a.x - c.x, a.z - c.z];
+  const qa = dx * dx + dz * dz;
+  const qb = 2 * (fx * dx + fz * dz);
+  const qc = fx * fx + fz * fz - r * r;
+  const disc = Math.max(0, qb * qb - 4 * qa * qc);
+  if (qa === 0) return 0;
+  const t = (-qb + (last ? 1 : -1) * Math.sqrt(disc)) / (2 * qa);
+  return Math.min(1, Math.max(0, t));
+}
+
+/** Shorten a lane to end (a way in) or start (a way out) `r` m from `c` (or, without
+ * `apply`, only check that it can be). False if too little of it would be left. */
+function trimLane(
+  d: Draft,
+  lane: number,
+  c: Point,
+  r: number,
+  wayIn: boolean,
+  apply: boolean,
+): boolean {
+  const s = d.shapeOf(lane);
+  const n = s.length / 3;
+  const dist = (i: number) => Math.hypot(s[i * 3] - c.x, s[i * 3 + 1] - c.z);
+  const pt = (i: number) => ({ x: s[i * 3], z: s[i * 3 + 1] });
+  const len = pathLength(s);
+  const alongAt: number[] = [0];
+  for (let i = 1; i < n; i++)
+    alongAt.push(alongAt[i - 1] + Math.hypot(s[i * 3] - s[i * 3 - 3], s[i * 3 + 1] - s[i * 3 - 2]));
+  let along: number | undefined;
+  if (wayIn) {
+    if (dist(n - 1) >= r) return true;
+    for (let i = n - 2; i >= 0; i--) {
+      if (dist(i) >= r) {
+        along =
+          alongAt[i] + crossing(pt(i), pt(i + 1), c, r, false) * (alongAt[i + 1] - alongAt[i]);
+        break;
+      }
+    }
+  } else {
+    if (dist(0) >= r) return true;
+    for (let i = 1; i < n; i++) {
+      if (dist(i) >= r) {
+        along =
+          alongAt[i - 1] + crossing(pt(i - 1), pt(i), c, r, true) * (alongAt[i] - alongAt[i - 1]);
+        break;
+      }
+    }
+  }
+  if (along === undefined) return false;
+  const left = wayIn ? along : len - along;
+  if (left < 3) return false;
+  if (!apply) return true;
+  const scale = d.lengthOf(lane) / Math.max(len, 0.1);
+  const o = d.originOf(lane);
+  if (wayIn) {
+    d.setLane(lane, cut(s, 0, along), along * scale, {
+      key: o.key,
+      start: o.start,
+      end: o.start + along * scale,
+    });
+  } else {
+    d.setLane(lane, cut(s, along, len), (len - along) * scale, {
+      key: o.key,
+      start: o.start + along * scale,
+      end: o.end,
+    });
+  }
+  return true;
+}
+
+/**
+ * Make junction `j` a roundabout: the roads meeting there (legs, by bearing) end at a ring
+ * of one-way roads, anticlockwise, `lanes` wide. Traffic entering gives way to traffic on
+ * the ring. Returns the ring's edges, or why it cannot be built.
+ */
+function makeRoundabout(d: Draft, j: number, lanes: number, key: string): number[] | string {
+  lanes = Math.max(1, Math.min(2, Math.round(lanes)));
+  const c = d.junctionPos(j);
+  const links = d.linksAt(j);
+  if (links.some((l) => ((d.allowOf(d.link(l).from) | d.allowOf(d.link(l).to)) & TRACKS) !== 0)) {
+    return 'Tram or rail tracks cross this junction, so it cannot be a roundabout.';
+  }
+  const roundabout = d.net.index.flags.roundabout;
+  if ([...d.incoming(j), ...d.outgoing(j)].some((e) => (edgeFlagsOf(d, e) & roundabout) !== 0)) {
+    return 'This junction is on a roundabout already.';
+  }
+  // Legs: the roads meeting, by the bearing (anticlockwise from east) of a point 20 m along
+  // each from the junction.
+  const bearingOf = (e: number, wayIn: boolean) => {
+    const sh = d.shapeOf(d.lanesOf(e)[0]);
+    const len = pathLength(sh);
+    const at = wayIn ? Math.max(0, len - 20) : Math.min(len, 20);
+    const p = cut(sh, at, at + 0.01);
+    return Math.atan2(-(p[1] - c.z), p[0] - c.x);
+  };
+  const ends = [
+    ...d.incoming(j).map((e) => ({ e, wayIn: true, bearing: bearingOf(e, true) })),
+    ...d.outgoing(j).map((e) => ({ e, wayIn: false, bearing: bearingOf(e, false) })),
+  ].sort((x, y) => x.bearing - y.bearing);
+  const groups: (typeof ends)[] = [];
+  for (const end of ends) {
+    const last = groups[groups.length - 1];
+    if (last && Math.abs(angleDiff(last[last.length - 1].bearing, end.bearing)) < LEG_ANGLE) {
+      last.push(end);
+    } else groups.push([end]);
+  }
+  if (groups.length > 1) {
+    const [first, last] = [groups[0], groups[groups.length - 1]];
+    if (Math.abs(angleDiff(last[last.length - 1].bearing, first[0].bearing)) < LEG_ANGLE) {
+      first.unshift(...groups.pop()!);
+    }
+  }
+  if (groups.length < 3) return 'A roundabout needs at least three roads meeting.';
+  const legs = groups
+    .map((g) => {
+      const bearing = Math.atan2(
+        g.reduce((acc, x) => acc + Math.sin(x.bearing), 0),
+        g.reduce((acc, x) => acc + Math.cos(x.bearing), 0),
+      );
+      const ins = g.filter((x) => x.wayIn).map((x) => x.e);
+      const outs = g.filter((x) => !x.wayIn).map((x) => x.e);
+      const width = Math.max(...g.map((x) => d.lanesOf(x.e).length)) * LANE_WIDTH;
+      // Along the ring either side of the leg, clear of where its lanes join.
+      const gap = width + 3;
+      return { bearing, ins, outs, gap };
+    })
+    .sort((x, y) => x.bearing - y.bearing);
+  const n = legs.length;
+  let radius = RING_RADIUS[lanes - 1];
+  for (let i = 0; i < n; i++) {
+    const [a, b] = [legs[i], legs[(i + 1) % n]];
+    let span = b.bearing - a.bearing;
+    if (span <= 0) span += 2 * Math.PI;
+    radius = Math.max(radius, (a.gap + b.gap + 6) / span);
+  }
+  if (radius > MAX_RING_RADIUS) {
+    return 'The roads meet at too sharp an angle for a roundabout here.';
+  }
+  const ringWidth = lanes * LANE_WIDTH;
+  const reach = radius + ringWidth / 2 + 4;
+  for (const apply of [false, true]) {
+    for (const leg of legs) {
+      for (const e of [...leg.ins, ...leg.outs]) {
+        for (const lane of d.lanesOf(e)) {
+          if (!trimLane(d, lane, c, reach, leg.ins.includes(e), apply)) {
+            return 'A road into the junction is too short for a roundabout here.';
+          }
+        }
+      }
+    }
+  }
+
+  // The junction goes; a junction on the ring for each leg takes its roads.
+  for (const l of links) d.removeLink(l);
+  d.logic.set(j, { links: [], response: [], foes: [] });
+  setJunction(d, j, 'priority', []);
+  const nodes = legs.map((leg) =>
+    d.addJunction(
+      { x: c.x + radius * Math.cos(leg.bearing), z: c.z - radius * Math.sin(leg.bearing) },
+      Math.max(0, d.net.index.junctionTypes.indexOf('priority')),
+      [],
+    ),
+  );
+  legs.forEach((leg, i) => {
+    for (const e of leg.ins) d.setEdgeTo(e, nodes[i]);
+    for (const e of leg.outs) d.setEdgeFrom(e, nodes[i]);
+  });
+
+  // The ring: an arc from each leg to the next, anticlockwise, lane 0 outermost.
+  const top = [...legs.flatMap((l) => [...l.ins, ...l.outs])].sort(
+    (x, y) => d.rankOf(y) - d.rankOf(x),
+  )[0];
+  const ring = legs.map((leg, i) => {
+    const next = legs[(i + 1) % n];
+    const a0 = leg.bearing + leg.gap / radius;
+    let a1 = next.bearing - next.gap / radius;
+    while (a1 <= a0) a1 += 2 * Math.PI;
+    const edge = d.addEdge({
+      from: nodes[i],
+      to: nodes[(i + 1) % n],
+      type: d.typeOf(top),
+      flags: d.net.index.flags.roundabout,
+      name: NONE,
+      ref: NONE,
+    });
+    d.rankOverride.set(edge, RING_RANK);
+    const steps = Math.max(2, Math.ceil((a1 - a0) / ((10 * Math.PI) / 180)));
+    for (let k = 0; k < lanes; k++) {
+      const r = radius + ((lanes - 1) / 2 - k) * LANE_WIDTH;
+      const shape: Shape = [];
+      for (let q = 0; q <= steps; q++) {
+        const a = a0 + ((a1 - a0) * q) / steps;
+        shape.push(c.x + r * Math.cos(a), c.z - r * Math.sin(a), 0);
+      }
+      d.addLane(edge, shape, RING_SPEED[lanes - 1], ROAD_ALLOW, {
+        key: `${key}:${i}:${k}`,
+        start: 0,
+        end: pathLength(shape),
+      });
+    }
+    return edge;
+  });
+
+  // At each leg: round the ring, onto it (giving way) and off it.
+  const roadLanes = (e: number) =>
+    d.lanesOf(e).filter((l) => (d.allowOf(l) & (PASSENGER | 2)) !== 0);
+  legs.forEach((leg, i) => {
+    const node = nodes[i];
+    const into = ring[(i + n - 1) % n];
+    const onto = ring[i];
+    const made: number[] = [];
+    const ringIn = d.lanesOf(into);
+    const ringOut = d.lanesOf(onto);
+    ringIn.forEach((l, k) => made.push(d.connect(l, ringOut[k], node, 's', 'M')));
+    for (const e of leg.ins) {
+      roadLanes(e).forEach((l, k) =>
+        made.push(d.connect(l, ringOut[Math.min(k, lanes - 1)], node, 'r', 'm')),
+      );
+    }
+    for (const e of leg.outs) {
+      const out = roadLanes(e);
+      if (!out.length) continue;
+      ringIn.forEach((l, k) =>
+        made.push(d.connect(l, out[Math.min(k, out.length - 1)], node, 'r', 'M')),
+      );
+    }
+    junctionLogic(d, node, made);
+    setJunction(d, node, 'priority', convexHull(laneEnds(d, node)));
+  });
+  return ring;
+}
+
+// ---- signals -----------------------------------------------------------------------------
+
+/** Yellow after each phase (s), and the shortest and longest phase the player can set. */
+const YELLOW = 3;
+export const PHASE_SECONDS = { min: 5, max: 180 };
+
+/** Heading (degrees, 0 = north, clockwise) of a direction of travel (x east, z south). */
+function headingOf(dir: Point): number {
+  return ((Math.atan2(dir.x, -dir.z) * 180) / Math.PI + 360) % 360;
+}
+
+/** How far a road reference is from edge `e` (m), Infinity if not on it or the other way. */
+function wayDistance(d: Draft, e: number, ref: WayRef): number {
+  const shape = d.shapeOf(d.lanesOf(e)[0]);
+  const hit = project(shape, ref.x, ref.z);
+  if (hit.distance > SNAP_JUNCTION) return Infinity;
+  const turnBy = Math.abs(
+    ((headingOf(directionAt(shape, hit.along)) - ref.heading + 540) % 360) - 180,
+  );
+  return turnBy > 40 ? Infinity : hit.distance;
+}
+
+/** The junction at `p` with traffic through it, if any (within 6 m). */
+function junctionAt(d: Draft, p: JunctionPoint): number | undefined {
+  let best: number | undefined;
+  let bestDistance = 6;
+  for (let j = 0; j < d.junctionCount; j++) {
+    const q = d.junctionPos(j);
+    const dist = Math.hypot(q.x - p.x, q.z - p.z);
+    if (dist < bestDistance && d.linksAt(j).length > 0) [best, bestDistance] = [j, dist];
+  }
+  return best;
+}
+
+/** Whether link `l` gives way to `m` where nothing says which goes first: turns left give
+ * way, then traffic from the right goes first. */
+function givesWay(d: Draft, l: number, m: number): boolean {
+  const dirs = d.net.index.linkDirs;
+  const left = (x: number) => ['l', 'L', 't'].includes(dirs[d.link(x).dir] ?? 's');
+  if (left(l) !== left(m)) return left(l);
+  const [da, db] = [
+    direction(d.shapeOf(d.link(l).from), true),
+    direction(d.shapeOf(d.link(m).from), true),
+  ];
+  return da.x * db.z - da.z * db.x < 0;
+}
+
+/**
+ * The player's traffic lights at a junction (and the junctions its program controls with
+ * it): each phase lets the movements chosen go, those crossing a movement with priority on
+ * a permissive green (`g`), and a yellow follows for what turns red. Road movements never
+ * green are closed; movements the edit does not know (a road drawn since) go with their
+ * approach, or get a phase of their own. The engine runs the program as given
+ * (`tlsFixed`). No phases: the lights go, and right of way rules.
+ */
+function applySignal(d: Draft, edit: SignalEdit): string | undefined {
+  const j = junctionAt(d, edit.junction);
+  if (j === undefined) return 'There is no junction with traffic there.';
+  const atJ = d.linksAt(j);
+  const t0 = atJ.map((l) => d.link(l).tls).find((t) => t !== NONE);
+  let links = t0 === undefined ? atJ : d.linksOfProgram(t0);
+  const junctions = [...new Set(links.map((l) => d.link(l).junction))];
+  const ways = new Map(junctions.map((jj) => [jj, rightOfWay(d, jj)] as const));
+  const request = (l: number) => d.link(l).request;
+
+  if (edit.phases.length === 0) {
+    if (t0 === undefined) return undefined;
+    for (const l of links) {
+      d.setTls(l, NONE, 0xffff);
+      const way = ways.get(d.link(l).junction)!;
+      d.setState(l, way.response[request(l)]?.size ? 'm' : 'M');
+    }
+    for (const jj of junctions) setJunction(d, jj, 'priority');
+    return undefined;
+  }
+
+  // Movements: the links from one road onto another.
+  const groups = new Map<string, number[]>();
+  for (const l of links) {
+    const k = `${d.edgeOfLane(d.link(l).from)}>${d.edgeOfLane(d.link(l).to)}`;
+    groups.set(k, [...(groups.get(k) ?? []), l]);
+  }
+  const resolve = (m: Movement): number[] => {
+    let best: number[] = [];
+    let bestScore = Infinity;
+    for (const [k, list] of groups) {
+      const [f, t] = k.split('>').map(Number);
+      const score = wayDistance(d, f, m.from) + wayDistance(d, t, m.to);
+      if (score < bestScore) [best, bestScore] = [list, score];
+    }
+    return best;
+  };
+  const matched = edit.movements.map(resolve);
+  const known = new Set(matched.flat());
+  if (edit.movements.length > 0 && known.size === 0) {
+    return "The signals' roads are not at this junction.";
+  }
+  const green = edit.phases.map((p) => new Set(p.green.flatMap((i) => matched[i] ?? [])));
+  const seconds = edit.phases.map((p) =>
+    Math.min(PHASE_SECONDS.max, Math.max(PHASE_SECONDS.min, p.seconds)),
+  );
+  const fromEdge = (l: number) => d.edgeOfLane(d.link(l).from);
+  for (const list of groups.values()) {
+    if (list.some((l) => known.has(l))) continue;
+    const from = fromEdge(list[0]);
+    let placed = false;
+    for (const set of green) {
+      if ([...set].some((l) => fromEdge(l) === from)) {
+        for (const l of list) set.add(l);
+        placed = true;
+      }
+    }
+    if (!placed) {
+      green.push(new Set(list));
+      seconds.push(15);
+    }
+  }
+  for (const l of links) {
+    const road = ((d.allowOf(d.link(l).from) | d.allowOf(d.link(l).to)) & TRACKS) === 0;
+    if (road && !green.some((set) => set.has(l))) d.removeLink(l);
+  }
+  links = links.filter((l) => !d.removedLinks.has(l));
+
+  // Who gives way among movements green together.
+  const yieldsIn = green.map(() => new Set<number>());
+  green.forEach((set, p) => {
+    const list = [...set];
+    for (const l of list) {
+      for (const m of list) {
+        if (l >= m || d.link(l).junction !== d.link(m).junction) continue;
+        const way = ways.get(d.link(l).junction)!;
+        const [r, q] = [request(l), request(m)];
+        if (!way.foes[r]?.has(q)) continue;
+        if (way.response[r]?.has(q)) yieldsIn[p].add(l);
+        else if (way.response[q]?.has(r)) yieldsIn[p].add(m);
+        else if (givesWay(d, l, m)) {
+          way.response[r].add(q);
+          yieldsIn[p].add(l);
+        } else {
+          way.response[q].add(r);
+          yieldsIn[p].add(m);
+        }
+      }
+    }
+  });
+  for (const [jj, way] of ways) d.logic.set(jj, way);
+
+  const program: Program = { durations: [], mins: [], maxs: [], states: [] };
+  const push = (states: string, seconds: number) => {
+    program.states.push(states);
+    program.durations.push(seconds);
+    program.mins.push(seconds);
+    program.maxs.push(seconds);
+  };
+  green.forEach((set, p) => {
+    const states = links.map((l) => (set.has(l) ? (yieldsIn[p].has(l) ? 'g' : 'G') : 'r')).join('');
+    push(states, seconds[p]);
+    const next = green[(p + 1) % green.length];
+    const yellow = links.map((l, k) => (set.has(l) && !next.has(l) ? 'y' : states[k])).join('');
+    if (yellow !== states) push(yellow, YELLOW);
+  });
+  const t = t0 ?? d.programCount;
+  if (t0 === undefined) d.newPrograms.push(program);
+  else d.programs.set(t0, program);
+  d.fixedPrograms.add(t);
+  links.forEach((l, k) => d.setTls(l, t, k));
+  for (const jj of junctions) setJunction(d, jj, 'traffic_light');
+  return undefined;
+}
+
+/** Build the network loaded with `edits` made: the roads drawn, in order, then the
+ * junctions changed, in order. `index` finds roads to join. */
 export function buildNetwork(
   net: RoadNetwork,
-  roads: readonly RoadEdit[],
+  edits: readonly NetworkEdit[],
   index?: RoadIndex,
 ): BuiltNetwork {
   const types = [...net.index.types];
   const d = new Draft(net, types);
-  const built: number[][] = [];
+  const built: number[][] = edits.map(() => []);
   const problems: BuiltNetwork['problems'] = [];
   const touched = new Map<number, Set<number>>();
-  roads.forEach((road, r) => {
+  edits.forEach((road, r) => {
+    if (road.kind !== 'road') return;
     const key = `r:${roadKey(road)}`;
     if (road.points.length < 2) {
       problems.push({ road: r, reason: 'A road needs a start and an end.' });
-      built.push([]);
       return;
     }
     const first = road.points[0];
@@ -1030,7 +1621,6 @@ export function buildNetwork(
     const ends = [findEnd(d, index, first), findEnd(d, index, last)];
     if (!ends[0] || !ends[1]) {
       problems.push({ road: r, reason: 'Start and end the road on a road or at a junction.' });
-      built.push([]);
       return;
     }
     const width = road.lanes * LANE_WIDTH * (road.oneway ? 1 : 2);
@@ -1039,7 +1629,6 @@ export function buildNetwork(
     );
     if (junctions[0] === junctions[1]) {
       problems.push({ road: r, reason: 'The road starts and ends at the same junction.' });
-      built.push([]);
       return;
     }
     // The line between the junctions, trimmed clear of them.
@@ -1054,7 +1643,6 @@ export function buildNetwork(
     const r1 = junctionRadius(d, junctions[1], width);
     if (total < r0 + r1 + 10) {
       problems.push({ road: r, reason: 'The road is too short.' });
-      built.push([]);
       return;
     }
     const trimmed = cut(shape, r0, total - r1);
@@ -1062,7 +1650,7 @@ export function buildNetwork(
     for (let i = 0; i < trimmed.length; i += 3) pts.push({ x: trimmed[i], z: trimmed[i + 1] });
     const edges = [addRoadEdges(d, road, key, pts, junctions[0], junctions[1], false)];
     if (!road.oneway) edges.push(addRoadEdges(d, road, key, pts, junctions[1], junctions[0], true));
-    built.push(edges);
+    built[r] = edges;
     for (const j of junctions) {
       const set = touched.get(j) ?? new Set<number>();
       for (const e of edges) set.add(e);
@@ -1077,20 +1665,7 @@ export function buildNetwork(
     const made = connectJunction(d, j, added);
     const all = splitJunctions.has(j) ? [...d.linksAt(j)] : made;
     junctionLogic(d, j, all);
-    const points: Point[] = [];
-    for (const e of [...d.incoming(j), ...d.outgoing(j)]) {
-      for (const lane of d.lanesOf(e)) {
-        const s = d.shapeOf(lane);
-        const end = d.toOf(e) === j;
-        const k = end ? s.length - 3 : 0;
-        const dir = direction(s, end);
-        const w = LANE_WIDTH / 2;
-        points.push(
-          { x: s[k] - dir.z * w, z: s[k + 1] + dir.x * w },
-          { x: s[k] + dir.z * w, z: s[k + 1] - dir.x * w },
-        );
-      }
-    }
+    const points = laneEnds(d, j);
     if (j >= d.baseJunctions) d.junctions[j - d.baseJunctions].shape = convexHull(points);
     else {
       const { start, count } = net.junctionPoints(j);
@@ -1102,7 +1677,25 @@ export function buildNetwork(
       if (type === 'dead_end') d.junctionType.set(j, net.index.junctionTypes.indexOf('priority'));
     }
   }
+  // Junctions made roundabouts and signals set, in order.
+  edits.forEach((edit, r) => {
+    let problem: string | undefined;
+    if (edit.kind === 'roundabout') {
+      const j = junctionAt(d, edit.junction);
+      const ring =
+        j === undefined
+          ? 'There is no junction with traffic there.'
+          : makeRoundabout(d, j, edit.lanes, roundaboutKey(edit));
+      if (typeof ring === 'string') problem = ring;
+      else built[r] = ring;
+    } else if (edit.kind === 'signal') problem = applySignal(d, edit);
+    if (problem) problems.push({ road: r, reason: problem });
+  });
   return { ...finish(d, net), origins: d.origins, roads: built, problems, types };
+}
+
+function roundaboutKey(edit: RoundaboutEdit): string {
+  return `o:${edit.junction.x.toFixed(1)},${edit.junction.z.toFixed(1)}:${edit.lanes}`;
 }
 
 /** A key for a drawn road that stays the same from build to build. */
@@ -1175,6 +1768,7 @@ function finish(
     ne.map((e) => e.to),
   );
   for (const [e, to] of d.edgeTo) (out.edgeTo as Uint32Array)[e] = to;
+  for (const [e, from] of d.edgeFrom) (out.edgeFrom as Uint32Array)[e] = from;
   out.edgeType = grow(
     a.edgeType as Uint16Array,
     Uint16Array,
@@ -1262,17 +1856,16 @@ function finish(
   }
   out.laneShapeOffsets = lOffsets;
 
-  // Links: those loaded and added, sorted by the lane they leave.
-  const nLinks = d.baseLinks + d.links.length;
-  const order = Array.from({ length: nLinks }, (_, l) => l);
+  // Links: those loaded and added and not taken away, sorted by the lane they leave.
+  const allLinks = d.baseLinks + d.links.length;
   const fromOf = (l: number) =>
     l >= d.baseLinks
       ? d.links[l - d.baseLinks].from
       : (d.linkFrom.get(l) ?? (a.linkFrom as Uint32Array)[l]);
-  const froms = Uint32Array.from(order, fromOf);
+  const froms = Uint32Array.from({ length: allLinks }, (_, l) => fromOf(l));
+  const order = Array.from({ length: allLinks }, (_, l) => l).filter((l) => !d.removedLinks.has(l));
   order.sort((x, y) => froms[x] - froms[y] || x - y);
-  const newId = new Uint32Array(nLinks);
-  order.forEach((l, k) => (newId[l] = k));
+  const nLinks = order.length;
   const pick = <T extends TypedArray>(
     ctor: { new (n: number): T },
     get: (l: Link) => number,
@@ -1336,8 +1929,8 @@ function finish(
   const programOffsets: number[] = [0];
   const stateOffsets = a.phaseStateOffsets as Uint32Array;
   const chars = a.phaseStates as Uint8Array;
-  for (let t = 0; t < nTls; t++) {
-    const own = d.programs.get(t);
+  for (let t = 0; t < nTls + d.newPrograms.length; t++) {
+    const own = t < nTls ? d.programs.get(t) : d.newPrograms[t - nTls];
     if (own) {
       own.states.forEach((s, k) => {
         durations.push(own.durations[k]);
@@ -1358,8 +1951,16 @@ function finish(
     programOffsets.push(durations.length);
   }
   out.tlsPhaseOffsets = Uint32Array.from(programOffsets);
-  out.tlsOffset = a.tlsOffset;
-  out.tlsType = a.tlsType;
+  const added = d.newPrograms.map(() => 0);
+  out.tlsOffset = grow(a.tlsOffset as Float32Array, Float32Array, added);
+  out.tlsType = grow(a.tlsType as Uint8Array, Uint8Array, added);
+  const fixed = new Uint8Array(nTls + d.newPrograms.length);
+  const fixedType = Math.max(0, d.net.index.tlsTypes.indexOf('static'));
+  for (const t of d.fixedPrograms) {
+    fixed[t] = 1;
+    (out.tlsType as Uint8Array)[t] = fixedType;
+  }
+  out.tlsFixed = fixed;
   out.phaseDuration = Float32Array.from(durations);
   out.phaseMinDur = Float32Array.from(mins);
   out.phaseMaxDur = Float32Array.from(maxs);
@@ -1380,7 +1981,13 @@ export function lanePieces(
   baseLength: (lane: number) => number,
 ): LanePieceRec[] {
   const segments = new Map<string, { lane: number; start: number; end: number }[]>();
+  // Lanes nothing leads onto any more (a junction made again): what is on them leaves.
+  const gone = new Set<string>();
   for (const [lane, o] of next) {
+    if (o.gone) {
+      gone.add(o.key);
+      continue;
+    }
     const list = segments.get(o.key) ?? [];
     list.push({ lane, start: o.start, end: o.end });
     segments.set(o.key, list);
@@ -1389,13 +1996,14 @@ export function lanePieces(
   const covering = (key: string) => {
     const own = segments.get(key);
     if (own) return own;
+    if (gone.has(key)) return [];
     // A lane as loaded that the next build leaves whole.
     const m = /^b(\d+)$/.exec(key);
     return m ? [{ lane: Number(m[1]), start: 0, end: baseLength(Number(m[1])) }] : [];
   };
   const out: LanePieceRec[] = [];
   const add = (old: number, o: LaneOrigin) => {
-    const list = covering(o.key).filter((s) => s.end > o.start && s.start < o.end);
+    const list = o.gone ? [] : covering(o.key).filter((s) => s.end > o.start && s.start < o.end);
     if (!list.length) {
       out.push({ old, from: 0, lane: NONE, shift: 0 });
       return;

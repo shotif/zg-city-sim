@@ -12,7 +12,7 @@ const FIND_SIGNAL = 25;
 const NONE = 0xffffffff;
 
 /** Turn directions by SUMO's link direction codes (the network index's `linkDirs`). */
-const DIRECTIONS: Record<string, string> = {
+export const DIRECTIONS: Record<string, string> = {
   s: 'straight on',
   l: 'left',
   r: 'right',

@@ -895,6 +895,13 @@ fn a_queue_leaves_a_green_light_at_a_realistic_saturation_flow() {
 /// Crossroads with two-lane east-west approaches (straight, left) and one-lane north-south
 /// ones (straight), under a signal program of the given phases.
 fn signalled_crossroads(phases: &[(f32, &str)]) -> Engine {
+    Engine::new(
+        Network::build(signalled_crossroads_data(phases)).unwrap(),
+        1,
+    )
+}
+
+fn signalled_crossroads_data(phases: &[(f32, &str)]) -> NetworkData {
     let mut b = Builder::default();
     let jw = b.junction(0.0, 0.0);
     let j = b.junction(300.0, 0.0);
@@ -934,7 +941,7 @@ fn signalled_crossroads(phases: &[(f32, &str)]) -> Engine {
         ],
     );
     b.signal(&links, phases);
-    Engine::new(b.build(), 1)
+    b.data()
 }
 
 fn program(engine: &Engine) -> Vec<(String, f32)> {
@@ -1628,4 +1635,179 @@ fn taking_a_road_away_again_merges_the_halves_and_drops_its_traffic() {
     assert!((veh.pos - 250.0).abs() < 0.01);
     run_until(&mut engine, 60.0, assert_no_overlaps);
     assert_eq!((engine.stats.arrived, engine.stats.teleported), (1, 0));
+}
+
+#[test]
+fn signal_programs_the_player_sets_run_as_given() {
+    // The program the engine would merge (above), set by the player: it runs as given.
+    let phases = [
+        (20.0, "GGrrrr"),
+        (3.0, "yyrrrr"),
+        (20.0, "rrGGrr"),
+        (3.0, "rryyrr"),
+        (20.0, "rrrrGG"),
+        (3.0, "rrrryy"),
+    ];
+    let mut d = signalled_crossroads_data(&phases);
+    d.tls_fixed = vec![1];
+    let engine = Engine::new(Network::build(d).unwrap(), 1);
+    let given: Vec<(String, f32)> = phases.iter().map(|&(t, s)| (s.to_string(), t)).collect();
+    assert_eq!(program(&engine), given);
+}
+
+/// A crossroads of two-way roads, one lane each way, or (`roundabout`) the same made a
+/// roundabout as the app builds it: each road ends at a junction of its own on a ring 20 m
+/// across, anticlockwise, the roads keeping their ids and the ring coming after them.
+/// Returns the network and the roads: eastbound in and out, then westbound, northbound and
+/// southbound, then (on the roundabout) the ring from the east, north, west and south.
+fn crossroads(roundabout: bool) -> (NetworkData, Vec<u32>) {
+    let mut b = Builder::default();
+    let jw = b.junction(0.0, 0.0);
+    let j = b.junction(300.0, 0.0);
+    let je = b.junction(600.0, 0.0);
+    let jn = b.junction(300.0, -300.0);
+    let js = b.junction(300.0, 300.0);
+    let [nw, ne, nn, ns] = if roundabout {
+        [
+            b.junction(280.0, 0.0),
+            b.junction(320.0, 0.0),
+            b.junction(300.0, -20.0),
+            b.junction(300.0, 20.0),
+        ]
+    } else {
+        [j; 4]
+    };
+    let mut roads = vec![
+        b.road(jw, nw, 1, 13.9),
+        b.road(ne, je, 1, 13.9),
+        b.road(je, ne, 1, 13.9),
+        b.road(nw, jw, 1, 13.9),
+        b.road(js, ns, 1, 13.9),
+        b.road(nn, jn, 1, 13.9),
+        b.road(jn, nn, 1, 13.9),
+        b.road(ns, js, 1, 13.9),
+    ];
+    let [eb_in, eb_out, wb_in, wb_out, nb_in, nb_out, sb_in, sb_out] = roads[..] else {
+        unreachable!()
+    };
+    let lane = |b: &Builder, e: u32| b.lane(e, 0);
+    if !roundabout {
+        for (from, to) in [
+            (eb_in, eb_out),
+            (wb_in, wb_out),
+            (nb_in, nb_out),
+            (sb_in, sb_out),
+        ] {
+            let (f, t) = (lane(&b, from), lane(&b, to));
+            b.connect(f, t, j, dir::STRAIGHT, b'M');
+        }
+        return (b.data(), roads);
+    }
+    let ring = [
+        b.road(ne, nn, 1, 6.9),
+        b.road(nn, nw, 1, 6.9),
+        b.road(nw, ns, 1, 6.9),
+        b.road(ns, ne, 1, 6.9),
+    ];
+    roads.extend(ring);
+    // At each leg's junction: round the ring, onto it (giving way) and off it.
+    for (node, ring_in, ring_out, way_in, way_out) in [
+        (ne, ring[3], ring[0], wb_in, eb_out),
+        (nn, ring[0], ring[1], sb_in, nb_out),
+        (nw, ring[1], ring[2], eb_in, wb_out),
+        (ns, ring[2], ring[3], nb_in, sb_out),
+    ] {
+        let (ri, ro, wi, wo) = (
+            lane(&b, ring_in),
+            lane(&b, ring_out),
+            lane(&b, way_in),
+            lane(&b, way_out),
+        );
+        b.connect(ri, ro, node, dir::STRAIGHT, b'M');
+        b.connect(wi, ro, node, dir::RIGHT, b'm');
+        b.connect(ri, wo, node, dir::RIGHT, b'M');
+        b.set_logic(node, &[(0, 0b010), (0b001, 0b001), (0, 0)]);
+    }
+    (b.data(), roads)
+}
+
+#[test]
+fn a_crossroads_made_a_roundabout_keeps_traffic_and_buses_going() {
+    use crate::transit::{Transit, TransitData};
+    let (base, roads) = crossroads(false);
+    let (ring, _) = crossroads(true);
+    let mut engine = Engine::new(Network::build(base).unwrap(), 8);
+    let lane = |engine: &Engine, e: u32| engine.net.edge_lanes(e).start;
+    let (eb_in, eb_out) = (roads[0], roads[1]);
+    // A bus from the eastbound road in to a stop on the road out, due there at 60 s.
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::BUS],
+        trip_route: vec![0],
+        trip_stops: vec![0, 2],
+        stop_edge: vec![eb_in, eb_out],
+        stop_frac: vec![0.2, 0.5],
+        stop_time: vec![1.0, 60.0],
+    }));
+    engine.set_time(0.0);
+    let (lane_in, lane_out) = (lane(&engine, eb_in), lane(&engine, eb_out));
+    let near_end = engine.insert_at(vtype::CAR, vec![eb_in, eb_out], lane_in, 275.0, 0.0);
+    let coming = engine.insert_at(vtype::CAR, vec![eb_in, eb_out], lane_in, 150.0, 10.0);
+    let leaving = engine.insert_at(vtype::CAR, vec![eb_out], lane_out, 100.0, 10.0);
+    run_until(&mut engine, 2.0, |_| {});
+    let bus = engine
+        .vehs
+        .iter()
+        .position(|v| v.alive() && v.vtype == vtype::BUS)
+        .expect("the bus started") as u32;
+    let leaving_at = engine.vehs[leaving as usize].pos;
+
+    // The roads in end 20 m sooner, the roads out start 20 m later; the lanes across the
+    // junction go.
+    let mut pieces: Vec<LanePiece> = roads
+        .iter()
+        .enumerate()
+        .map(|(k, &e)| LanePiece {
+            old: lane(&engine, e),
+            from: 0.0,
+            lane: lane(&engine, e),
+            shift: if k % 2 == 0 { 0.0 } else { -20.0 },
+        })
+        .collect();
+    for old in roads.len() as u32..engine.net.lane_count() as u32 {
+        pieces.push(LanePiece {
+            old,
+            from: 0.0,
+            lane: NONE,
+            shift: 0.0,
+        });
+    }
+    engine
+        .replace_network(ring, &pieces)
+        .expect("a consistent network");
+    let [_, _, west_south, south_east] = [8, 9, 10, 11];
+    assert!(
+        !engine.vehs[near_end as usize].alive(),
+        "the car where the ring now is left"
+    );
+    let car = &engine.vehs[coming as usize];
+    assert_eq!(car.route, vec![eb_in, west_south, south_east, eb_out]);
+    let out = &engine.vehs[leaving as usize];
+    assert!((out.pos - (leaving_at - 20.0)).abs() < 0.01);
+    let bus_veh = &engine.vehs[bus as usize];
+    assert_eq!(bus_veh.route, vec![eb_in, west_south, south_east, eb_out]);
+    let stops: Vec<u32> = bus_veh
+        .transit
+        .as_ref()
+        .unwrap()
+        .stops
+        .iter()
+        .map(|&(_, idx)| idx)
+        .collect();
+    assert_eq!(stops, vec![0, 3], "the bus keeps its stop on the road out");
+
+    run_until(&mut engine, 150.0, assert_no_overlaps);
+    assert!(engine.edge_entered[west_south as usize] >= 2);
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (3, 0));
+    let tr = engine.transit.as_ref().unwrap();
+    assert_eq!((tr.started, tr.failed), (1, 0));
 }

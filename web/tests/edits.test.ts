@@ -63,6 +63,17 @@ describe('edits', () => {
     { kind: 'green', junction: { x: 100, z: 0 }, phase: 2, seconds: 40 },
     // A road this network does not have.
     { kind: 'closeLane', road: { x: 900, z: 900, heading: 0 }, lane: 0 },
+    // Built into the network, not matched here.
+    { kind: 'roundabout', junction: { x: 100.04, z: 0, name: 'Ilica / Savska cesta' }, lanes: 2 },
+    {
+      kind: 'signal',
+      junction: { x: 100, z: 0, name: 'Ilica / Savska cesta' },
+      movements: [{ from: ilica, to: savska }],
+      phases: [
+        { seconds: 30, green: [0] },
+        { seconds: 20, green: [] },
+      ],
+    },
   ];
 
   it('match the network and become the engine records', () => {
@@ -95,6 +106,15 @@ describe('edits', () => {
     ]);
     expect(describeEdit(edits[3])).toBe('No turn from Ilica onto Savska cesta');
     expect(describeEdit(edits[4])).toBe('Signals: phase 3 green 40 s');
+    expect(describeEdit(edits[6])).toBe('Roundabout at Ilica / Savska cesta, 2 lanes');
+    expect(describeEdit(edits[7])).toBe(
+      'Traffic lights at Ilica / Savska cesta: 2 phases, about 56 s cycle',
+    );
+    // A junction is a roundabout or has lights set, not both: the later edit stays.
+    expect(withEdit([edits[6]], edits[7])).toEqual([edits[7]]);
+    expect(describeEdit({ ...(edits[7] as Extract<Edit, { kind: 'signal' }>), phases: [] })).toBe(
+      'No traffic lights at Ilica / Savska cesta',
+    );
   });
 
   it('save, load and share', async () => {
@@ -104,7 +124,18 @@ describe('edits', () => {
     expect(loaded).toHaveLength(edits.length);
     expect(loaded[1]).toEqual({ kind: 'speed', road: { ...ilica, z: 1.6 }, kmh: 30 });
     expect(serializeEdits(loaded)).toBe(text);
+    expect(loaded[6]).toEqual({
+      ...edits[6],
+      junction: { ...(edits[6] as { junction: object }).junction, x: 100 },
+    });
+    expect(loaded[7]).toEqual({
+      ...edits[7],
+      movements: [{ from: { ...ilica, z: 1.6 }, to: { ...savska, x: 101.6 } }],
+    });
     expect(() => parseEdits('{"edits": 3}')).toThrow();
+    // Lights naming a movement they do not list are not read.
+    const bad = { ...edits[7], phases: [{ seconds: 30, green: [3] }] };
+    expect(parseEdits(JSON.stringify({ version: 1, edits: [bad] }))).toEqual([]);
     expect(parseEdits('{"version":1,"edits":[{"kind":"nonsense"},{"kind":"close"}]}')).toEqual([]);
 
     const store = new Map<string, string>();

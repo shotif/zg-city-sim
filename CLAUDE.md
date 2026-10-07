@@ -38,7 +38,7 @@ Read these before changing anything:
 | `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
 | `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck), `day.rs` (a whole weekday, for validation) and `compare.rs` (one network through the morning peak, for a project's before and after). |
-| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles, traffic map, closures, news, edits); `src/edit/` the edit model, road index, comparisons, projects and the junction builder (`builder.ts`: roads drawn, built into the network the engine runs); `src/ui/` the HUD and panels; `src/camera/` the views. |
+| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (roads, buildings, vehicles, traffic map, closures, news, edits); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, roundabouts and signal programs, built into the network the engine runs) and the junctions' movements for the signal editor (`signals.ts`); `src/ui/` the HUD and panels; `src/camera/` the views. |
 | `.github/workflows/` | `deploy.yml` (build, test, deploy main) and `live-data.yml` (copies the City's closures feed to the `live-data` branch every 15 minutes). |
 
 ## Commands
@@ -76,7 +76,8 @@ Environment variables for the native runs:
 
 - **Generated data:** `web/public/data/` is generated and gitignored. CI rebuilds it from scratch on every push.
 - **Stale data in native runs:** the native runners read the unpacked `.bin` files. After rebuilding data, unpack again with `gunzip -kf`, or they quietly run on the old network.
-- **Drawn roads keep ids:** the junction builder builds every network from the one loaded, so lanes, edges and junctions loaded keep their ids and drawn ones come after. The engine is told where each lane went (`lanePieces`); keep that invariant when changing either side.
+- **Drawn roads keep ids:** the junction builder builds every network from the one loaded, so lanes, edges and junctions loaded keep their ids and drawn ones come after. The engine is told where each lane went (`lanePieces`); keep that invariant when changing either side. Links taken away (a junction made a roundabout, movements closed by the signal editor) are left out of the arrays, so link ids are not stable: the engine matches them again by the lanes they join.
+- **Player-set signals:** programs the player sets carry `tlsFixed`; `merge_signal_phases`, `retime_signals` and actuated extension leave them alone.
 - **Project comparisons are noisy:** two runs of today's roads with other seeds differ by about 16 % in delay over the morning peak. Compare roads near a project, not the whole network, and use the mean of two runs of today.
 - **Ids change with the network:** rebuilding the network with different netconvert options renumbers edges, lanes and links. Validate a day run against the network it ran on: `validate.py` checks the edge count.
 - **Day runs are slow:** a full simulated day takes about an hour on one core. To compare variants, run them in parallel, each built into its own `CARGO_TARGET_DIR`, so rebuilding never touches a running binary.

@@ -81,6 +81,9 @@ pub struct NetworkData {
     pub phase_max_dur: Vec<f32>,
     pub phase_state_offsets: Vec<u32>,
     pub phase_states: Vec<u8>,
+    /// Per signal program, 1 where the player set it (Build panel): the engine runs it as
+    /// given, without merging or re-timing its phases. Empty for a network as loaded.
+    pub tls_fixed: Vec<u8>,
 }
 
 macro_rules! named_arrays {
@@ -148,6 +151,7 @@ named_arrays! {
     "phaseMaxDur" => phase_max_dur: f32,
     "phaseStateOffsets" => phase_state_offsets: u32,
     "phaseStates" => phase_states: u8,
+    "tlsFixed" => tls_fixed: u8,
 }
 
 #[derive(Debug)]
@@ -199,6 +203,11 @@ pub struct Network {
 }
 
 impl Network {
+    /// Whether the player set signal program `t` (see `NetworkData::tls_fixed`).
+    pub fn tls_fixed(&self, t: usize) -> bool {
+        self.d.tls_fixed.get(t).is_some_and(|&f| f != 0)
+    }
+
     pub fn build(d: NetworkData) -> Result<Network, NetworkError> {
         let n_lanes = d.lane_edge.len();
         let n_edges = d.edge_flags.len();

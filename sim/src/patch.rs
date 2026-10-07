@@ -154,6 +154,8 @@ impl Engine {
         let mut stop_moved = Vec::new();
         let mut stop_edge = Vec::new();
         if let Some(tr) = self.transit.as_mut() {
+            // Routes between stops are planned again on the new network.
+            tr.legs.clear();
             let data = &mut tr.data;
             stop_moved = vec![false; data.stop_edge.len()];
             for i in 0..data.stop_edge.len() {
@@ -177,7 +179,9 @@ impl Engine {
         for &v in &live {
             let veh = &mut self.vehs[v as usize];
             let (lane, pos) = lanes.place(veh.lane, veh.pos);
-            if lane == NONE {
+            // Off a road taken away, or past the new end of a road shortened (a junction
+            // made a roundabout).
+            if lane == NONE || pos > net.d.lane_length[lane as usize] + 0.5 {
                 gone.push(v);
                 continue;
             }
@@ -310,7 +314,57 @@ impl Engine {
                 self.replan_vehicle(v, true);
             }
         }
+        // Buses and trams keep their stops: where their way on no longer joins up (a
+        // junction made again), they take the shortest way across.
+        for v in self.live_vehicles().collect::<Vec<_>>() {
+            if self.vehs[v as usize].transit.is_some() && !self.mend_transit_route(v) {
+                self.drop_vehicle(v);
+            }
+        }
         Ok(())
+    }
+
+    /// Fill each gap in a bus or tram's route ahead (two roads that no longer join) with the
+    /// shortest way between them, keeping its stops. False if there is none.
+    fn mend_transit_route(&mut self, v: u32) -> bool {
+        let vclass = self.vehs[v as usize].params().vclass;
+        let mut k = self.vehs[v as usize].route_idx as usize;
+        loop {
+            let veh = &self.vehs[v as usize];
+            let Some(gap) = (k..veh.route.len().saturating_sub(1)).find(|&i| {
+                !self
+                    .net
+                    .successors(veh.route[i])
+                    .iter()
+                    .any(|s| s.edge == veh.route[i + 1] && s.allow & vclass != 0)
+            }) else {
+                if k > veh.route_idx as usize && !self.net.lane_internal[veh.lane as usize] {
+                    let link =
+                        self.choose_link_or_detour(veh.lane, &veh.route, veh.route_idx, vclass);
+                    self.vehs[v as usize].next_link = link;
+                }
+                return true;
+            };
+            let (a, b) = (veh.route[gap], veh.route[gap + 1]);
+            self.router.tolls = true;
+            let Some(leg) = self.router.route(&self.net, &self.free_time, a, b, vclass) else {
+                return false;
+            };
+            if leg.len() < 2 {
+                return false;
+            }
+            let veh = &mut self.vehs[v as usize];
+            let shift = leg.len() as u32 - 2;
+            veh.route.splice(gap..gap + 2, leg);
+            if let Some(run) = veh.transit.as_mut() {
+                for (_, idx) in run.stops.iter_mut() {
+                    if *idx as usize > gap {
+                        *idx += shift;
+                    }
+                }
+            }
+            k = gap + 1 + shift as usize;
+        }
     }
 
     /// Take a vehicle off the network without counting it as arrived or stuck.
