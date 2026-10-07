@@ -262,9 +262,15 @@ class Planner:
                 self.ways[way.id] = [n.ref for n in way.nodes]
                 self.tags[way.id] = dict(way.tags)
                 self.roads[name].append(way.id)
+        # OpenStreetMap ids come and go between extracts (CI keeps an older one): a way the
+        # extract lacks is left out, and the project is built without it.
         missing = set(project.ways) - set(self.ways)
         if missing:
-            raise ValueError(f"{project.id}: ways not in the extract: {sorted(missing)}")
+            log.warning("%s: ways not in the extract, left out: %s", project.id, sorted(missing))
+        #: The project's ways the extract has, with the tags they get.
+        self.opened = {w: t for w, t in project.ways.items() if w in self.ways}
+        if not self.opened:
+            raise ValueError(f"{project.id}: none of its ways is in the extract")
         needed = {n for nodes in self.ways.values() for n in nodes}
         self.pos: dict[int, tuple[float, float]] = {}
         for node in osmium.FileProcessor(str(pbf), osmium.osm.NODE):
@@ -273,7 +279,7 @@ class Planner:
         self.lat0 = math.radians(np.mean([p[1] for p in self.pos.values()]))
         self.new_nodes: dict[int, tuple[float, float, dict[str, str]]] = {}
         self.node_tags: dict[int, dict[str, str]] = {}
-        self.changed: set[int] = set(project.ways)
+        self.changed: set[int] = set(self.opened)
         self.next_id = NEW_ID
 
     # Positions in metres east and north.
@@ -354,7 +360,7 @@ class Planner:
     def cross(self, name: str) -> int:
         """Junctions where the project's ways cross roads named `name`."""
         made = 0
-        for way in self.project.ways:
+        for way in self.opened:
             for road in self.roads[name]:
                 while (found := self.crossing(way, road)) is not None:
                     k, j, p = found
@@ -383,7 +389,7 @@ class Planner:
         their own at the same place."""
         road_nodes = {n for road in self.roads[name] for n in self.ways[road]}
         replaced: dict[int, int] = {}
-        for way in self.project.ways:
+        for way in self.opened:
             nodes = self.ways[way]
             for k, n in enumerate(nodes):
                 if n in road_nodes:
@@ -437,14 +443,16 @@ class Planner:
         for name in self.project.over:
             self.over(name)
         for e in self.project.extend:
-            self.extend(e)
+            if e.way in self.opened:
+                self.extend(e)
         for name in self.project.cross:
             made = self.cross(name)
             if not made:
                 log.warning("%s: crosses no %s", self.project.id, name)
-        own = set(self.project.ways)
+        own = set(self.opened)
         for b in self.project.bridges:
-            self.bridge(b)
+            if b.way in self.opened:
+                self.bridge(b)
         own |= {w for w in self.changed if w >= NEW_ID}
         project_nodes = {n for w in own for n in self.ways[w]}
         for name in self.project.signals:

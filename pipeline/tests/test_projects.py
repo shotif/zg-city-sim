@@ -93,3 +93,28 @@ def test_patched_map_has_the_new_ways_and_nodes(tmp_path):
     assert set(patch.nodes) <= set(nodes)
     assert sum(t.get("highway") == "traffic_signals" for t in nodes.values()) == 3
     assert stats["ways"] == len(ways)
+
+
+def test_ways_missing_from_an_older_extract_are_left_out(tmp_path, caplog):
+    src = write_map(tmp_path / "map.osm")
+    gone = 99
+    project = Project(
+        id="test",
+        name="Test road",
+        status="",
+        summary="",
+        sources=(),
+        ways={10: {"highway": "primary"}, gone: {"highway": "primary"}},
+        extend=(Extend(gone, "end", "Avenija"),),
+        bridges=(Bridge(gone, (16.0, 45.7985), 60.0),),
+    )
+    patch = Planner(project, src).plan()
+    assert gone not in patch.ways and patch.ways[10][1] == {"highway": "primary"}
+    assert "left out: [99]" in caplog.text
+    nothing = Project(**{**project.__dict__, "ways": {gone: {"highway": "primary"}}})
+    try:
+        Planner(nothing, src)
+    except ValueError as error:
+        assert "none of its ways" in str(error)
+    else:
+        raise AssertionError("a project with none of its ways is not built")
