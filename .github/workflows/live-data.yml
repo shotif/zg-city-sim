@@ -1,7 +1,8 @@
 name: Live data
 
 # Copies the City of Zagreb's road closures (data.zagreb.hr "prometnice", refreshed every
-# 3 minutes, no CORS headers) to the live-data branch, where the app reads it from
+# 3 minutes, no CORS headers) and DHMZ's hourly weather observations for Zagreb
+# (vrijeme.hr, no CORS headers) to the live-data branch, where the app reads them from
 # raw.githubusercontent.com. The branch holds a single commit, replaced on every run.
 
 on:
@@ -46,6 +47,60 @@ jobs:
           print(len(out["closures"]), "closures")
           EOF
 
+      - name: Fetch the weather in Zagreb
+        # The closures are published even if the weather cannot be had.
+        continue-on-error: true
+        run: |
+          mkdir -p out
+          python3 - <<'EOF'
+          import datetime, json, urllib.request
+          import xml.etree.ElementTree as ET
+
+          req = urllib.request.Request("https://vrijeme.hr/hrvatska_n.xml", headers={"User-Agent": "zg-city-sim live data"})
+          with urllib.request.urlopen(req, timeout=60) as response:
+              root = ET.fromstring(response.read())
+
+          def number(text):
+              try:
+                  return float((text or "").strip())
+              except ValueError:
+                  return None
+
+          stations = []
+          for city in root.iter("Grad"):
+              name = (city.findtext("GradIme") or "").strip()
+              if not name.startswith("Zagreb"):
+                  continue
+              data = city.find("Podatci")
+              if data is None:
+                  continue
+              stations.append({
+                  "name": name,
+                  "lat": number(city.findtext("Lat")),
+                  "lon": number(city.findtext("Lon")),
+                  "temperature": number(data.findtext("Temp")),
+                  "humidity": number(data.findtext("Vlaga")),
+                  "pressure": number(data.findtext("Tlak")),
+                  "windDirection": (data.findtext("VjetarSmjer") or "").strip(),
+                  "wind": number(data.findtext("VjetarBrzina")),
+                  "weather": (data.findtext("Vrijeme") or "").strip(),
+                  "symbol": (data.findtext("VrijemeZnak") or "").strip(),
+              })
+          day = (root.findtext("DatumTermin/Datum") or "").strip()
+          hour = (root.findtext("DatumTermin/Termin") or "").strip()
+          out = {
+              "source": "DHMZ (Državni hidrometeorološki zavod), vrijeme.hr: weather observations in Croatia",
+              "fetched": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+              "observed": f"{day} {hour}:00",
+              "stations": stations,
+          }
+          if not stations:
+              raise SystemExit("no Zagreb stations in the feed")
+          with open("out/weather.json", "w", encoding="utf-8") as f:
+              json.dump(out, f, ensure_ascii=False)
+          print(len(stations), "stations")
+          EOF
+
       - name: Publish to the live-data branch
         working-directory: out
         env:
@@ -54,6 +109,6 @@ jobs:
           git init -q -b live-data
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add closures.json
-          git commit -q -m "Road closures $(date -u +%Y-%m-%dT%H:%MZ)"
+          git add -A
+          git commit -q -m "Road closures and weather $(date -u +%Y-%m-%dT%H:%MZ)"
           git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" live-data
