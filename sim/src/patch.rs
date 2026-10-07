@@ -309,8 +309,11 @@ impl Engine {
         let edits = std::mem::take(&mut self.edits);
         // Applies the edits, starts rebuilding the landmarks and has vehicles re-plan.
         self.set_edits(&edits);
+        // Buses and trams are mended below instead: a new route would leave their stops
+        // pointing at the old one.
         for v in replan_now {
-            if self.vehs[v as usize].alive() {
+            let veh = &self.vehs[v as usize];
+            if veh.alive() && veh.transit.is_none() {
                 self.replan_vehicle(v, true);
             }
         }

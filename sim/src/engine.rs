@@ -3043,6 +3043,52 @@ impl Engine {
         out
     }
 
+    /// The queue a vehicle held up by a full road waits on, followed downstream as
+    /// `queue_root` follows it (diagnostics): each road's front vehicle, where it stands and
+    /// why it waits, until one waits for something else (or 12 roads on).
+    pub fn describe_queue_chain(&self, front: u32) -> String {
+        let d = &self.net.d;
+        let mut out = String::new();
+        let mut v = front;
+        let mut link = self.vehs[v as usize].next_link;
+        let mut idx = self.vehs[v as usize].route_idx;
+        for _ in 0..12 {
+            if link == NONE {
+                out += " | no link";
+                break;
+            }
+            let to = d.link_to[link as usize];
+            let edge = d.lane_edge[to as usize];
+            let junction = d.edge_to[edge as usize];
+            let Some(&f) = self.lane_vehs[to as usize].last() else {
+                out += &format!(
+                    " | lane {to} (edge {edge}, {:.1} m) empty, reserved {:.1}",
+                    d.lane_length[to as usize], self.lane_reserved[to as usize]
+                );
+                let veh = &self.vehs[v as usize];
+                idx += 1;
+                link = self.choose_link_or_detour(to, &veh.route, idx, veh.params().vclass);
+                continue;
+            };
+            let fv = &self.vehs[f as usize];
+            let why = self.diagnose(f);
+            out += &format!(
+                " | lane {to} (edge {edge}, {:.1} m, {} vehicles) front {f} at {:.1} speed {:.1} {why:?} at junction {junction}",
+                d.lane_length[to as usize],
+                self.lane_vehs[to as usize].len(),
+                fv.pos,
+                fv.speed
+            );
+            if fv.speed > 1.0 || why != Holdup::ExitFull {
+                break;
+            }
+            v = f;
+            link = fv.next_link;
+            idx = fv.route_idx;
+        }
+        out
+    }
+
     /// Human-readable state of the lane behind a vehicle's next junction (diagnostics).
     pub fn describe_exit(&self, v: u32) -> String {
         let d = &self.net.d;

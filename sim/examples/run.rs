@@ -335,6 +335,9 @@ fn main() {
                 for b in engine.describe_blockers(front) {
                     println!("    blocked by {b}");
                 }
+                if engine.diagnose(front) == zg_sim::engine::Holdup::ExitFull {
+                    println!("    queue:{}", engine.describe_queue_chain(front));
+                }
             }
         }
         if m % 5 == 0 || m == minutes {

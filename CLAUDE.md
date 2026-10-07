@@ -74,7 +74,7 @@ Environment variables for the native runs:
 - `DEBUG_EDGES=123,456` logs the vehicles removed from those edges, with what they see ahead.
 - `SEED=2` (the `day` and `run` examples) runs the same day with another seed, to see how much days vary.
 - `WATCH_JUNCTIONS=51800,51531` (the `run` example) prints those junctions' signal programs as the engine runs them, then every simulated minute the stopped front vehicle of each queue into them: why it waits, who it gives way to, and what holds up the vehicles inside the junction.
-- `NO_PHASE_SKIP=1` (the `day` example) runs actuated signals through every phase, as before M7d.
+- `NO_PHASE_SKIP=1` (the `day` and `run` examples) runs actuated signals through every phase, as before M7d.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite
