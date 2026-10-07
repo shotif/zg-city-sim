@@ -589,12 +589,25 @@ a.news-headline:hover {
   border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
-.zone-totals .build-item {
-  justify-content: flex-start;
+.zone-totals {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.zone-item {
+  display: flex;
+  align-items: center;
   gap: 6px;
 }
 
 .build-hint,
+.zones-hint,
+.zones-status,
 .build-note,
 .build-road-info,
 .build-missing,

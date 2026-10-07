@@ -53,7 +53,7 @@ export class ZonesPanel {
     close.setAttribute('aria-label', 'Close');
     close.addEventListener('click', () => callbacks.onClose());
 
-    el('p', 'build-hint', this.panel).textContent =
+    el('p', 'zones-hint', this.panel).textContent =
       'Choose a zone, then drag over the map to zone the lots along its streets. ' +
       'Esc stops painting, so the map can be moved again.';
     const grid = el('div', 'zone-grid', this.panel);
@@ -115,12 +115,12 @@ export class ZonesPanel {
 
     const zoned = el('section', 'build-edits', this.panel);
     el('h3', 'build-count', zoned).textContent = 'Zoned';
-    this.totals = el('ul', 'build-list zone-totals', zoned);
+    this.totals = el('ul', 'zone-totals', zoned);
     const actions = el('div', 'build-row', zoned);
     button('Undo stroke', actions, () => callbacks.onUndo(), 'Take back the last stroke');
     button('Clear zoning', actions, () => callbacks.onClear(), 'Remove all zoning');
     button('Share zoning', actions, () => void this.share(), 'Copy a link to this zoning');
-    this.status = el('p', 'build-status zones-status', zoned);
+    this.status = el('p', 'zones-status', zoned);
     this.status.setAttribute('role', 'status');
 
     window.addEventListener('keydown', (event) => {
@@ -155,7 +155,7 @@ export class ZonesPanel {
     const rows = ZONES.map((z, k) => ({ z, t: totals[k + 1] })).filter(({ t }) => t.lots > 0);
     this.totals.replaceChildren(
       ...rows.map(({ z, t }) => {
-        const item = el('li', 'build-item');
+        const item = el('li', 'zone-item');
         const swatch = el('i', 'zone-swatch', item);
         swatch.style.background = z.color;
         item.append(`${z.label}: ${fmt(t.lots, 0)} lots, ${fmt(t.area / 10_000, 1)} ha`);
@@ -163,7 +163,7 @@ export class ZonesPanel {
       }),
     );
     if (!rows.length) {
-      const item = el('li', 'build-item', this.totals);
+      const item = el('li', 'zone-item', this.totals);
       item.textContent = strokes ? 'No lots zoned.' : 'Nothing zoned yet.';
     }
   }
