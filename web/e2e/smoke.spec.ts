@@ -727,13 +727,22 @@ test('grows buildings on zoned lots as the day goes on', async ({ page }, testIn
       const n = lots.within(lots.x[i], lots.z[i], 80).length;
       if (n > best.n) best = { x: lots.x[i], z: lots.z[i], n };
     }
-    return best;
+    // Houses on lots of their own, 150-500 m away.
+    let houses = { x: 0, z: 0, n: 0 };
+    for (let i = 0; i < lots.count; i++) {
+      const d = Math.hypot(lots.x[i] - best.x, lots.z[i] - best.z);
+      if (d < 150 || d > 500) continue;
+      const n = lots.within(lots.x[i], lots.z[i], 60).length;
+      if (n > houses.n) houses = { x: lots.x[i], z: lots.z[i], n };
+    }
+    return { ...best, houses };
   });
   expect(spot.n).toBeGreaterThan(4);
-  await page.evaluate(({ x, z }) => {
+  expect(spot.houses.n).toBeGreaterThan(2);
+  await page.evaluate(({ x, z, houses }) => {
     const zoning = window.__ZG__!.zoning!;
     zoning.paint('shops', 60, [[x, z]]);
-    zoning.paint('houses', 60, [[x + 150, z]]);
+    zoning.paint('houses', 60, [[houses.x, houses.z]]);
   }, spot);
 
   const built = () =>
