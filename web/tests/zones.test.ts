@@ -163,6 +163,9 @@ describe('zoning', () => {
 
     const encoded = await encodeZoningForUrl(strokes);
     expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(await decodeZoningFromUrl(encoded)).toEqual(parseZoning(text));
+    expect(await decodeZoningFromUrl(encoded)).toEqual({
+      strokes: parseZoning(text),
+      buildings: [],
+    });
   });
 });

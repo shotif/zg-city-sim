@@ -944,6 +944,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
             };
             running.onFrame = () => {
               simChanged = true;
+              if (running.cur) zoning?.tick(running.cur.time);
             };
             running.onEdgeSpeeds = (latest) => {
               // Speeds measured on the network before roads were drawn or taken away.
@@ -1087,7 +1088,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
           5,
         ) ?? false;
       const trafficMapChanged = traffic?.update(view.viewHeight) ?? false;
-      const zonesChanged = zoning?.layer.update(view.target, view.viewHeight) ?? false;
+      const zonesChanged =
+        (zoning?.layer.update(view.target, view.viewHeight) ?? false) ||
+        (zoning?.grown.update(view.viewHeight) ?? false);
       if (
         !moving &&
         !dirty &&

@@ -113,7 +113,7 @@ const hash = (n: number) => {
   return (x >>> 0) / 4294967296;
 };
 
-class BuildingMeshBuilder {
+export class BuildingMeshBuilder {
   readonly positions: number[] = [];
   readonly normals: number[] = [];
   readonly colors: number[] = [];
@@ -265,7 +265,7 @@ class BuildingMeshBuilder {
 }
 
 /** Signed area of a ring in the x/z plane; positive means counter-clockwise seen from above. */
-function signedArea(points: THREE.Vector2[]): number {
+export function signedArea(points: THREE.Vector2[]): number {
   let a = 0;
   for (let i = 0; i < points.length; i++) {
     const p = points[i];

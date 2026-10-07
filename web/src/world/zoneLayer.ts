@@ -27,6 +27,8 @@ export class ZoneLayer {
   private readonly meshes = new Map<string, THREE.Group>();
   private readonly dirty = new Set<string>();
   private zones: Uint8Array;
+  /** Building on each lot (-1: none): built lots are not filled unless all are shown. */
+  private built?: Int32Array;
   private showAll = false;
   private readonly colors: THREE.Color[];
   private readonly material = new THREE.MeshBasicMaterial({
@@ -88,6 +90,11 @@ export class ZoneLayer {
     this.zones = zones;
     if (!changed) for (const key of this.meshes.keys()) this.dirty.add(key);
     else for (const i of changed) this.dirty.add(this.chunkOf[i]);
+  }
+
+  /** Which lots have buildings (grow/growth.ts `lotBuilding`). */
+  setBuilt(built: Int32Array): void {
+    this.built = built;
   }
 
   /** Show the lots not zoned too (while the Zones tool is open). */
@@ -163,7 +170,9 @@ export class ZoneLayer {
       });
     }
     const ids = this.chunkLots.get(key) ?? [];
-    const zoned = ids.filter((i) => this.zones[i] > 0);
+    const zoned = ids.filter(
+      (i) => this.zones[i] > 0 && (this.showAll || !this.built || this.built[i] < 0),
+    );
     const open = this.showAll ? ids.filter((i) => this.zones[i] === 0) : [];
     const group = new THREE.Group();
     group.name = `lots ${key}`;

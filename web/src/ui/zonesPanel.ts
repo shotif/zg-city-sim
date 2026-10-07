@@ -29,6 +29,7 @@ export class ZonesPanel {
   private readonly panel: HTMLElement;
   private readonly brushes = new Map<Brush, HTMLButtonElement>();
   private readonly totals: HTMLElement;
+  private readonly growth: HTMLElement;
   private readonly status: HTMLElement;
   private readonly legend: HTMLElement;
   private readonly planToggle: HTMLInputElement;
@@ -116,6 +117,8 @@ export class ZonesPanel {
     const zoned = el('section', 'build-edits', this.panel);
     el('h3', 'build-count', zoned).textContent = 'Zoned';
     this.totals = el('ul', 'zone-totals', zoned);
+    this.growth = el('p', 'zones-growth', zoned);
+    this.growth.setAttribute('aria-live', 'polite');
     const actions = el('div', 'build-row', zoned);
     button('Undo stroke', actions, () => callbacks.onUndo(), 'Take back the last stroke');
     button('Clear zoning', actions, () => callbacks.onClear(), 'Remove all zoning');
@@ -166,6 +169,21 @@ export class ZonesPanel {
       const item = el('li', 'zone-item', this.totals);
       item.textContent = strokes ? 'No lots zoned.' : 'Nothing zoned yet.';
     }
+  }
+
+  /** Buildings grown so far, and their residents and jobs (estimated from floor area). */
+  setGrowth(t: { built: number; building: number; residents: number; jobs: number }): void {
+    if (t.built + t.building === 0) {
+      this.growth.textContent = this.totals.childElementCount
+        ? 'Buildings grow on zoned lots as the simulated day goes on.'
+        : '';
+      return;
+    }
+    this.growth.textContent =
+      `Grown: ${fmt(t.built, 0)} building${t.built === 1 ? '' : 's'}` +
+      (t.building ? `, ${fmt(t.building, 0)} being built` : '') +
+      `; about ${fmt(Math.round(t.residents / 10) * 10, 0)} residents and ` +
+      `${fmt(Math.round(t.jobs / 10) * 10, 0)} jobs (estimated from floor area).`;
   }
 
   setStatus(text: string): void {

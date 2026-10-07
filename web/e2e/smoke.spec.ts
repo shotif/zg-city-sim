@@ -700,3 +700,74 @@ test('zones lots by painting them, and keeps and shares the zoning', async ({
 
   expect(errors).toEqual([]);
 });
+
+test('grows buildings on zoned lots as the day goes on', async ({ page }, testInfo) => {
+  test.setTimeout(420_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  const ready = () =>
+    page.waitForFunction(
+      () => window.__ZG__?.zoning !== undefined && window.__ZG__?.sim?.ready === true,
+      null,
+      { timeout: 150_000 },
+    );
+
+  await page.goto('./?speed=64');
+  await ready();
+  // Free lots in a row along a street in southern Novi Zagreb, zoned for shops (built in
+  // 20 simulated minutes) and houses.
+  const spot = await page.evaluate(() => {
+    const lots = window.__ZG__!.zoning!.lots;
+    let best = { x: 0, z: 0, n: 0 };
+    for (let i = 0; i < lots.count; i++) {
+      if (Math.hypot(lots.x[i] + 1500, lots.z[i] - 7800) > 2000) continue;
+      const n = lots.within(lots.x[i], lots.z[i], 80).length;
+      if (n > best.n) best = { x: lots.x[i], z: lots.z[i], n };
+    }
+    return best;
+  });
+  expect(spot.n).toBeGreaterThan(4);
+  await page.evaluate(({ x, z }) => {
+    const zoning = window.__ZG__!.zoning!;
+    zoning.paint('shops', 60, [[x, z]]);
+    zoning.paint('houses', 60, [[x + 150, z]]);
+  }, spot);
+
+  const built = () =>
+    page.evaluate(() => {
+      const zg = window.__ZG__!;
+      return zg.zoning!.growth.totals(zg.sim!.cur?.time ?? 0);
+    });
+  await expect
+    .poll(async () => (await built()).built, { timeout: 240_000, intervals: [5_000] })
+    .toBeGreaterThan(0);
+  const totals = await built();
+  expect(totals.jobs).toBeGreaterThan(0);
+
+  // In the 3D view, and listed in the Zones panel.
+  await page.keyboard.press('z');
+  await expect(page.locator('.zones-growth')).toContainText('Grown:');
+  await page.keyboard.press('z');
+  await page.evaluate(({ x, z }) => {
+    window.__ZG__?.setView('iso');
+    window.__ZG__?.lookAt(x, z, 250);
+  }, spot);
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: testInfo.outputPath('grown.png') });
+
+  // Kept across a reload: the buildings stand where they grew.
+  const saved = await page.evaluate(
+    () => window.__ZG__!.zoning!.growth.buildings.filter((b) => b !== undefined).length,
+  );
+  await page.reload();
+  await ready();
+  const restored = await page.evaluate(
+    () => window.__ZG__!.zoning!.growth.buildings.filter((b) => b !== undefined).length,
+  );
+  expect(restored).toBeGreaterThanOrEqual(saved);
+
+  expect(errors).toEqual([]);
+});

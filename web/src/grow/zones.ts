@@ -129,10 +129,23 @@ export function zoneTotals(lots: Lots, zones: Uint8Array): { lots: number; area:
 
 // ---- saving and sharing ----------------------------------------------------------------
 
+/** A grown building as saved (grow/growth.ts `SavedBuilding`): its first lot's centre, its
+ * type, its seed, and when it started and is finished (simulated s). */
+export type SavedBuilding = [number, number, string, number, number, number];
+
+/** Zoning and the buildings grown on it, as saved or shared. */
+export interface SavedCity {
+  strokes: Stroke[];
+  buildings: SavedBuilding[];
+}
+
 export const ZONING_VERSION = 1;
 const BRUSHES = new Set<string>([...ZONES.map((z) => z.id), 'plan', 'none']);
 
-export function serializeZoning(strokes: readonly Stroke[]): string {
+export function serializeZoning(
+  strokes: readonly Stroke[],
+  buildings: readonly SavedBuilding[] = [],
+): string {
   return JSON.stringify({
     version: ZONING_VERSION,
     strokes: strokes.map((s) => ({
@@ -140,17 +153,24 @@ export function serializeZoning(strokes: readonly Stroke[]): string {
       radius: Math.round(s.radius),
       points: s.points.map(([x, z]) => [Math.round(x), Math.round(z)]),
     })),
+    ...(buildings.length ? { buildings } : {}),
   });
 }
 
-/** Strokes from a saved zoning; throws if it is not one. Strokes that cannot be read are
+const isBuilding = (b: unknown): b is SavedBuilding =>
+  Array.isArray(b) &&
+  b.length === 6 &&
+  typeof b[2] === 'string' &&
+  [0, 1, 3, 4, 5].every((k) => Number.isFinite(b[k]));
+
+/** Zoning and buildings from a saved city; throws if it is not one. What cannot be read is
  * dropped. */
-export function parseZoning(text: string): Stroke[] {
-  const saved = JSON.parse(text) as { strokes?: unknown };
+export function parseCity(text: string): SavedCity {
+  const saved = JSON.parse(text) as { strokes?: unknown; buildings?: unknown };
   if (typeof saved !== 'object' || saved === null || !Array.isArray(saved.strokes)) {
     throw new Error('Not a zoning');
   }
-  return saved.strokes.filter((s): s is Stroke => {
+  const strokes = saved.strokes.filter((s): s is Stroke => {
     const t = s as Partial<Stroke>;
     return (
       typeof t === 'object' &&
@@ -163,9 +183,17 @@ export function parseZoning(text: string): Stroke[] {
       t.points.every((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
     );
   });
+  const buildings = Array.isArray(saved.buildings) ? saved.buildings.filter(isBuilding) : [];
+  return { strokes, buildings };
+}
+
+/** Strokes from a saved zoning; throws if it is not one. */
+export function parseZoning(text: string): Stroke[] {
+  return parseCity(text).strokes;
 }
 
 const STORAGE_KEY = 'zg-city-sim:zoning';
+const GROWTH_KEY = 'zg-city-sim:growth';
 
 export function loadSavedZoning(storage: Storage | undefined = globalThis.localStorage): Stroke[] {
   try {
@@ -188,8 +216,34 @@ export function saveZoning(
   }
 }
 
-export const encodeZoningForUrl = (strokes: readonly Stroke[]) =>
-  encodeTextForUrl(serializeZoning(strokes));
+/** Buildings grown, kept apart from the strokes: they change every simulated minute. */
+export function loadSavedGrowth(
+  storage: Storage | undefined = globalThis.localStorage,
+): SavedBuilding[] {
+  try {
+    const list = JSON.parse(storage?.getItem(GROWTH_KEY) ?? '[]') as unknown;
+    return Array.isArray(list) ? list.filter(isBuilding) : [];
+  } catch {
+    return [];
+  }
+}
 
-export const decodeZoningFromUrl = async (value: string) =>
-  parseZoning(await decodeTextFromUrl(value));
+export function saveGrowth(
+  buildings: readonly SavedBuilding[],
+  storage: Storage | undefined = globalThis.localStorage,
+): void {
+  try {
+    if (buildings.length === 0) storage?.removeItem(GROWTH_KEY);
+    else storage?.setItem(GROWTH_KEY, JSON.stringify(buildings));
+  } catch {
+    // As above.
+  }
+}
+
+export const encodeZoningForUrl = (
+  strokes: readonly Stroke[],
+  buildings: readonly SavedBuilding[] = [],
+) => encodeTextForUrl(serializeZoning(strokes, buildings));
+
+export const decodeZoningFromUrl = async (value: string): Promise<SavedCity> =>
+  parseCity(await decodeTextFromUrl(value));

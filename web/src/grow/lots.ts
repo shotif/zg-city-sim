@@ -46,6 +46,9 @@ export class Lots {
   readonly planRingPoints: Uint32Array;
   readonly planPoints: Float32Array;
   readonly planClass: Uint8Array;
+  /** The next lot along the street on the same side (-1: none), so neighbouring lots can
+   * join into larger plots. */
+  readonly next: Int32Array;
   private readonly cells = new Map<number, number[]>();
 
   constructor(arrays: Record<string, TypedArray>, index: ZoningIndex) {
@@ -65,6 +68,22 @@ export class Lots {
     this.planClasses = index.planClasses;
     this.noPlan = index.noPlan;
     this.count = this.x.length;
+    this.next = new Int32Array(this.count).fill(-1);
+    // Lots of a street side were laid one after another: a neighbour is a lot before or
+    // after it in the list, on the same street, facing the same way, one frontage along.
+    for (let i = 0; i < this.count; i++) {
+      for (const j of [i - 1, i + 1]) {
+        if (j < 0 || j >= this.count || this.edge[j] !== this.edge[i]) continue;
+        const ux = Math.cos(this.angle[i]);
+        const uz = Math.sin(this.angle[i]);
+        const dx = this.x[j] - this.x[i];
+        const dz = this.z[j] - this.z[i];
+        const along = dx * ux + dz * uz;
+        const across = Math.abs(dx * uz - dz * ux);
+        const gap = (this.frontage[i] + this.frontage[j]) / 2;
+        if (Math.abs(along - gap) < 1.5 && across < 1.5) this.next[i] = j;
+      }
+    }
     for (let i = 0; i < this.count; i++) {
       const key = cellKey(Math.floor(this.x[i] / CELL), Math.floor(this.z[i] / CELL));
       const list = this.cells.get(key);

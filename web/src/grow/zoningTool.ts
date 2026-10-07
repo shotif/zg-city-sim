@@ -1,20 +1,26 @@
 /**
- * The Zones tool (M5a), wired to the map: painting lots with a brush while the pointer is
- * dragged, the layer that draws them, and keeping and sharing the zoning.
+ * The Zones tool (M5a, M5b), wired to the map: painting lots with a brush while the pointer
+ * is dragged, buildings growing on them as simulated time passes, the layers that draw
+ * them, and keeping and sharing the zoning and what grew.
  */
 import type * as THREE from 'three/webgpu';
 
 import { ZonesPanel } from '../ui/zonesPanel';
+import { GrowthLayer } from '../world/growthLayer';
 import type { HeightFn } from '../world/roadGeometry';
 import { ZoneLayer } from '../world/zoneLayer';
+import { Growth, restoreBuildings, saveBuildings } from './growth';
 import type { Lots } from './lots';
 import {
   type Brush,
+  type SavedBuilding,
   type Stroke,
   applyStroke,
   decodeZoningFromUrl,
   encodeZoningForUrl,
+  loadSavedGrowth,
   loadSavedZoning,
+  saveGrowth,
   saveZoning,
   zoneTotals,
   zonesFrom,
@@ -41,7 +47,11 @@ export interface ZoningTool {
   lots: Lots;
   panel: ZonesPanel;
   layer: ZoneLayer;
+  growth: Growth;
+  grown: GrowthLayer;
   setVisible(on: boolean): void;
+  /** Simulated time passed (s): buildings start and are finished. */
+  tick(now: number): void;
   /** Zone codes of every lot. */
   readonly zones: Uint8Array;
   readonly strokes: readonly Stroke[];
@@ -58,15 +68,38 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
   let zones: Uint8Array = new Uint8Array(lots.count);
   const layer = new ZoneLayer(lots, deps.surface, deps.terrain);
   deps.scene.add(layer.object);
+  const growth = new Growth(lots);
+  const grown = new GrowthLayer(lots, deps.surface, growth.buildings);
+  deps.scene.add(grown.object);
+  layer.setBuilt(growth.lotBuilding);
+  /** Simulated time (s) last seen. */
+  let now = 0;
 
   const show = () => {
     panel.setTotals(zoneTotals(lots, zones), strokes.length);
+    panel.setGrowth(growth.totals(now));
     deps.invalidate();
   };
-  /** Keep and draw a new list of strokes. */
-  const use = (list: Stroke[]) => {
+  const keepGrowth = () => saveGrowth(saveBuildings(lots, growth));
+  /** Buildings on lots zoned for something else come down. */
+  const settle = () => {
+    const gone = growth.sync(zones);
+    for (const id of gone) grown.remove(id);
+    if (gone.length) {
+      layer.setZones(zones);
+      keepGrowth();
+    }
+  };
+  /** Keep and draw a new list of strokes (and, loading, the buildings grown on it). */
+  const use = (list: Stroke[], buildings?: readonly SavedBuilding[]) => {
     strokes = list;
     zones = zonesFrom(lots, strokes);
+    if (buildings) {
+      growth.clear();
+      restoreBuildings(lots, growth, zones, buildings);
+      grown.reset();
+      keepGrowth();
+    } else settle();
     layer.setZones(zones);
     saveZoning(strokes);
     show();
@@ -85,7 +118,7 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     onUndo: () => use(strokes.slice(0, -1)),
     onClear: () => use([]),
     shareLink: async () =>
-      `${location.origin}${location.pathname}${location.search}#zoning=${await encodeZoningForUrl(strokes)}`,
+      `${location.origin}${location.pathname}${location.search}#zoning=${await encodeZoningForUrl(strokes, saveBuildings(lots, growth))}`,
     onClose: () => deps.onClose(),
   });
 
@@ -135,6 +168,7 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     if (done.points.length) {
       strokes = [...strokes, done];
       saveZoning(strokes);
+      settle();
     }
     show();
   };
@@ -146,18 +180,17 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
   const linked = () => /[#&]zoning=([^&]+)/.exec(location.hash)?.[1];
   const loadFromLink = (encoded: string) =>
     decodeZoningFromUrl(encoded)
-      .then((list) => {
-        use(list);
+      .then((city) => {
+        use(city.strokes, city.buildings);
         deps.open();
-        panel.setStatus(
-          `Loaded ${list.length} stroke${list.length === 1 ? '' : 's'} from the link.`,
-        );
+        const n = city.strokes.length;
+        panel.setStatus(`Loaded ${n} stroke${n === 1 ? '' : 's'} from the link.`);
       })
       .catch(() => panel.setStatus('The link has no zoning that could be read.'))
       .finally(() => history.replaceState(null, '', location.pathname + location.search));
   const fromLink = linked();
   if (fromLink) void loadFromLink(fromLink);
-  else use(loadSavedZoning());
+  else use(loadSavedZoning(), loadSavedGrowth());
   window.addEventListener('hashchange', () => {
     const encoded = linked();
     if (encoded) void loadFromLink(encoded);
@@ -167,6 +200,26 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     lots,
     panel,
     layer,
+    growth,
+    grown,
+    tick: (t) => {
+      // Growth goes by the simulated minute.
+      const sameMinute = Math.floor(t / 60) === Math.floor(now / 60);
+      now = t;
+      if (sameMinute) return;
+      const started = growth.tick(zones, t);
+      for (const id of started) grown.add(id);
+      grown.setTime(t);
+      if (started.length) {
+        layer.setZones(
+          zones,
+          started.flatMap((id) => growth.buildings[id]?.lots ?? []),
+        );
+        keepGrowth();
+      }
+      panel.setGrowth(growth.totals(t));
+      deps.invalidate();
+    },
     setVisible: (on) => {
       panel.setVisible(on);
       layer.setShowAll(on);
@@ -189,6 +242,7 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
       const changed = applyStroke(lots, zones, s);
       layer.setZones(zones, changed);
       saveZoning(strokes);
+      settle();
       show();
     },
   };
