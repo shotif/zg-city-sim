@@ -16,6 +16,8 @@ pub mod vclass {
 /// Edge flag bits (pipeline/simnet.py).
 pub mod edge_flag {
     pub const BRIDGE: u8 = 1;
+    /// Part of a roundabout's ring.
+    pub const ROUNDABOUT: u8 = 8;
     pub const INTERNAL: u8 = 16;
     /// Tolled motorway (OSM `toll=yes`).
     pub const TOLL: u8 = 32;
@@ -455,6 +457,10 @@ impl Network {
 
     pub fn lane_links(&self, lane: u32) -> std::ops::Range<u32> {
         self.d.lane_link_offsets[lane as usize]..self.d.lane_link_offsets[lane as usize + 1]
+    }
+
+    pub fn is_roundabout(&self, edge: u32) -> bool {
+        self.d.edge_flags[edge as usize] & edge_flag::ROUNDABOUT != 0
     }
 
     pub fn successors(&self, edge: u32) -> &[Successor] {

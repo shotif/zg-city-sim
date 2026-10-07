@@ -9,6 +9,19 @@ use std::time::Instant;
 
 use zg_sim::demand::{Demand, Gateway};
 use zg_sim::engine::{DT, Engine, Holdup};
+
+/// Holdups in `Holdup` order.
+const HOLDUP_NAMES: [&str; Holdup::COUNT] = [
+    "in junction",
+    "queued",
+    "wrong lane",
+    "red light",
+    "exit full",
+    "yielding",
+    "stop sign",
+    "blocked ahead",
+    "other",
+];
 use zg_sim::network::{Network, NetworkData};
 use zg_sim::transit::{Transit, TransitData};
 
@@ -274,6 +287,7 @@ fn main() {
     engine.demand_scale = demand_scale(&format!("{dir}/../demand"));
     println!("demand scale: {}", engine.demand_scale);
     engine.set_time(start * 3600.0);
+    engine.track_delay = true;
 
     let steps_per_minute = (60.0 / DT) as u32;
     let mut total = 0.0;
@@ -412,6 +426,45 @@ fn main() {
     }
     for line in &s.teleport_log {
         println!("  removed: {line}");
+    }
+    // Where junctions lose time: vehicle-hours queued, other than at red lights, charged to
+    // the junction each queue waited on in the end.
+    let mut total = [0f64; Holdup::COUNT];
+    let mut lost: Vec<(f64, usize)> = Vec::new();
+    for (j, row) in engine.delay_root.iter().enumerate() {
+        for (k, v) in row.iter().enumerate() {
+            total[k] += *v as f64 / 3600.0;
+        }
+        let other: f32 = row.iter().sum::<f32>() - row[Holdup::Signal as usize];
+        lost.push((other as f64 / 3600.0, j));
+    }
+    lost.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+    println!(
+        "queued at junctions (vehicle-hours): {}",
+        HOLDUP_NAMES
+            .iter()
+            .zip(total)
+            .filter(|(_, v)| *v >= 0.05)
+            .map(|(n, v)| format!("{n} {v:.0}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    for &(hours, j) in lost.iter().take(12) {
+        let row = &engine.delay_root[j];
+        let (x, z) = (
+            engine.net.d.junction_pos[j * 2],
+            engine.net.d.junction_pos[j * 2 + 1],
+        );
+        let parts: Vec<String> = HOLDUP_NAMES
+            .iter()
+            .zip(row)
+            .filter(|(_, v)| **v >= 180.0)
+            .map(|(n, v)| format!("{n} {:.1}", v / 3600.0))
+            .collect();
+        println!(
+            "  junction {j} at ({x:.0}, {z:.0}): {hours:.1} h lost; {}",
+            parts.join(", ")
+        );
     }
     if engine.phase_seconds.iter().any(|&t| t > 0.0) {
         let names = [

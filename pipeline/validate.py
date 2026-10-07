@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -233,6 +234,93 @@ def stuck_places(net: dict[str, np.ndarray], index: dict, day: dict) -> list[tup
     return sorted(by_place.items(), key=lambda item: -item[1])
 
 
+#: Holdups the day runner charges queues to, in its order, and how the report names them.
+DELAY_NAMES = {
+    "inJunction": "in the junction",
+    "queued": "queued",
+    "wrongLane": "wrong lane",
+    "signal": "red light",
+    "exitFull": "exit full",
+    "yielding": "giving way",
+    "stopSign": "stop sign",
+    "blockedAhead": "blocked just past the line",
+    "other": "other",
+}
+
+
+def read_delay(run_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    """Vehicle-seconds queued at each junction over the day by holdup (junctions × kinds):
+    where the queues stood, and charged to the junction each queue waited on in the end."""
+    path = run_dir / "junction_delay.bin"
+    if not path.exists():
+        return None
+    raw = path.read_bytes()
+    junctions, kinds = struct.unpack_from("<II", raw)
+    tables = np.frombuffer(raw, "<f4", 2 * junctions * kinds, 8).reshape(2, junctions, kinds)
+    return tables[0], tables[1]
+
+
+def junction_name(net: dict[str, np.ndarray], index: dict, junction: int) -> str:
+    """The roads meeting at a junction, by name (else number, else kind), at most three."""
+    names, refs, types = index["names"], index["refs"], index.get("types", [])
+    roads: list[str] = []
+    kinds: list[str] = []
+    for link in np.flatnonzero(net["linkJunction"] == junction):
+        for lane in (net["linkFrom"][link], net["linkTo"][link]):
+            e = int(net["laneEdge"][lane])
+            name_i, ref_i = int(net["edgeName"][e]), int(net["edgeRef"][e])
+            name = names[name_i] if name_i < len(names) else ""
+            name = name or (refs[ref_i] if ref_i < len(refs) else "")
+            if name and name not in roads:
+                roads.append(name)
+            type_i = int(net["edgeType"][e])
+            kind = types[type_i].split("|")[0] if type_i < len(types) else ""
+            label = UNNAMED.get(kind, "unnamed streets")
+            if not name and label not in kinds:
+                kinds.append(label)
+    return " / ".join(sorted(roads)[:3]) or " / ".join(kinds[:2]) or "unnamed streets"
+
+
+def junction_control(net: dict[str, np.ndarray], index: dict, junction: int) -> str:
+    """Signals, roundabout, or how the junction gives way."""
+    links = np.flatnonzero(net["linkJunction"] == junction)
+    if len(links) and (net["linkTls"][links] != index["none"]).any():
+        return "signals"
+    edges = net["laneEdge"][net["linkFrom"][links]]
+    if (net["edgeFlags"][edges] & index["flags"]["roundabout"]).any():
+        return "roundabout"
+    kinds = index.get("junctionTypes", [])
+    kind = int(net["junctionType"][junction])
+    return {"right_before_left": "right of way from the right"}.get(
+        kinds[kind] if kind < len(kinds) else "", "priority"
+    )
+
+
+def lost_time(
+    net: dict[str, np.ndarray], index: dict, delay: np.ndarray, kinds: list[str], top: int = 20
+) -> list[tuple[str, str, float, dict[str, float]]]:
+    """The junctions that hold up most traffic other than at red lights (`delay` charged to
+    where queues start): place, control, vehicle-hours and how, largest first."""
+    signal = kinds.index("signal")
+    lost = delay.sum(axis=1) - delay[:, signal]
+    rows = []
+    for j in np.argsort(-lost)[:top]:
+        how = {
+            kinds[k]: float(delay[j, k]) / 3600
+            for k in range(len(kinds))
+            if k != signal and delay[j, k] >= 1800
+        }
+        rows.append(
+            (
+                junction_name(net, index, int(j)),
+                junction_control(net, index, int(j)),
+                float(lost[j]) / 3600,
+                how,
+            )
+        )
+    return rows
+
+
 def road_group(station: Station) -> str:
     if station.road.startswith("A"):
         return "motorways"
@@ -255,6 +343,7 @@ def report(
     day: dict,
     hotspots: tuple[list[dict], dict[str, float]] | None = None,
     stuck: list[tuple[str, int]] | None = None,
+    lost: list[tuple[str, str, float, dict[str, float]]] | None = None,
     inputs: set[int] | None = None,
 ) -> str:
     """docs/VALIDATION.md. `inputs`: stations whose counts set traffic across the map's
@@ -512,6 +601,59 @@ def report(
             "|---|---:|",
             *(f"| {road} | {fmt(n)} |" for road, n in stuck[:10]),
         ]
+    if lost and day.get("delayHours"):
+        kinds = day["delayKinds"]
+        by_kind = np.asarray(day["delayHours"], float).sum(axis=0)
+        total = by_kind.sum()
+        signal = kinds.index("signal")
+        shares = ", ".join(
+            f"{DELAY_NAMES.get(kinds[k], kinds[k])} {by_kind[k] / total:.0%}"
+            for k in np.argsort(-by_kind)
+            if by_kind[k] / total >= 0.005
+        )
+        hourly = np.asarray(day["delayHours"], float)
+        lost_by_hour = hourly.sum(axis=1) - hourly[:, signal]
+        start = int(day.get("startHour", 3))
+        peak = int(np.argmax(lost_by_hour))
+        lines += [
+            "",
+            "## Where junctions lose time",
+            "",
+            "Every 5 s the run looks at the front vehicle of each queue within 15 m of its "
+            "stop line, and charges every stopped vehicle in that queue to the junction "
+            "ahead, by why the front vehicle waits. Waiting at a red light is expected; "
+            "the rest is time the junction loses with a queue in front of it: the road "
+            "beyond full, giving way to other traffic, a vehicle just past the line in the "
+            "way, or the front vehicle in a lane that does not go where it is going. A queue "
+            "waiting for room on a full road beyond is charged, in the table below, to where "
+            "that road's own queue waits, following full roads downstream: the junction "
+            "that holds the traffic up.",
+            "",
+            f"Over the day vehicles queued at junctions for {fmt(total)} vehicle-hours: "
+            f"{shares}. Time lost other than at red lights peaks at "
+            f"{(start + peak) % 24:02d}:00 with {fmt(lost_by_hour[peak])} vehicle-hours "
+            "in the hour.",
+            "",
+            "The junctions holding up most traffic other than at red lights, with the "
+            'queues they back up (vehicle-hours over the day; "Slow road": the road '
+            "beyond is full of slow traffic, not of a queue at the next junction):",
+            "",
+            "| Junction | Control | Held up | Exit full | Giving way | Blocked past the line "
+            "| Wrong lane | Slow road and other |",
+            "|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+        for place, control, hours, how in lost:
+            other = sum(
+                v
+                for k, v in how.items()
+                if k not in ("exitFull", "yielding", "blockedAhead", "wrongLane")
+            )
+            cells = [how.get(k, 0.0) for k in ("exitFull", "yielding", "blockedAhead", "wrongLane")]
+            lines.append(
+                f"| {place} | {control} | {hours:.0f} | "
+                + " | ".join(f"{v:.0f}" if v >= 0.5 else "" for v in [*cells, other])
+                + " |"
+            )
     if hotspots:
         hot_rows, baseline = hotspots
         congested = [
@@ -600,7 +742,11 @@ def main(argv: list[str] | None = None) -> None:
     speeds = read_speeds(args.run_dir)
     hotspots = hotspot_rows(net, index, speeds) if speeds is not None else None
     stuck = stuck_places(net, index, day)
-    args.out.write_text(report(placements, unplaced, day, hotspots, stuck, inputs))
+    delay = read_delay(args.run_dir)
+    lost = lost_time(net, index, delay[1], day["delayKinds"]) if delay is not None else None
+    args.out.write_text(
+        report(placements, unplaced, day, hotspots, stuck, lost=lost, inputs=inputs)
+    )
     scale = float(day.get("demandScale", 1.0))
     for p in placements:
         s = p.station

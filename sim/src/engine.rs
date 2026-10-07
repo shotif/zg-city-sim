@@ -337,6 +337,7 @@ enum LaneChange {
 
 /// Why a vehicle is not moving (for diagnostics and statistics).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum Holdup {
     /// Inside a junction.
     InJunction,
@@ -356,6 +357,18 @@ pub enum Holdup {
     BlockedAhead,
     Other,
 }
+
+impl Holdup {
+    /// Kinds of holdup, for tables indexed by `holdup as usize`.
+    pub const COUNT: usize = 9;
+}
+const _: () = assert!(Holdup::Other as usize + 1 == Holdup::COUNT);
+
+/// Junction delay is sampled every this many steps (`measure_delay`).
+const DELAY_EVERY: u32 = 10;
+/// A queue's front vehicle counts as waiting at the junction within this distance (m) of
+/// its stop line.
+const DELAY_REACH: f32 = 15.0;
 
 pub struct Engine {
     pub net: Network,
@@ -397,6 +410,13 @@ pub struct Engine {
     replan_per_step: usize,
     /// Landmark tables being rebuilt after an edit made roads faster.
     landmark_job: Option<LandmarkBuild>,
+    /// Vehicle-seconds queued at each junction, by why the queue's front vehicle waits
+    /// (`Holdup as usize`); measured only while `track_delay` is set (M7a).
+    pub delay: Vec<[f32; Holdup::COUNT]>,
+    /// The same delay charged to where it starts: a queue held up by a full exit is charged
+    /// to the junction downstream whose queue fills that exit, and so on (`queue_root`).
+    pub delay_root: Vec<[f32; Holdup::COUNT]>,
+    pub track_delay: bool,
     router: Router,
     pending: BinaryHeap<Pending>,
     waiting: VecDeque<Waiting>,
@@ -811,6 +831,9 @@ impl Engine {
             replan: Vec::new(),
             replan_per_step: 0,
             landmark_job: None,
+            delay: Vec::new(),
+            delay_root: Vec::new(),
+            track_delay: false,
             travel_time: free_time.clone(),
             free_time,
             edge_speed_sum: vec![0.0; n_edges],
@@ -928,6 +951,9 @@ impl Engine {
         self.build_landmarks();
         lap(self, 4);
         self.collect_stats();
+        if self.track_delay && self.step_no.is_multiple_of(DELAY_EVERY) {
+            self.measure_delay();
+        }
         lap(self, 5);
         self.time += DT as f64;
     }
@@ -1296,9 +1322,13 @@ impl Engine {
         if !full {
             return true;
         }
-        if veh.wait < BLOCK_BOX_WAIT
+        // Into a roundabout only with room at the exit taken off it, however long the wait:
+        // a driver who stops on the ring for a full exit blocks everyone behind.
+        let entering = self.enters_roundabout(link);
+        if (entering || veh.wait < BLOCK_BOX_WAIT)
             && dist < speed * speed / (2.0 * p.decel) + p.length + 5.0
-            && !self.exit_has_room(link, veh)
+            && (!self.exit_has_room(link, veh)
+                || entering && !self.roundabout_exit_has_room(link, veh))
         {
             return false;
         }
@@ -1327,6 +1357,43 @@ impl Engine {
             b's' | b'w' => stop_done == link,
             _ => true,
         }
+    }
+
+    /// Whether `link` leads from a road onto a roundabout's ring.
+    fn enters_roundabout(&self, link: u32) -> bool {
+        let d = &self.net.d;
+        let edge = |lane: u32| d.lane_edge[lane as usize];
+        !self.net.is_roundabout(edge(d.link_from[link as usize]))
+            && self.net.is_roundabout(edge(d.link_to[link as usize]))
+    }
+
+    /// Room at the start of the road a vehicle entering a roundabout by `link` will leave
+    /// it by (along its route round the ring).
+    fn roundabout_exit_has_room(&self, link: u32, veh: &Vehicle) -> bool {
+        let d = &self.net.d;
+        let p = veh.params();
+        let need = p.length + p.min_gap;
+        let mut lane = d.link_to[link as usize];
+        for idx in (veh.route_idx + 1..).take(16) {
+            let l = lane as usize;
+            if !self.net.is_roundabout(d.lane_edge[l]) {
+                let room = need.min(d.lane_length[l]);
+                return match self.lane_vehs[l].first() {
+                    Some(&u) => {
+                        let uv = &self.vehs[u as usize];
+                        uv.speed > 3.0
+                            || uv.pos - uv.params().length - self.lane_reserved[l] >= room
+                    }
+                    None => d.lane_length[l] - self.lane_reserved[l] >= room,
+                };
+            }
+            let next = self.choose_link_or_detour(lane, &veh.route, idx, p.vclass);
+            if next == NONE {
+                return true;
+            }
+            lane = d.link_to[next as usize];
+        }
+        true
     }
 
     /// Room for a vehicle behind the junction, counting vehicles still inside it. When the
@@ -2604,7 +2671,9 @@ impl Engine {
         if matches!(state, b's' | b'w') && veh.stop_done != link {
             return Holdup::StopSign;
         }
-        if !self.exit_has_room(link, veh) {
+        if !self.exit_has_room(link, veh)
+            || self.enters_roundabout(link) && !self.roundabout_exit_has_room(link, veh)
+        {
             return Holdup::ExitFull;
         }
         let via = d.link_via[link as usize];
@@ -2627,6 +2696,94 @@ impl Engine {
             return Holdup::Yielding;
         }
         Holdup::Other
+    }
+
+    /// Charge the vehicles standing in each queue to the junction ahead, by why the queue's
+    /// front vehicle, at the stop line, is waiting (M7a: where junctions lose time).
+    fn measure_delay(&mut self) {
+        let d = &self.net.d;
+        let junctions = d.junction_link_count.len();
+        if self.delay.len() != junctions {
+            self.delay = vec![[0.0; Holdup::COUNT]; junctions];
+            self.delay_root = vec![[0.0; Holdup::COUNT]; junctions];
+        }
+        let dt = DELAY_EVERY as f32 * DT;
+        for i in 0..self.active_lanes.len() {
+            let lane = self.active_lanes[i] as usize;
+            if self.net.lane_internal[lane] {
+                continue;
+            }
+            let list = &self.lane_vehs[lane];
+            let Some(&front) = list.last() else {
+                continue;
+            };
+            let fv = &self.vehs[front as usize];
+            if fv.speed > 1.0 || d.lane_length[lane] - fv.pos > DELAY_REACH {
+                continue;
+            }
+            let stopped = list
+                .iter()
+                .filter(|&&u| self.vehs[u as usize].speed < 1.0)
+                .count();
+            let junction = d.edge_to[d.lane_edge[lane] as usize];
+            let why = self.diagnose(front);
+            let (root, root_why) = if why == Holdup::ExitFull {
+                self.queue_root(lane as u32, front)
+            } else {
+                (junction, why)
+            };
+            let charge = stopped as f32 * dt;
+            if let Some(row) = self.delay.get_mut(junction as usize) {
+                row[why as usize] += charge;
+            }
+            if let Some(row) = self.delay_root.get_mut(root as usize) {
+                row[root_why as usize] += charge;
+            }
+        }
+    }
+
+    /// Where a queue whose front waits for room behind the junction is held up in the end:
+    /// the junction whose queue fills the exit, following full exits downstream (at most
+    /// 12 junctions), and why that queue's front waits. A short exit that is empty counts
+    /// as full when the way on beyond it is (`exit_has_room`), so the walk goes on along the
+    /// front vehicle's route; an exit taken up by vehicles still inside the junction counts
+    /// as `InJunction`, and one full of traffic moving slowly, or queued with its front away
+    /// from a junction, as `Other` at the junction it leads to.
+    fn queue_root(&self, lane: u32, front: u32) -> (u32, Holdup) {
+        let d = &self.net.d;
+        let junction_of = |lane: u32| d.edge_to[d.lane_edge[lane as usize] as usize];
+        let (mut lane, mut v) = (lane, front);
+        let mut link = self.vehs[v as usize].next_link;
+        let mut idx = self.vehs[v as usize].route_idx;
+        for _ in 0..12 {
+            if link == NONE {
+                break;
+            }
+            let to = d.link_to[link as usize];
+            let Some(&f) = self.lane_vehs[to as usize].last() else {
+                if self.lane_reserved[to as usize] > 0.0 {
+                    return (junction_of(lane), Holdup::InJunction);
+                }
+                // An empty lane: on along the same vehicle's route.
+                let veh = &self.vehs[v as usize];
+                idx += 1;
+                link = self.choose_link_or_detour(to, &veh.route, idx, veh.params().vclass);
+                lane = to;
+                continue;
+            };
+            let fv = &self.vehs[f as usize];
+            if fv.speed > 1.0 || d.lane_length[to as usize] - fv.pos > DELAY_REACH {
+                return (junction_of(to), Holdup::Other);
+            }
+            let why = self.diagnose(f);
+            if why != Holdup::ExitFull {
+                return (junction_of(to), why);
+            }
+            (lane, v) = (to, f);
+            link = fv.next_link;
+            idx = fv.route_idx;
+        }
+        (junction_of(lane), Holdup::ExitFull)
     }
 
     /// Human-readable state of the lane behind a vehicle's next junction (diagnostics).

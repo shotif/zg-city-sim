@@ -7,18 +7,37 @@
 //! Writes `<out_dir>/edge_counts.bin` (u32 edge count, then for each hour of the day from 0
 //! to 23 the vehicles that drove onto each edge, u32 little-endian),
 //! `<out_dir>/edge_speeds.bin` (u32 edge count, then for each hour the mean speed on each
-//! edge as a share of its limit, 0-254, or 255 without traffic) and `<out_dir>/day.json`
-//! (traffic statistics per hour).
+//! edge as a share of its limit, 0-254, or 255 without traffic), `<out_dir>/junction_delay.bin`
+//! (u32 junction count, u32 kinds of holdup, then for each junction the vehicle-seconds queued
+//! there over the day by why the queue's front vehicle waited, f32, kinds as `delayKinds` in
+//! day.json; then the same charged to the junction downstream each queue waited on in the
+//! end) and `<out_dir>/day.json` (traffic statistics per hour, with the vehicle-hours
+//! queued at junctions by holdup).
+//!
+//! `SEED=2` runs the same day with another seed.
 
 use std::time::Instant;
 
-use zg_sim::engine::{DT, Engine};
+use zg_sim::engine::{DT, Engine, Holdup};
 use zg_sim::network::Network;
 use zg_sim::transit::Transit;
 
 #[path = "run.rs"]
 #[allow(dead_code)]
 mod run;
+
+/// Names of the holdups in `Holdup` order, for day.json.
+const HOLDUPS: [&str; Holdup::COUNT] = [
+    "inJunction",
+    "queued",
+    "wrongLane",
+    "signal",
+    "exitFull",
+    "yielding",
+    "stopSign",
+    "blockedAhead",
+    "other",
+];
 
 /// The simulated day runs from 3:00 to 3:00, starting on empty roads at the quietest hour.
 const START_HOUR: usize = 3;
@@ -47,6 +66,18 @@ fn main() {
     engine.demand_scale = run::demand_scale(&format!("{root}/demand"));
     println!("demand scale: {}", engine.demand_scale);
     engine.set_time((START_HOUR * 3600) as f64);
+    // Where junctions lose time (M7a).
+    engine.track_delay = true;
+    let delay_total = |e: &Engine| -> [f64; Holdup::COUNT] {
+        let mut sum = [0f64; Holdup::COUNT];
+        for row in &e.delay {
+            for (k, v) in row.iter().enumerate() {
+                sum[k] += *v as f64;
+            }
+        }
+        sum
+    };
+    let mut delay_hours = Vec::new();
 
     let n = engine.net.edge_count();
     let mut by_hour = vec![Vec::new(); 24];
@@ -59,6 +90,7 @@ fn main() {
     for k in 0..24 {
         let hour = (START_HOUR + k) % 24;
         let entered = engine.edge_entered.clone();
+        let delay0 = delay_total(&engine);
         let s0 = engine.stats.clone();
         let (mut running, mut outside, mut speed, mut stopped, mut samples) = (0, 0, 0.0, 0, 0);
         speed_sum.fill(0);
@@ -94,6 +126,13 @@ fn main() {
             .zip(&speed_n)
             .map(|(&sum, &k)| if k > 0 { (sum / k as u32) as u8 } else { 255 })
             .collect::<Vec<u8>>();
+        // Vehicle-hours queued at junctions this hour, by why each queue waited.
+        let delay: Vec<String> = delay_total(&engine)
+            .iter()
+            .zip(&delay0)
+            .map(|(a, b)| format!("{:.1}", (a - b) / 3600.0))
+            .collect();
+        delay_hours.push(format!("[{}]", delay.join(", ")));
         let s = &engine.stats;
         let trips = s.trip_count - s0.trip_count;
         let line = format!(
@@ -130,6 +169,20 @@ fn main() {
         bytes.extend(speeds);
     }
     std::fs::write(format!("{out}/edge_speeds.bin"), bytes).expect("write speeds");
+    // Vehicle-seconds queued at each junction over the day, by holdup (f32 each).
+    let junctions = engine.net.d.junction_link_count.len();
+    let mut bytes = Vec::with_capacity(4 + junctions * Holdup::COUNT * 4);
+    bytes.extend((junctions as u32).to_le_bytes());
+    bytes.extend((Holdup::COUNT as u32).to_le_bytes());
+    for table in [&engine.delay, &engine.delay_root] {
+        for j in 0..junctions {
+            let row = table.get(j).copied().unwrap_or([0.0; Holdup::COUNT]);
+            for v in row {
+                bytes.extend(v.to_le_bytes());
+            }
+        }
+    }
+    std::fs::write(format!("{out}/junction_delay.bin"), bytes).expect("write delay");
     let s = &engine.stats;
     // The edges vehicles were most often removed from, as [edge, vehicles].
     let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
@@ -142,7 +195,7 @@ fn main() {
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"removedBecause\": {:?}, \
-         \"removedAt\": [{}], \"hours\": [\n  {}\n]}}\n",
+         \"removedAt\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
         s.departed,
@@ -152,6 +205,8 @@ fn main() {
         s.insert_failed,
         s.teleport_reasons,
         removed_at.join(", "),
+        HOLDUPS,
+        delay_hours.join(", "),
         hours.join(",\n  "),
     );
     std::fs::write(format!("{out}/day.json"), summary).expect("write summary");
