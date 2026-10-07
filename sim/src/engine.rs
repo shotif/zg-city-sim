@@ -2793,6 +2793,57 @@ impl Engine {
         (junction_of(lane), Holdup::ExitFull)
     }
 
+    /// Who a vehicle waiting at its next junction has to look out for (diagnostics): the
+    /// vehicles inside or approaching the links it gives way to and those crossing it, with
+    /// their type, the link's state, and when they arrive and leave (s).
+    pub fn describe_conflicts(&self, v: u32) -> String {
+        let net = &self.net;
+        let d = &net.d;
+        let link = self.vehs[v as usize].next_link;
+        if link == NONE {
+            return String::from("no link");
+        }
+        let j = d.link_junction[link as usize];
+        let r = d.link_request[link as usize];
+        if j == NONE || r == u16::MAX {
+            return String::from("no right of way here");
+        }
+        let mut out = Vec::new();
+        let mut users = [LinkUser::default(); 8];
+        for (kind, list) in [
+            (
+                "gives way to",
+                net.response(j, r as u32).collect::<Vec<_>>(),
+            ),
+            ("crosses", net.foes(j, r as u32).collect::<Vec<_>>()),
+        ] {
+            for f in list {
+                let fl = net.request_link(j, f);
+                if fl == NONE || fl == link {
+                    continue;
+                }
+                let n = self.link_users(fl, &mut users, true);
+                for u in &users[..n] {
+                    let uv = &self.vehs[u.veh as usize];
+                    out.push(format!(
+                        "{kind} link {fl} '{}' veh {} type {} arrive {:.1} leave {:.1} speed {:.1}",
+                        net.link_state_char(fl, &self.tls_phase) as char,
+                        u.veh,
+                        uv.vtype,
+                        u.arrive,
+                        u.leave,
+                        u.speed
+                    ));
+                }
+            }
+        }
+        if out.is_empty() {
+            String::from("nobody")
+        } else {
+            out.join("; ")
+        }
+    }
+
     /// Human-readable state of the lane behind a vehicle's next junction (diagnostics).
     pub fn describe_exit(&self, v: u32) -> String {
         let d = &self.net.d;

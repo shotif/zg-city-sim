@@ -291,6 +291,11 @@ fn main() {
     engine.set_time(start * 3600.0);
     engine.track_delay = true;
 
+    // WATCH_JUNCTIONS=j1,j2: every simulated minute, the stopped front vehicle of each queue
+    // into those junctions, why it waits and who it looks out for.
+    let watch: Vec<u32> = std::env::var("WATCH_JUNCTIONS")
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
+        .unwrap_or_default();
     let steps_per_minute = (60.0 / DT) as u32;
     let mut total = 0.0;
     for m in 1..=minutes {
@@ -299,6 +304,28 @@ fn main() {
             engine.step();
         }
         total += t.elapsed().as_secs_f64();
+        for &j in &watch {
+            let d = &engine.net.d;
+            for lane in 0..d.lane_edge.len() as u32 {
+                let edge = d.lane_edge[lane as usize] as usize;
+                if d.edge_to[edge] != j || engine.net.lane_internal[lane as usize] {
+                    continue;
+                }
+                let Some(&front) = engine.vehicles_on(lane).last() else {
+                    continue;
+                };
+                let fv = &engine.vehs[front as usize];
+                if fv.speed > 1.0 || d.lane_length[lane as usize] - fv.pos > 15.0 {
+                    continue;
+                }
+                println!(
+                    "  watch {j}: {} queued {}; {}",
+                    engine.describe(front),
+                    engine.vehicles_on(lane).len(),
+                    engine.describe_conflicts(front)
+                );
+            }
+        }
         if m % 5 == 0 || m == minutes {
             let s = &engine.stats;
             let h = engine.time / 3600.0;
