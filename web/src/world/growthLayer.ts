@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 
-import { ARCHETYPES, type Grown, footprint, heights, random } from '../grow/growth';
+import { ARCHETYPES, type Grown, finished, footprint, heights, random } from '../grow/growth';
 import type { Lots } from '../grow/lots';
 import { BuildingMeshBuilder, signedArea } from './buildingLayer';
 import type { HeightFn } from './roadGeometry';
@@ -53,7 +53,7 @@ export class GrowthLayer {
     const set = this.chunkBuildings.get(key) ?? new Set<number>();
     set.add(id);
     this.chunkBuildings.set(key, set);
-    if (b.done > this.now) this.underway.add(id);
+    if (!finished(b, this.now)) this.underway.add(id);
     this.dirty.add(key);
   }
 
@@ -82,7 +82,7 @@ export class GrowthLayer {
     this.now = now;
     for (const id of this.underway) {
       const b = this.buildings[id];
-      if (!b || b.done <= now) {
+      if (!b || finished(b, now)) {
         this.underway.delete(id);
         const key = this.chunkOf.get(id);
         if (key) this.dirty.add(key);
@@ -140,7 +140,7 @@ export class GrowthLayer {
         builder.wall(p.x, p.y, q.x, q.y, y0, y1, color);
       }
     };
-    if (b.done > this.now) {
+    if (!finished(b, this.now)) {
       const top = ground + eaves * SITE_SHARE;
       ring(base, top, SITE);
       builder.flatRoof(outline, [], top, SITE);

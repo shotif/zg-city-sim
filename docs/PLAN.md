@@ -179,10 +179,25 @@ Known gaps:
     - In the app, lots are drawn in 500 m chunks near the view: zoned lots filled in their zone's colour, the others as faint outlines while the tool is open. The plan is a 2,048-pixel map (about 15 m a pixel) draped over the terrain.
     - Painting stops the map from being dragged; Esc stops painting. The zoning is saved as brush strokes rounded to 1 m, in the browser and as a `#zoning=` link.
     - The lot data adds 4 MB (gzip) and about 2 minutes to the data build.
-- **M5b, buildings that grow.**
+- **M5b, buildings that grow** (done 2026-10-07).
   - Zoned lots grow buildings over simulated time, faster where demand is higher (M5d). Neighbouring lots of the same zone join for larger buildings.
   - Zagreb's types: family houses of two or three storeys with tiled pitched roofs; urban villas and five-storey blocks; slabs and towers of 10-19 storeys as in Novi Zagreb; perimeter blocks with shops at street level near the centre; shops and retail parks; office blocks; halls and warehouses. Footprints, setbacks and heights are taken from today's buildings of the same kind in ZG3D.
   - They are drawn in a layer of their own and saved with the zoning.
+  - As built (`web/src/grow/growth.ts`, `web/src/world/growthLayer.ts`):
+    - Fifteen building types across the seven zones:
+      - houses: family houses of two or three storeys under tiled gabled roofs;
+      - low-rise flats: urban villas of three or four storeys, and blocks of four to six;
+      - high-rise flats: point towers of 8-11 storeys, towers of 12-19 and slabs of 9-13;
+      - flats over shops: corner and perimeter blocks of four to six storeys built up to the street, shopfronts on the ground floor;
+      - shops: single-storey shops behind a forecourt, and retail boxes over three lots;
+      - offices: small offices and office blocks of 5-12 storeys;
+      - industry: workshops, halls and warehouses over up to four lots.
+    - Each building's sizes come from a seed within ranges set by hand for the type.
+    - Each simulated minute, 2 % of the empty zoned lots start building (at least one), those amid other buildings first. Building takes 20-150 simulated minutes; meanwhile the site shows as a concrete shell.
+    - A building's lots are taken from the lot it starts on along the street, as many as its type needs. The type is picked among those whose plot fits, by weight.
+    - Residents and jobs come from floor area (80 % of the gross is usable): 30 m² of home per resident, and per job 20 m² in offices, 35 m² in shops and 80-120 m² in industry. These are estimates, from the 2021 census's dwelling space per person and typical employment densities.
+    - A lot zoned for something else loses its building. Buildings are saved in the browser and in the zoning's share link; a visit starts the simulated day again, so they come back finished.
+    - The growth rate is fixed until demand drives it (M5d).
 - **M5c, growth makes trips.**
   - Each new building adds residents or jobs from its floor area, at today's densities by kind, on the street its lot faces.
   - The engine takes new home and work weights and a new daily trip total while it runs, so new residents' trips and new jobs' commuters, including those from beyond the map, join the traffic.

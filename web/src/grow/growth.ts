@@ -201,6 +201,12 @@ export function heights(b: Grown): { eaves: number; ridge: number } {
   return { eaves, ridge: eaves + a.ridge };
 }
 
+/** Whether a building is finished at simulated time `now` (s): its time has come, or the
+ * clock is behind its start (a new day, or a visit started again). */
+export function finished(b: Grown, now: number): boolean {
+  return now >= b.done || now < b.started;
+}
+
 /** Residents and jobs a finished building holds. */
 export function occupants(b: Grown): { residents: number; jobs: number } {
   const a = ARCHETYPES[b.archetype];
@@ -337,7 +343,7 @@ export class Growth {
     let [built, building, residents, jobs] = [0, 0, 0, 0];
     for (const b of this.buildings) {
       if (!b) continue;
-      if (b.done > now) {
+      if (!finished(b, now)) {
         building++;
         continue;
       }

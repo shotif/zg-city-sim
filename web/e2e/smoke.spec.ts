@@ -753,9 +753,14 @@ test('grows buildings on zoned lots as the day goes on', async ({ page }, testIn
   await page.keyboard.press('z');
   await page.evaluate(({ x, z }) => {
     window.__ZG__?.setView('iso');
-    window.__ZG__?.lookAt(x, z, 250);
+    window.__ZG__?.lookAt(x, z, 300);
   }, spot);
-  await page.waitForTimeout(2000);
+  // Drawn once the camera is down among them (software rendering is slow with the traffic).
+  await page.waitForFunction(() => {
+    const grown = window.__ZG__!.zoning!.grown.object;
+    return grown.visible && grown.children.length > 0;
+  });
+  await page.waitForTimeout(3000);
   await page.screenshot({ path: testInfo.outputPath('grown.png') });
 
   // Kept across a reload: the buildings stand where they grew.

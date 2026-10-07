@@ -1088,9 +1088,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
           5,
         ) ?? false;
       const trafficMapChanged = traffic?.update(view.viewHeight) ?? false;
-      const zonesChanged =
-        (zoning?.layer.update(view.target, view.viewHeight) ?? false) ||
-        (zoning?.grown.update(view.viewHeight) ?? false);
+      // Both every frame: one rebuilding must not hold the other up.
+      const lotsChanged = zoning?.layer.update(view.target, view.viewHeight) ?? false;
+      const grownChanged = zoning?.grown.update(view.viewHeight) ?? false;
+      const zonesChanged = lotsChanged || grownChanged;
       if (
         !moving &&
         !dirty &&

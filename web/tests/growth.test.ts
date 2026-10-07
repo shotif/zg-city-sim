@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ARCHETYPES,
   Growth,
+  finished,
   footprint,
   heights,
   makeBuilding,
@@ -96,6 +97,16 @@ describe('growth', () => {
       expect(b.storeys).toBeLessThanOrEqual(a.storeys[1]);
       expect(b.done - b.started).toBe(a.build * 60);
     }
+  });
+
+  it('counts a building finished once its time has come, or on a new day', () => {
+    const lots = street(2);
+    const b = makeBuilding(lots, [0], 0, 1, 1000);
+    expect(b.done).toBe(1000 + 30 * 60);
+    expect(finished(b, 1500)).toBe(false);
+    expect(finished(b, b.done)).toBe(true);
+    // The clock went back (a new visit starts at 06:50 again).
+    expect(finished(b, 500)).toBe(true);
   });
 
   it('counts residents and jobs from floor area', () => {
