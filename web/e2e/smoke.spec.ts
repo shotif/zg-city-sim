@@ -197,7 +197,7 @@ test('edits roads with the Build tools, keeps them and shares them', async ({
   }, target!);
   await page.waitForTimeout(2000);
   // Click the road in the middle of the view.
-  const canvas = page.locator('canvas');
+  const canvas = page.locator('canvas').first();
   const box = (await canvas.boundingBox())!;
   await canvas.click({ position: { x: box.width / 2, y: box.height / 2 } });
   await expect(page.locator('.build-road-name')).toHaveText('Savska cesta');
