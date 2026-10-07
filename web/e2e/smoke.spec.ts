@@ -530,10 +530,18 @@ test('makes a junction a roundabout and sets traffic lights', async ({ page }, t
     null,
     { timeout: 150_000 },
   );
-  const networkApplied = (n: number) =>
-    page.waitForFunction((k) => (window.__ZG__?.sim?.networkApplied ?? 0) >= k, n, {
-      timeout: 60_000,
-    });
+  // Each network applied, or the engine stopped (its message is among the errors).
+  const networkApplied = async (n: number) => {
+    await expect
+      .poll(
+        async () =>
+          errors.length > 0 ||
+          (await page.evaluate(() => window.__ZG__?.sim?.networkApplied ?? 0)) >= n,
+        { timeout: 60_000 },
+      )
+      .toBe(true);
+    expect(errors).toEqual([]);
+  };
   // Junctions in Novi Zagreb without lights or tracks where three or four main roads meet,
   // each road into them at least 80 m long.
   const candidates = await page.evaluate(() => {

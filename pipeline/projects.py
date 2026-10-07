@@ -33,10 +33,11 @@ from scipy.spatial import cKDTree
 from .config import CACHE_DIR, OUTPUT_DIR, PIPELINE_DIR
 from .demand import build_demand
 from .network import (
-    NETCONVERT_OPTIONS,
-    ROADS_VERSION,
+    build_sumo_network,
     export_network,
     filter_roads,
+    junction_joins_file,
+    network_key,
     run_netconvert,
     wanted_way,
 )
@@ -482,11 +483,7 @@ def project_network(project: Project) -> tuple[Path, Patch]:
     """Cached SUMO network of today's extract with the project's patch."""
     pbf = fetch_osm()
     patch = Planner(project, pbf).plan()
-    key = hashlib.sha1(
-        (
-            pbf.name + json.dumps(NETCONVERT_OPTIONS) + f"roads {ROADS_VERSION}" + patch.digest()
-        ).encode()
-    ).hexdigest()[:10]
+    key = network_key(pbf, patch.digest())
     folder = CACHE_DIR / "network"
     net_file = folder / f"{project.id}_{key}.net.xml.gz"
     if net_file.exists() and net_file.stat().st_mtime >= pbf.stat().st_mtime:
@@ -494,7 +491,8 @@ def project_network(project: Project) -> tuple[Path, Patch]:
     roads = folder / f"roads_{project.id}_{key}.osm"
     log.info("%s: filtering roads: %s", project.id, filter_roads(pbf, roads, patch))
     log.info("%s: running netconvert", project.id)
-    run_netconvert(roads, net_file)
+    # Today's tram joins: the patch leaves the tram junctions as they are.
+    run_netconvert(roads, net_file, joins=junction_joins_file(build_sumo_network()))
     roads.unlink()
     return net_file, patch
 

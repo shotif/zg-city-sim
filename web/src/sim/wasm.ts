@@ -26,6 +26,8 @@ export interface EngineExports {
   zg_edge_entered_ptr(): number;
   zg_step(steps: number): number;
   zg_dt(): number;
+  zg_panic_len(): number;
+  zg_panic_ptr(): number;
   zg_render_ptr(): number;
   zg_render_slots(): number;
   zg_render_stride(): number;
@@ -125,6 +127,15 @@ export class TrafficEngine {
 
   private get memory(): ArrayBuffer {
     return this.exports.memory.buffer;
+  }
+
+  /** What the engine panicked at (message, file and line), if it did: a panic only traps
+   * as "unreachable". */
+  panicMessage(): string | undefined {
+    const length = this.exports.zg_panic_len();
+    if (length === 0) return undefined;
+    const bytes = new Uint8Array(this.memory, this.exports.zg_panic_ptr(), length);
+    return new TextDecoder().decode(bytes.slice());
   }
 
   /** Copy an array into the engine. False if the engine does not use an array of that name. */

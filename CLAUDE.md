@@ -72,7 +72,9 @@ cd .. && python -m pipeline.projects compare <id> /tmp/p.json /tmp/today.json /t
 Environment variables for the native runs:
 - `DEMAND_SCALE=0.7` overrides the calibrated share of demand.
 - `DEBUG_EDGES=123,456` logs the vehicles removed from those edges, with what they see ahead.
-- `SEED=2` (the `day` example) runs the same day with another seed, to see how much days vary.
+- `SEED=2` (the `day` and `run` examples) runs the same day with another seed, to see how much days vary.
+- `WATCH_JUNCTIONS=51800,51531` (the `run` example) prints those junctions' signal programs as the engine runs them, then every simulated minute the stopped front vehicle of each queue into them: why it waits, who it gives way to, and what holds up the vehicles inside the junction.
+- `NO_PHASE_SKIP=1` (the `day` example) runs actuated signals through every phase, as before M7d.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite
@@ -81,7 +83,8 @@ Environment variables for the native runs:
 - **Stale data in native runs:** the native runners read the unpacked `.bin` files. After rebuilding data, unpack again with `gunzip -kf`, or they quietly run on the old network.
 - **Drawn roads keep ids:** the junction builder builds every network from the one loaded, so lanes, edges and junctions loaded keep their ids and drawn ones come after. The engine is told where each lane went (`lanePieces`); keep that invariant when changing either side. Links taken away (a junction made a roundabout, movements closed by the signal editor) are left out of the arrays, so link ids are not stable: the engine matches them again by the lanes they join.
 - **Demand changes at runtime:** buildings grown on zoned lots add homes and jobs: the app sends today's `demand*` arrays merged with them (`zg_set_demand`), so the engine's demand weights can differ from the data loaded. Lots name today's edges; with a project open they are matched by position.
-- **Player-set signals:** programs the player sets carry `tlsFixed`; `merge_signal_phases`, `retime_signals` and actuated extension leave them alone.
+- **Player-set signals:** programs the player sets carry `tlsFixed`; `merge_signal_phases`, `retime_signals`, actuated extension and phase skipping leave them alone.
+- **The network is built twice:** netconvert joins road junctions but not the tram-only junctions inside them, so `build_sumo_network` runs it once to find them (`tram_joins`), then again with them joined (`zagreb_<key>.joins.nod.xml` in the cache). Projects reuse today's joins.
 - **Project comparisons are noisy:** two runs of today's roads with other seeds differ by about 16 % in delay over the morning peak. Compare roads near a project, not the whole network, and use the mean of two runs of today.
 - **Ids change with the network:** rebuilding the network with different netconvert options renumbers edges, lanes and links. Validate a day run against the network it ran on: `validate.py` checks the edge count.
 - **Day runs are slow:** a full simulated day takes about an hour on one core. To compare variants, run them in parallel, each built into its own `CARGO_TARGET_DIR`, so rebuilding never touches a running binary.
@@ -106,6 +109,8 @@ Environment variables for the native runs:
 | Inbound lead | `sim/src/demand.rs` | 45 min |
 | Toll time (`TOLL_TIME`) | `sim/src/network.rs` | 0.018 s/m |
 | Signal re-timing (`MIN_GREEN`, `LONG_CYCLE`, `MAX_EXTENSION`, `TRAM_TRACK_SHARE`) | `sim/src/engine.rs` | 6 s, 120 s, 20 s, 0.25 |
+| Phase skipping: lanes too short to show a call (`CALL_LANE`, plus a tram where trams run) | `sim/src/engine.rs` | 20 m (52 m) |
+| Tram junctions joined into road junctions within (`TRAM_JOIN_DIST`) | `pipeline/network.py` | 3 m |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
 | Driver parameters | `sim/src/vtype.rs` | |
 | Weather factors on driving (`Weather::RAIN`, …) | `sim/src/weather.rs`, mirrored in `web/src/world/weather.ts` | rain 0.95 speed, 1.1 headway, 0.95 acceleration; heavy snow 0.65, 1.4, 0.65 |

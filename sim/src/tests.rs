@@ -1052,6 +1052,64 @@ fn split_signal_phases_of_opposite_approaches_go_together() {
 }
 
 #[test]
+fn actuated_signals_skip_phases_nobody_waits_for() {
+    // Actuated greens: east-west, then north-south, each with its yellow.
+    let mut d = signalled_crossroads_data(&[
+        (30.0, "GGGGrr"),
+        (3.0, "yyyyrr"),
+        (30.0, "rrrrGG"),
+        (3.0, "rrrryy"),
+    ]);
+    for p in [0, 2] {
+        d.phase_min_dur[p] = 5.0;
+        d.phase_max_dur[p] = 50.0;
+    }
+    let mut engine = Engine::new(Network::build(d).unwrap(), 1);
+    engine.set_time(0.0);
+    // Roads in the order the crossroads builds them.
+    let (eb_in, eb_out, nb_in, nb_out) = (0, 1, 4, 5);
+    for k in 0..75 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 4.0,
+            from: eb_in,
+            to: eb_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    // Nobody comes from the north or south: their green never shows, however often the
+    // east-west green ends in a gap.
+    let mut north_south = false;
+    let mut changes = 0;
+    let mut last = engine.tls_phase[0];
+    run_until(&mut engine, 150.0, |e| {
+        north_south |= e.tls_phase[0] == 2;
+        changes += (e.tls_phase[0] != last) as u32;
+        last = e.tls_phase[0];
+    });
+    assert!(
+        !north_south,
+        "the north-south green showed with nobody waiting"
+    );
+    // Nor does the east-west green end in a yellow for nobody.
+    assert_eq!(
+        changes, 0,
+        "the east-west green ended with nobody waiting elsewhere"
+    );
+    // A car arrives from the south: it gets its green.
+    let lane = engine.net.edge_lanes(nb_in).start;
+    let length = engine.net.d.lane_length[lane as usize];
+    let car = engine.insert_at(vtype::CAR, vec![nb_in, nb_out], lane, length - 40.0, 8.0);
+    let serial = engine.vehs[car as usize].serial;
+    let mut through = false;
+    run_until(&mut engine, 90.0, |e| {
+        let v = &e.vehs[car as usize];
+        through |= !v.alive() || v.serial != serial || v.route_idx >= 1;
+    });
+    assert!(through, "the car from the south never got a green");
+}
+
+#[test]
 fn routes_avoid_tolls_where_a_free_road_is_not_much_slower() {
     // From A to D over 10.2 km: a tolled motorway at 130 km/h or a free road at 80 km/h.
     let mut b = Builder::default();
@@ -1710,6 +1768,53 @@ fn signal_programs_the_player_sets_run_as_given() {
     let engine = Engine::new(Network::build(d).unwrap(), 1);
     let given: Vec<(String, f32)> = phases.iter().map(|&(t, s)| (s.to_string(), t)).collect();
     assert_eq!(program(&engine), given);
+}
+
+#[test]
+fn time_at_a_red_light_does_not_make_drivers_impatient() {
+    // Eastbound waits 90 s at red, then has 30 s of green with the road out east full.
+    let mut d = signalled_crossroads_data(&[(90.0, "rrrrGG"), (30.0, "GgGgrr")]);
+    d.tls_fixed = vec![1];
+    let mut engine = Engine::new(Network::build(d).unwrap(), 1);
+    engine.set_time(0.0);
+    // Roads in the order the crossroads builds them.
+    let (eb_in, eb_out, wb_in) = (0, 1, 2);
+    let lane = |engine: &Engine, e: u32| engine.net.edge_lanes(e).start;
+    let out = lane(&engine, eb_out);
+    let length = engine.net.d.lane_length[out as usize];
+    let car = &vtype::TYPES[vtype::CAR as usize];
+    let mut pos = length - 1.0;
+    while pos > car.length {
+        engine.insert_at(vtype::CAR, vec![eb_out, wb_in], out, pos, 0.0);
+        pos -= car.length + car.min_gap + 0.05;
+    }
+    let east = engine.insert_at(
+        vtype::CAR,
+        vec![eb_in, eb_out],
+        lane(&engine, eb_in),
+        250.0,
+        10.0,
+    );
+    // A minute and more at the red light: standing, but not held up by anything that
+    // makes a driver push in.
+    run_until(&mut engine, 89.0, |_| {});
+    let v = &engine.vehs[east as usize];
+    assert!(
+        v.wait > 60.0 && v.blocked == 0.0,
+        "{} {}",
+        v.wait,
+        v.blocked
+    );
+    // Held at the green by the full road beyond: that counts.
+    run_until(&mut engine, 30.0, |_| {});
+    let v = &engine.vehs[east as usize];
+    assert_eq!(engine.net.d.lane_edge[v.lane as usize], eb_in);
+    assert!(
+        v.blocked > 20.0 && v.blocked <= v.wait,
+        "{} {}",
+        v.wait,
+        v.blocked
+    );
 }
 
 /// A crossroads of two-way roads, one lane each way, or (`roundabout`) the same made a

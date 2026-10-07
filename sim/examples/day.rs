@@ -14,7 +14,8 @@
 //! end) and `<out_dir>/day.json` (traffic statistics per hour, with the vehicle-hours
 //! queued at junctions by holdup).
 //!
-//! `SEED=2` runs the same day with another seed.
+//! `SEED=2` runs the same day with another seed; `NO_PHASE_SKIP=1` runs actuated signals
+//! through every phase of their cycle.
 
 use std::time::Instant;
 
@@ -70,6 +71,7 @@ fn main() {
     engine.set_time((START_HOUR * 3600) as f64);
     // Where junctions lose time (M7a).
     engine.track_delay = true;
+    engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
     let delay_total = |e: &Engine| -> [f64; Holdup::COUNT] {
         let mut sum = [0f64; Holdup::COUNT];
         for row in &e.delay {

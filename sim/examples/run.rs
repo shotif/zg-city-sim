@@ -263,7 +263,11 @@ fn main() {
     );
     let demand = demand_for(&net, &format!("{dir}/../demand"), trips);
     let t0 = Instant::now();
-    let mut engine = Engine::new(net, 1);
+    let seed = std::env::var("SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let mut engine = Engine::new(net, seed);
     engine.debug = std::env::var("DEBUG_TELEPORT").is_ok();
     // DEBUG_EDGES=e1,e2: log the vehicles removed from these edges.
     if let Ok(list) = std::env::var("DEBUG_EDGES") {
@@ -290,12 +294,16 @@ fn main() {
     println!("demand scale: {}", engine.demand_scale);
     engine.set_time(start * 3600.0);
     engine.track_delay = true;
+    engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
 
     // WATCH_JUNCTIONS=j1,j2: every simulated minute, the stopped front vehicle of each queue
     // into those junctions, why it waits and who it looks out for.
     let watch: Vec<u32> = std::env::var("WATCH_JUNCTIONS")
         .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
         .unwrap_or_default();
+    for &j in &watch {
+        print!("junction {j}:\n{}", engine.describe_program(j));
+    }
     let steps_per_minute = (60.0 / DT) as u32;
     let mut total = 0.0;
     for m in 1..=minutes {
@@ -324,6 +332,9 @@ fn main() {
                     engine.vehicles_on(lane).len(),
                     engine.describe_conflicts(front)
                 );
+                for b in engine.describe_blockers(front) {
+                    println!("    blocked by {b}");
+                }
             }
         }
         if m % 5 == 0 || m == minutes {

@@ -60,6 +60,14 @@ let volumeAsks: { id: number; at: number }[] = [];
 const post = (message: FromWorker, transfer: Transferable[] = []) =>
   self.postMessage(message, transfer);
 
+// A panic in the engine traps as "unreachable": say what it panicked at.
+self.addEventListener('error', (event) => {
+  const why = engine?.panicMessage();
+  if (!why) return;
+  event.preventDefault();
+  post({ type: 'error', message: `${event.message} (${why})` });
+});
+
 async function init(message: InitMessage): Promise<void> {
   const t0 = performance.now();
   const response = await fetch(message.wasmUrl);
@@ -107,6 +115,8 @@ function swapNetwork(sim: TrafficEngine, message: Extract<ToWorker, { type: 'net
     sim.replaceNetwork(message.pieces);
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
+    const why = sim.panicMessage();
+    if (why) error += ` (${why})`;
   }
   network = undefined;
   // Edge statistics change size with the network: start them again.

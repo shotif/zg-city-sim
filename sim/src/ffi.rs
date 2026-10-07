@@ -32,6 +32,33 @@ struct State {
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
+/// The message of the first panic (what, in which file and line), kept for JS to read after
+/// the module traps: built with `panic = "abort"`, a panic in WebAssembly only says
+/// "unreachable". The first: a trap leaves the state locked, so every later call panics
+/// on the lock.
+static PANIC: Mutex<String> = Mutex::new(String::new());
+
+fn keep_panic_messages() {
+    std::panic::set_hook(Box::new(|info| {
+        if let Ok(mut message) = PANIC.lock()
+            && message.is_empty()
+        {
+            *message = info.to_string();
+        }
+    }));
+}
+
+/// Length in bytes of the first panic's message (0 if none); `zg_panic_ptr` points to it.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_panic_len() -> usize {
+    PANIC.lock().map(|m| m.len()).unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_panic_ptr() -> *const u8 {
+    PANIC.lock().map(|m| m.as_ptr()).unwrap_or(std::ptr::null())
+}
+
 fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
     let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
     f(guard.get_or_insert_with(State::default))
@@ -112,6 +139,7 @@ pub unsafe extern "C" fn zg_array(
 /// plus traffic across the map's edge from the `gateway*` arrays if loaded.
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
+    keep_panic_messages();
     with_state(|s| {
         let data = std::mem::take(&mut s.data);
         let net = match Network::build(data) {

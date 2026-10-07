@@ -49,17 +49,24 @@ const MAX_INSERT_DELAY: f64 = 120.0;
 const MAX_ENTRY_DELAY: f64 = 600.0;
 /// Safety margin (s) a yielding vehicle wants before a priority vehicle arrives.
 const YIELD_MARGIN: f32 = 1.5;
-/// After waiting this long at a junction (s), a driver pushes in where oncoming drivers can
-/// still brake comfortably, and drivers who could stop let it go first.
+/// After waiting this long at a junction (s, not counting red lights), a driver pushes in
+/// where oncoming drivers can still brake comfortably, and drivers who could stop let it go
+/// first.
 const PUSH_IN_WAIT: f32 = 15.0;
-/// After waiting this long (s), a driver enters a junction even if the road behind it is
-/// full, so gridlocks can unwind.
+/// After waiting this long (s, red lights included: between signals a metre apart the way on
+/// may only clear at a red), a driver enters a junction even if the road behind it is full,
+/// so gridlocks can unwind.
 const BLOCK_BOX_WAIT: f32 = 60.0;
 /// A vehicle standing inside a junction this long (s) no longer stops others from crossing
 /// its path (SUMO's --ignore-junction-blocker), so gridlocks can unwind.
 const JUNCTION_BLOCKER_TIME: f32 = 60.0;
 /// Actuated signals keep a green phase while a vehicle arrives within this time (s).
 const MAX_GAP: f32 = 3.0;
+/// Lanes into a signal shorter than this (m), and than this plus a tram where trams run,
+/// cannot show who waits for it: their links count as called, so their phases are never
+/// skipped (`skip_idle_phases`).
+const CALL_LANE: f32 = 20.0;
+const TRAM_LENGTH: f32 = vtype::TYPES[vtype::TRAM as usize].length;
 /// Longest an actuated green phase runs past its planned duration (s).
 const MAX_EXTENSION: f32 = 20.0;
 /// MOBIL lane changes: weight of the new follower's disadvantage and the gain needed.
@@ -198,6 +205,10 @@ pub struct Vehicle {
     pub stop_done: u32,
     /// Time since the vehicle last moved (s).
     pub wait: f32,
+    /// Of `wait`, the time not held by a red light (s): what makes a driver impatient to
+    /// give way. A driver who has stood a minute at a red light pushes in no sooner than one
+    /// who just arrived at the green.
+    pub blocked: f32,
     pub wait_total: f32,
     /// Seconds until the next lane change is allowed.
     pub lc_timer: f32,
@@ -238,6 +249,7 @@ impl Vehicle {
             will_pass: true,
             stop_done: NONE,
             wait: 0.0,
+            blocked: 0.0,
             wait_total: 0.0,
             lc_timer: 0.0,
             reroute_timer: 0.0,
@@ -421,6 +433,8 @@ pub struct Engine {
     /// to the junction downstream whose queue fills that exit, and so on (`queue_root`).
     pub delay_root: Vec<[f32; Holdup::COUNT]>,
     pub track_delay: bool,
+    /// Actuated signals skip green phases nobody is waiting for (`skip_idle_phases`).
+    pub skip_phases: bool,
     router: Router,
     pending: BinaryHeap<Pending>,
     waiting: VecDeque<Waiting>,
@@ -838,6 +852,7 @@ impl Engine {
             delay: Vec::new(),
             delay_root: Vec::new(),
             track_delay: false,
+            skip_phases: true,
             travel_time: free_time.clone(),
             free_time,
             edge_speed_sum: vec![0.0; n_edges],
@@ -1029,38 +1044,128 @@ impl Engine {
             let min = d.phase_min_dur[p];
             let max = d.phase_max_dur[p].min(d.phase_duration[p].max(min) + MAX_EXTENSION);
             let advance = if d.phase_max_dur[p] > min + 0.5 {
-                elapsed >= max || (elapsed >= min && !self.phase_has_demand(t, p))
+                (elapsed >= max || (elapsed >= min && !self.phase_has_demand(t, p, false)))
+                    // A green stays while nobody waits for another (`skip_idle_phases`).
+                    && (!self.skip_phases || self.net.tls_fixed(t) || self.other_called(t, p))
             } else {
                 elapsed >= d.phase_duration[p]
             };
             if advance {
-                self.tls_phase[t] = if p + 1 >= b { a as u32 } else { p as u32 + 1 };
+                let next = if p + 1 >= b { a } else { p + 1 };
+                self.tls_phase[t] = self.skip_idle_phases(t, p, next) as u32;
                 self.tls_elapsed[t] = 0.0;
             }
         }
     }
 
-    /// Whether a vehicle is about to use one of the links this phase shows green.
-    fn phase_has_demand(&self, t: usize, phase: usize) -> bool {
+    /// The phase an actuated signal goes to from phase `left` instead of `next`: a green
+    /// phase nobody is waiting for (a tram phase with no tram near, a protected turn with
+    /// nobody turning) is skipped with the yellow after it, as actuated controllers skip
+    /// phases nobody has called; with nobody waiting anywhere, the green last shown comes
+    /// back. Links green in a skipped phase that the following one holds go red without a
+    /// yellow, but nobody is near them. Programs the player set run as given.
+    fn skip_idle_phases(&self, t: usize, left: usize, next: usize) -> usize {
+        let (a, b) = self.phase_range(t);
         let d = &self.net.d;
-        let off = d.phase_state_offsets[phase] as usize;
-        let len = d.phase_state_offsets[phase + 1] as usize - off;
+        if !self.skip_phases || self.net.tls_fixed(t) {
+            return next;
+        }
+        let actuated_green = |p: usize| {
+            let states = &d.phase_states
+                [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize];
+            d.phase_max_dur[p] > d.phase_min_dur[p] + 0.5
+                && states.iter().any(|&c| matches!(c, b'G' | b'g'))
+                && !states.iter().any(|&c| matches!(c, b'y' | b'Y' | b'u'))
+        };
+        let mut p = next;
+        // At most once round the cycle.
+        for _ in 0..b - a {
+            if !actuated_green(p) || self.phase_has_demand(t, p, true) {
+                return p;
+            }
+            // Past the phase and its yellow, to the next green.
+            p = if p + 1 >= b { a } else { p + 1 };
+            while !actuated_green(p) && p != next {
+                let states = &d.phase_states
+                    [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize];
+                if !states.iter().any(|&c| matches!(c, b'y' | b'Y')) {
+                    break;
+                }
+                p = if p + 1 >= b { a } else { p + 1 };
+            }
+            if p == next {
+                break;
+            }
+        }
+        // Nobody waiting anywhere: back to the green just shown (before its yellow).
+        let mut last = left;
+        for _ in 0..b - a {
+            if actuated_green(last) {
+                return last;
+            }
+            last = if last == a { b - 1 } else { last - 1 };
+        }
+        next
+    }
+
+    /// Whether a vehicle is about to use one of the links this phase shows green; with
+    /// `called`, also one waiting for them that could not go now (at a red light).
+    fn phase_has_demand(&self, t: usize, phase: usize, called: bool) -> bool {
+        self.links_have_demand(t, phase, None, called)
+    }
+
+    /// Whether a vehicle waits for a link that phase `p` holds at red and another green
+    /// phase of program `t` lets go.
+    fn other_called(&self, t: usize, p: usize) -> bool {
+        let (a, b) = self.phase_range(t);
+        let d = &self.net.d;
+        (a..b).any(|q| {
+            let states = &d.phase_states
+                [d.phase_state_offsets[q] as usize..d.phase_state_offsets[q + 1] as usize];
+            q != p
+                && !states.iter().any(|&c| matches!(c, b'y' | b'Y'))
+                && self.links_have_demand(t, q, Some(p), true)
+        })
+    }
+
+    /// `phase_has_demand`, for the links green in `phase` but not in `except`.
+    fn links_have_demand(
+        &self,
+        t: usize,
+        phase: usize,
+        except: Option<usize>,
+        called: bool,
+    ) -> bool {
+        let d = &self.net.d;
+        let states = |p: usize| {
+            &d.phase_states
+                [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize]
+        };
+        let green = |p: usize, idx: usize| matches!(states(p).get(idx), Some(b'G' | b'g'));
         let links = &self.tls_links
             [self.tls_link_offsets[t] as usize..self.tls_link_offsets[t + 1] as usize];
         for &l in links {
             let idx = d.link_tls_index[l as usize] as usize;
-            if idx >= len || !matches!(d.phase_states[off + idx], b'G' | b'g') {
+            if !green(phase, idx) || except.is_some_and(|p| green(p, idx)) {
                 continue;
             }
             let from = d.link_from[l as usize] as usize;
             let lane_len = d.lane_length[from];
+            // Too short to hold the vehicle that waits for it, which stands in the junction
+            // before (signals a few metres apart) or, a tram, at the signal before: the link
+            // counts as called.
+            let tram = d.lane_allow[from] & vclass::TRAM != 0;
+            let reach = CALL_LANE + if tram { TRAM_LENGTH } else { 0.0 };
+            if called && lane_len < reach {
+                return true;
+            }
             for &u in self.lane_vehs[from].iter().rev().take(3) {
                 let uv = &self.vehs[u as usize];
                 let dist = lane_len - uv.pos;
                 if dist > 3.0 + uv.speed.max(5.0) * MAX_GAP {
                     break;
                 }
-                if uv.next_link == l && uv.will_pass {
+                if uv.next_link == l && (uv.will_pass || called) {
                     return true;
                 }
             }
@@ -1587,8 +1692,8 @@ impl Engine {
             // Courtesy: let a driver who has waited long at a crossing path go first, if it
             // can go (its light allows it and there is room past the junction).
             let waited_longer = |w: &Vehicle| {
-                w.wait > PUSH_IN_WAIT
-                    && w.wait > veh.wait + 2.0
+                w.blocked > PUSH_IN_WAIT
+                    && w.blocked > veh.blocked + 2.0
                     && self.signal_allows(fl, w.stop_done)
                     && self.exit_has_room(fl, w)
             };
@@ -1600,9 +1705,9 @@ impl Engine {
             return false;
         }
         // Yield: only go if we are through before a priority vehicle arrives, or after it.
-        let impatient = veh.wait > 10.0;
+        let impatient = veh.blocked > 10.0;
         let margin = if impatient { 0.5 } else { YIELD_MARGIN };
-        let pushing_in = veh.wait > PUSH_IN_WAIT;
+        let pushing_in = veh.blocked > PUSH_IN_WAIT;
         let my_to = d.link_to[link as usize];
         for f in net.response(j, r) {
             let fl = net.request_link(j, f);
@@ -1624,8 +1729,8 @@ impl Engine {
                 // Stopped vehicles that waited less go after us; after a long wait, all of
                 // them (everyone waiting for everyone else is a deadlock).
                 if u.speed < 0.5
-                    && (veh.wait > 30.0
-                        || (pushing_in && self.vehs[u.veh as usize].wait < veh.wait))
+                    && (veh.blocked > 30.0
+                        || (pushing_in && self.vehs[u.veh as usize].blocked < veh.blocked))
                 {
                     continue;
                 }
@@ -1972,8 +2077,19 @@ impl Engine {
                 if v1 < 0.1 && !veh.transit.as_ref().is_some_and(|run| run.dwelling) {
                     veh.wait += DT;
                     veh.wait_total += DT;
+                    let link = veh.next_link;
+                    let red = link != NONE
+                        && !internal
+                        && matches!(
+                            self.net.link_state_char(link, &self.tls_phase),
+                            b'r' | b'y' | b'u'
+                        );
+                    if !red {
+                        veh.blocked += DT;
+                    }
                 } else {
                     veh.wait = 0.0;
+                    veh.blocked = 0.0;
                 }
                 if veh.lat != 0.0 {
                     let step = LATERAL_SPEED * DT;
@@ -2422,6 +2538,7 @@ impl Engine {
                 veh.next_link = l;
                 veh.will_pass = true;
                 veh.wait = 0.0;
+                veh.blocked = 0.0;
                 return;
             }
         }
@@ -2842,6 +2959,88 @@ impl Engine {
         } else {
             out.join("; ")
         }
+    }
+
+    /// The vehicles inside a junction that the vehicle waiting at it gives way to or
+    /// crosses, each with what lies ahead of it (diagnostics: why they are still there).
+    pub fn describe_blockers(&self, v: u32) -> Vec<String> {
+        let net = &self.net;
+        let d = &net.d;
+        let link = self.vehs[v as usize].next_link;
+        if link == NONE {
+            return Vec::new();
+        }
+        let (j, r) = (
+            d.link_junction[link as usize],
+            d.link_request[link as usize],
+        );
+        if j == NONE || r == u16::MAX {
+            return Vec::new();
+        }
+        let mut seen = Vec::new();
+        let mut users = [LinkUser::default(); 8];
+        for f in net.response(j, r as u32).chain(net.foes(j, r as u32)) {
+            let fl = net.request_link(j, f);
+            if fl == NONE || fl == link {
+                continue;
+            }
+            let n = self.link_users(fl, &mut users, false);
+            for u in &users[..n] {
+                if u.veh != v && !seen.contains(&u.veh) {
+                    seen.push(u.veh);
+                }
+            }
+        }
+        seen.iter()
+            .map(|&u| format!("{}{}", self.describe(u), self.describe_ahead(u)))
+            .collect()
+    }
+
+    /// The signal programs at junction `j` as the engine runs them, after merging and
+    /// re-timing (diagnostics): each link by its index in the program (tram or road, its
+    /// direction, the lanes it joins), then each phase with its durations and states.
+    pub fn describe_program(&self, j: u32) -> String {
+        let d = &self.net.d;
+        let mut programs: Vec<u32> = (0..d.link_from.len())
+            .filter(|&l| d.link_junction[l] == j && d.link_tls[l] != NONE)
+            .map(|l| d.link_tls[l])
+            .collect();
+        programs.sort_unstable();
+        programs.dedup();
+        let mut out = String::new();
+        for t in programs {
+            let t = t as usize;
+            out.push_str(&format!("  program {t}:\n"));
+            let mut links: Vec<u32> = self.tls_links
+                [self.tls_link_offsets[t] as usize..self.tls_link_offsets[t + 1] as usize]
+                .to_vec();
+            links.sort_by_key(|&l| d.link_tls_index[l as usize]);
+            for l in links {
+                let from = d.link_from[l as usize] as usize;
+                let road = d.lane_allow[from] & (vclass::PASSENGER | vclass::BUS) != 0;
+                out.push_str(&format!(
+                    "    {:2} link {l} {} {} lane {from} -> lane {}\n",
+                    d.link_tls_index[l as usize],
+                    if road { "road" } else { "tram" },
+                    // The pipeline's linkDirs: straight, left, right, turn, partly left/right.
+                    b"slrtLR?"[(d.link_dir[l as usize] as usize).min(6)] as char,
+                    d.link_to[l as usize],
+                ));
+            }
+            let (a, b) = self.phase_range(t);
+            for p in a..b {
+                let states = &d.phase_states
+                    [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize];
+                out.push_str(&format!(
+                    "    phase {:5.1} s ({:5.1}-{:5.1}) {}\n",
+                    d.phase_duration[p],
+                    d.phase_min_dur[p],
+                    d.phase_max_dur[p],
+                    String::from_utf8_lossy(states)
+                ));
+            }
+        }
+        out
     }
 
     /// Human-readable state of the lane behind a vehicle's next junction (diagnostics).

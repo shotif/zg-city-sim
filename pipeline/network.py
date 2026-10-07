@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import osmium
+import shapely
 import sumo
 
 from .config import CACHE_DIR, OUTPUT_DIR
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 from .osm import ATTRIBUTION as OSM_ATTRIBUTION
 from .osm import fetch_osm
 from .packed import write_packed
-from .simnet import pack_network, parse_net
+from .simnet import VCLASS_BITS, pack_network, parse_net
 
 log = logging.getLogger(__name__)
 
@@ -232,7 +233,12 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
     }
 
 
-def run_netconvert(osm_xml: Path, net_file: Path) -> None:
+def run_netconvert(
+    osm_xml: Path, net_file: Path, joins: Path | None = None, join_output: Path | None = None
+) -> None:
+    """Build `net_file` from roads written by `filter_roads`; `joins`: junctions to join as
+    well as those netconvert joins itself (`tram_joins`); `join_output`: where to write the
+    junctions netconvert joined."""
     env = dict(os.environ)
     proj_data = Path(sumo.SUMO_HOME) / "data" / "proj"
     if proj_data.is_dir():
@@ -240,26 +246,119 @@ def run_netconvert(osm_xml: Path, net_file: Path) -> None:
         env.setdefault("PROJ_LIB", str(proj_data))
     tmp = net_file.with_name("partial-" + net_file.name)
     cmd = [str(Path(sumo.SUMO_HOME) / "bin" / "netconvert"), "--osm-files", str(osm_xml)]
+    if joins is not None:
+        cmd += ["--node-files", str(joins)]
+    if join_output is not None:
+        cmd += ["--junctions.join-output", str(join_output)]
     cmd += ["--output-file", str(tmp), *NETCONVERT_OPTIONS]
     subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
     tmp.rename(net_file)
 
 
+#: Tram-only junctions (where tracks cross, split or merge) within this distance (m) of the
+#: area a road junction covers are joined into it (`tram_joins`).
+TRAM_JOIN_DIST = 3.0
+
+
+def cluster_id(nodes: list[str]) -> str:
+    """Netconvert's id for the junction it joins from these OSM nodes (sorted as it writes
+    them to its join output)."""
+    more = f"_#{len(nodes) - 4}more" if len(nodes) > 4 else ""
+    return "cluster_" + "_".join(nodes[:4]) + more
+
+
+def tram_joins(net_file: Path, join_output: Path) -> list[list[str]]:
+    """Junctions to join so trams and cars cross as movements of one junction.
+
+    Netconvert joins road junctions a few metres apart into one, but not the junctions
+    where only tram tracks meet. Across Zagreb's big tram crossings (Vukovarska at
+    Držićeva) trams then pass a string of them on sub-metre track pieces just beyond the
+    road junction, and a tram waiting at one stands across the road junction, holding up
+    cars with a green light, for minutes when trams wait for each other. Each tram-only
+    junction within `TRAM_JOIN_DIST` of a road junction's area (its outline's convex hull)
+    is joined into the nearest such road junction, with the OSM nodes netconvert joined
+    into that junction. Returns the node lists to join."""
+    clusters: dict[str, list[str]] = {}
+    for line in join_output.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("<join nodes="):
+            nodes = line.split('"')[1].split()
+            clusters[cluster_id(nodes)] = nodes
+    net = parse_net(net_file)
+    tram, road = VCLASS_BITS["tram"], VCLASS_BITS["passenger"] | VCLASS_BITS["bus"]
+    allow: dict[str, int] = {}
+    tram_only: dict[str, bool] = {}
+    for edge in net.edges:
+        if edge.internal:
+            continue
+        bits = 0
+        for lane in edge.lanes:
+            bits |= net.lanes[lane].allow
+        for node in (edge.from_node, edge.to_node):
+            allow[node] = allow.get(node, 0) | bits
+            is_tram = bits & tram != 0 and bits & road == 0
+            tram_only[node] = tram_only.get(node, True) and is_tram
+    roads = [
+        j
+        for j in net.junctions
+        if allow.get(j.id, 0) & road and len(j.shape) >= 3 and not tram_only.get(j.id)
+    ]
+    outlines = [shapely.MultiPoint([(x, z) for x, z, _ in j.shape]) for j in roads]
+    areas = shapely.buffer(shapely.convex_hull(outlines), TRAM_JOIN_DIST)
+    tree = shapely.STRtree(areas)
+    trams = [j for j in net.junctions if tram_only.get(j.id)]
+    points = shapely.points([(j.x, j.z) for j in trams])
+    joined: dict[int, list[str]] = {}
+    for t, r in tree.query(points, predicate="within").T:
+        joined.setdefault(int(t), []).append(int(r))
+    into: dict[int, list[str]] = {}
+    for t, candidates in joined.items():
+        j = trams[t]
+        r = min(candidates, key=lambda r: (roads[r].x - j.x) ** 2 + (roads[r].z - j.z) ** 2)
+        into.setdefault(r, []).append(j.id)
+    return [clusters.get(roads[r].id, [roads[r].id]) + sorted(ids) for r, ids in into.items()]
+
+
+def write_joins(joins: list[list[str]], path: Path) -> None:
+    lines = [f'    <join nodes="{" ".join(nodes)}"/>' for nodes in joins]
+    path.write_text("<nodes>\n" + "\n".join(lines) + "\n</nodes>\n")
+
+
+def network_key(pbf: Path, extra: str = "") -> str:
+    """Cache key of a network built from this OSM extract (and a project's `extra`)."""
+    text = pbf.name + json.dumps(NETCONVERT_OPTIONS) + f"roads {ROADS_VERSION}"
+    text += f" tram joins {TRAM_JOIN_DIST}" + extra
+    return hashlib.sha1(text.encode()).hexdigest()[:10]
+
+
 def build_sumo_network() -> Path:
-    """Cached SUMO network for the current OSM extract and netconvert options."""
+    """Cached SUMO network for the current OSM extract and netconvert options, built twice:
+    the second time with tram-only junctions joined into the road junctions around them
+    (`tram_joins`, written next to it for the projects to use)."""
     pbf = fetch_osm()
-    key = hashlib.sha1(
-        (pbf.name + json.dumps(NETCONVERT_OPTIONS) + f"roads {ROADS_VERSION}").encode()
-    ).hexdigest()[:10]
-    net_file = CACHE_DIR / "network" / f"zagreb_{key}.net.xml.gz"
-    if net_file.exists() and net_file.stat().st_mtime >= pbf.stat().st_mtime:
+    net_file = CACHE_DIR / "network" / f"zagreb_{network_key(pbf)}.net.xml.gz"
+    joins = junction_joins_file(net_file)
+    if net_file.exists() and joins.exists() and net_file.stat().st_mtime >= pbf.stat().st_mtime:
         return net_file
     roads = CACHE_DIR / "network" / f"roads_{pbf.name.split('.')[0]}_{ROADS_VERSION}.osm"
     if not roads.exists() or roads.stat().st_mtime < pbf.stat().st_mtime:
         log.info("filtering roads: %s", filter_roads(pbf, roads))
     log.info("running netconvert")
-    run_netconvert(roads, net_file)
+    first = net_file.with_name("first-" + net_file.name)
+    joined = net_file.with_name("joined-" + joins.name)
+    run_netconvert(roads, first, join_output=joined)
+    found = tram_joins(first, joined)
+    log.info("joining tram junctions into %d road junctions", len(found))
+    write_joins(found, joins)
+    run_netconvert(roads, net_file, joins=joins)
+    first.unlink()
+    joined.unlink()
     return net_file
+
+
+def junction_joins_file(net_file: Path) -> Path:
+    """The joins (`tram_joins`) the network was built with."""
+    return net_file.with_name(net_file.name.split(".")[0] + ".joins.nod.xml")
 
 
 def export_network(net_file: Path, out_dir: Path) -> dict:
