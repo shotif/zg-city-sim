@@ -229,6 +229,31 @@ Known gaps:
     - Edits that cost more than the balance are refused with the reason; taking one back refunds it. Each edit's cost shows in the Build panel's list.
     - The Budget panel shows the balance, a year's income and upkeep by item, what was built and the contributions paid, and a chart of the balance over the days played. The balance and its history are kept in the browser; it starts at one year of the streets budget.
 
+**Plan (M6 Polish and live, 2026-10-07).** The city looks and sounds like the time of day and the weather it is having, its vehicles look like Zagreb's, it runs smoothly on a laptop and a phone, and ZET's trams and buses can be shown where they really are. Steps, each pushed to `main` when it works:
+
+- **M6a, day and night.**
+  - The sun moves with the simulated time on today's date in Zagreb (45.81° N, 15.98° E): its height and direction set the light, the sky's colour and the shadows' direction. Dawn and dusk turn the sky orange; at night it is dark blue, with a little light left so the map stays readable.
+  - At night street lights glow along the streets, windows light up in a share of buildings that falls through the night, and vehicles show headlights and tail lights.
+  - A choice in the HUD: light as the time of day, or always day (the map as now).
+  - Tests: sun position against published values for Zagreb (noon height on the solstices and equinox, sunrise and sunset times); a Playwright test at midnight and at noon.
+- **M6b, weather.**
+  - The live-data job copies DHMZ's hourly observations for Zagreb-Grič, Maksimir and the airport (temperature, wind, and the weather in words: clear, cloudy, rain, snow, fog) to the `live-data` branch every 15 minutes.
+  - The app shows today's weather and draws it: cloud dims the light, rain and snow fall near the camera, fog shortens the view, roads look wet. The player can also pick the weather.
+  - Traffic drives to the weather: in rain drivers keep longer gaps and go a little slower, in snow more so, and junctions let fewer vehicles through on green, with the factors from the Highway Capacity Manual and published studies (to be cited).
+  - Engine tests: a queue leaves a green light more slowly in rain and snow; free-flow speed falls.
+- **M6c, vehicle models.**
+  - Low-poly models in place of boxes: cars of a few shapes (hatchback, saloon, estate, SUV, van), rigid and articulated lorries, ZET's articulated buses and its low-floor trams, with brake lights when braking and indicators when changing lanes or turning (the engine already reports both).
+  - Still one draw call per type, instanced.
+- **M6d, live ZET vehicles.**
+  - ZET's real-time feed (GTFS-RT vehicle positions, about every 10 seconds) sends no CORS headers, so the browser needs a small proxy that adds them. With it, the app shows the trams and buses where they really are, next to the timetabled ones, with their delay.
+  - Needs a host for the proxy (the user's decision).
+- **M6e, sound.**
+  - Generated in the browser (Web Audio, no recordings): the hum of traffic near the camera rising with the number of vehicles and their speed, trams' bells and wheels, rain. Off until the player turns it on.
+- **M6f, performance.**
+  - Measure first: frame time on the map, isometric and 3D views, and how fast the simulation runs, on a desktop and a phone profile; a `?perf` overlay.
+  - Then fix the largest costs found, for example drawing fewer distant layers, building chunks within a frame budget, and the worker's batches.
+  - Targets: 60 frames a second on a desktop with a GPU in the map view of the whole City; the simulation in real time at 16 times on a desktop.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.

@@ -11,7 +11,7 @@ Read these before changing anything:
 ## Working agreements
 
 - **Deploy:** push every finished, validated step to `main`. GitHub Actions builds, tests and deploys `main` to Pages. Also push your session branch. Don't open pull requests unless asked.
-- **Default branch:** the repository's default branch is still `ccr-2d70b2aa-eggxc4`, and scheduled workflows (live-data) run from it.
+- **Default branch:** `main` (since 2026-10-07); scheduled workflows (live-data) run from it.
 - **Language:** English UI with Croatian place and street names, with diacritics.
 - **"Live":** a calibrated typical weekday plus live layers (road closures now; ZET vehicle positions and weather later).
 - **Commits:** an imperative subject and a body that says why, using bullets for lists. End with the attribution lines your environment gives. Never put model names in commits, code or docs.
