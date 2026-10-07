@@ -21,6 +21,8 @@ const HOLDUP_NAMES: [&str; Holdup::COUNT] = [
     "stop sign",
     "blocked ahead",
     "other",
+    "slow road",
+    "standing mid-road",
 ];
 use zg_sim::network::{Network, NetworkData};
 use zg_sim::transit::{Transit, TransitData};

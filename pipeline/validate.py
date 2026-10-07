@@ -245,6 +245,8 @@ DELAY_NAMES = {
     "stopSign": "stop sign",
     "blockedAhead": "blocked just past the line",
     "other": "other",
+    "slowRoad": "the road beyond moving slowly",
+    "standingMidRoad": "the road beyond standing away from a junction",
 }
 
 
@@ -637,20 +639,25 @@ def report(
             "The junctions holding up most traffic other than at red lights, with the "
             'queues they back up (vehicle-hours over the day; "Exit full": the full roads '
             "beyond go on for more than 12 junctions or round in a circle, as in a gridlock; "
-            '"Slow road": the road '
-            "beyond is full of slow traffic, not of a queue at the next junction):",
+            '"Slow road": the road beyond is full of traffic moving slowly, not of a queue '
+            'at the next junction; "Standing mid-road": its queue stands away from any '
+            "junction):",
             "",
             "| Junction | Control | Held up | Exit full | Giving way | Blocked past the line "
-            "| Wrong lane | Slow road and other |",
-            "|---|---|---:|---:|---:|---:|---:|---:|",
+            "| Wrong lane | Slow road | Standing mid-road | Other |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
+        named = (
+            "exitFull",
+            "yielding",
+            "blockedAhead",
+            "wrongLane",
+            "slowRoad",
+            "standingMidRoad",
+        )
         for place, control, hours, how in lost:
-            other = sum(
-                v
-                for k, v in how.items()
-                if k not in ("exitFull", "yielding", "blockedAhead", "wrongLane")
-            )
-            cells = [how.get(k, 0.0) for k in ("exitFull", "yielding", "blockedAhead", "wrongLane")]
+            other = sum(v for k, v in how.items() if k not in named)
+            cells = [how.get(k, 0.0) for k in named]
             lines.append(
                 f"| {place} | {control} | {hours:.0f} | "
                 + " | ".join(f"{v:.0f}" if v >= 0.5 else "" for v in [*cells, other])

@@ -356,13 +356,17 @@ pub enum Holdup {
     /// A vehicle just past the stop line, on the junction's lanes or beyond.
     BlockedAhead,
     Other,
+    /// (Delay roots only, `queue_root`) the road beyond is full of traffic moving slowly,
+    /// or of a queue standing away from its junction.
+    SlowRoad,
+    StandingMidRoad,
 }
 
 impl Holdup {
     /// Kinds of holdup, for tables indexed by `holdup as usize`.
-    pub const COUNT: usize = 9;
+    pub const COUNT: usize = 11;
 }
-const _: () = assert!(Holdup::Other as usize + 1 == Holdup::COUNT);
+const _: () = assert!(Holdup::StandingMidRoad as usize + 1 == Holdup::COUNT);
 
 /// Junction delay is sampled every this many steps (`measure_delay`).
 const DELAY_EVERY: u32 = 10;
@@ -2748,7 +2752,7 @@ impl Engine {
     /// as full when the way on beyond it is (`exit_has_room`), so the walk goes on along the
     /// front vehicle's route; an exit taken up by vehicles still inside the junction counts
     /// as `InJunction`, and one full of traffic moving slowly, or queued with its front away
-    /// from a junction, as `Other` at the junction it leads to.
+    /// from a junction, as `SlowRoad` or `StandingMidRoad` at the junction it leads to.
     fn queue_root(&self, lane: u32, front: u32) -> (u32, Holdup) {
         let d = &self.net.d;
         let junction_of = |lane: u32| d.edge_to[d.lane_edge[lane as usize] as usize];
@@ -2772,8 +2776,11 @@ impl Engine {
                 continue;
             };
             let fv = &self.vehs[f as usize];
-            if fv.speed > 1.0 || d.lane_length[to as usize] - fv.pos > DELAY_REACH {
-                return (junction_of(to), Holdup::Other);
+            if fv.speed > 1.0 {
+                return (junction_of(to), Holdup::SlowRoad);
+            }
+            if d.lane_length[to as usize] - fv.pos > DELAY_REACH {
+                return (junction_of(to), Holdup::StandingMidRoad);
             }
             let why = self.diagnose(f);
             if why != Holdup::ExitFull {

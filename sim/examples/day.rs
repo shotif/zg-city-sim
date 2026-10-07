@@ -37,6 +37,8 @@ const HOLDUPS: [&str; Holdup::COUNT] = [
     "stopSign",
     "blockedAhead",
     "other",
+    "slowRoad",
+    "standingMidRoad",
 ];
 
 /// The simulated day runs from 3:00 to 3:00, starting on empty roads at the quietest hour.
