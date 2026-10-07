@@ -34,6 +34,7 @@ import {
 } from './edit/builder';
 import { type ProjectInfo, edgeMap, loadProjects, projectUrl, pullCounts } from './edit/projects';
 import { RoadIndex } from './edit/roadIndex';
+import { type DemandArrays, type EdgeDemand, mergeDemand } from './grow/demand';
 import { loadLots } from './grow/lots';
 import { type ZoningTool, setUpZoning } from './grow/zoningTool';
 import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
@@ -230,6 +231,16 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let closedEdges: Uint32Array | undefined;
   let buildPanel: BuildPanel | undefined;
   let zoning: ZoningTool | undefined;
+  /** Homes and jobs of buildings grown (M5c), today's demand, and the two merged for the
+   * player's simulation. */
+  let grownDemand: EdgeDemand | undefined;
+  let todayDemand: TravelData | undefined;
+  let demandNow: DemandArrays | undefined;
+  const applyDemand = () => {
+    if (!grownDemand || !todayDemand?.arrays.demandEdge) return;
+    demandNow = mergeDemand(todayDemand.arrays, todayDemand.dailyTrips, grownDemand);
+    sim?.setDemandWeights(demandNow.arrays, demandNow.dailyTrips);
+  };
   let baseline: SimClient | undefined;
   let setCompare: (on: boolean) => void = () => {};
   /** The network the player's simulation runs: as loaded, with the roads drawn. */
@@ -920,9 +931,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
           scene.add(traffic.object);
           debug.traffic = traffic;
           const travelData = await travel;
+          todayDemand = travelData;
+          applyDemand();
           /** The simulation the player sees, with the edits in force. */
           const launch = (speed: number): SimClient => {
             const running = startSimulation(net, travelData, surface, speed);
+            // Homes and jobs grown since: with the trips they make.
+            if (demandNow) running.setDemandWeights(demandNow.arrays, demandNow.dailyTrips);
             debug.sim = running;
             if (closedEdges) running.setClosures(closedEdges);
             // Roads drawn: the network with them, then the edits on it.
@@ -1014,6 +1029,19 @@ export async function startApp(container: HTMLElement): Promise<void> {
             invalidate,
             open: () => hud.setZones(true, hudCallbacks),
             onClose: () => hud.setZones(false, hudCallbacks),
+            // A project's network has other edges: a lot's trips use the street in front.
+            edgeOf: project
+              ? (i) => {
+                  const right = lots.depth[i] / 2 + 4;
+                  const x = lots.x[i] + Math.sin(lots.angle[i]) * right;
+                  const z = lots.z[i] - Math.cos(lots.angle[i]) * right;
+                  return networkNow?.index.pick(x, z, 30) ?? -1;
+                }
+              : undefined,
+            onDemand: (added) => {
+              grownDemand = added;
+              applyDemand();
+            },
           });
           debug.zoning = zoning;
           hud.enableZones();

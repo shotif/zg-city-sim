@@ -174,6 +174,30 @@ pub extern "C" fn zg_set_demand_scale(scale: f32) {
     })
 }
 
+/// Replace the demand's home and work weights with the `demand*` arrays loaded again (the
+/// city's and those of buildings grown since), and the trips per day within the map, while
+/// the simulation runs. Returns 0, or -1 without an engine, demand or consistent arrays.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_set_demand(daily_trips: f64) -> i32 {
+    with_state(|s| {
+        let n = s.demand_edges.len();
+        if n == 0 || s.demand_home.len() != n || s.demand_work.len() != n {
+            return -1;
+        }
+        let Some(e) = s.engine.as_mut() else {
+            return -1;
+        };
+        let edges = std::mem::take(&mut s.demand_edges);
+        match e.demand.as_mut() {
+            Some(d) => {
+                d.set_weights(&e.net, edges, &s.demand_home, &s.demand_work, daily_trips);
+                0
+            }
+            None => -1,
+        }
+    })
+}
+
 /// Add one trip between two edges.
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_add_trip(depart: f64, from: u32, to: u32, vtype: u32) {

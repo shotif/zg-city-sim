@@ -1811,3 +1811,66 @@ fn a_crossroads_made_a_roundabout_keeps_traffic_and_buses_going() {
     let tr = engine.transit.as_ref().unwrap();
     assert_eq!((tr.started, tr.failed), (1, 0));
 }
+
+#[test]
+fn homes_and_jobs_added_while_running_make_and_draw_trips() {
+    use crate::demand::Demand;
+    // Homes along the direct road, jobs past the junction it leads to.
+    let (mut engine, [direct, up, down, last]) = two_ways();
+    let mut demand = Demand::new(
+        &engine.net,
+        vec![direct, last],
+        &[1.0, 0.0],
+        &[0.0, 1.0],
+        20_000.0,
+    );
+    demand.decay = 1e6;
+    engine.demand = Some(demand);
+    engine.set_time(8.0 * 3600.0);
+    let made = |e: &Engine| e.stats.departed + e.stats.no_route + e.stats.insert_failed;
+    let lane_up = engine.net.edge_lanes(up).start;
+    let mut up_there = 0;
+    run_until(&mut engine, 120.0, |e| {
+        up_there += e.vehicles_on(lane_up).len()
+    });
+    let before = made(&engine);
+    assert!(before > 0, "the homes make trips");
+    assert_eq!(up_there, 0, "no homes up there yet");
+
+    // Homes grow along the road up, with as many trips a day again.
+    engine.demand.as_mut().unwrap().set_weights(
+        &engine.net,
+        vec![direct, up, last],
+        &[1.0, 1.0, 0.0],
+        &[0.0, 0.0, 1.0],
+        40_000.0,
+    );
+    run_until(&mut engine, 120.0, |e| {
+        up_there += e.vehicles_on(lane_up).len()
+    });
+    assert!(up_there > 0, "the new homes make trips");
+    let after = made(&engine) - before;
+    assert!(
+        after as f64 > before as f64 * 1.5,
+        "twice the trips a day: {before} then {after} in two minutes"
+    );
+
+    // Jobs grow along the road down: trips go there too.
+    let mut to_down = 0;
+    let ends_down = |e: &Engine| {
+        e.vehs
+            .iter()
+            .filter(|v| v.alive() && v.route.last() == Some(&down))
+            .count()
+    };
+    assert_eq!(ends_down(&engine), 0);
+    engine.demand.as_mut().unwrap().set_weights(
+        &engine.net,
+        vec![direct, up, down, last],
+        &[1.0, 1.0, 0.0, 0.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        40_000.0,
+    );
+    run_until(&mut engine, 120.0, |e| to_down = to_down.max(ends_down(e)));
+    assert!(to_down > 0, "the new jobs draw trips");
+}

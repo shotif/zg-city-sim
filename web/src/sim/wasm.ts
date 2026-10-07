@@ -13,6 +13,7 @@ export interface EngineExports {
   zg_build(seed: number, dailyTrips: number): number;
   zg_set_time(seconds: number): void;
   zg_set_demand_scale(scale: number): void;
+  zg_set_demand(dailyTrips: number): number;
   zg_add_trip(depart: number, from: number, to: number, vtype: number): void;
   zg_set_closed(edges: number, count: number): void;
   zg_set_edits(words: number, count: number): number;
@@ -152,6 +153,14 @@ export class TrafficEngine {
 
   setDemandScale(scale: number): void {
     this.exports.zg_set_demand_scale(scale);
+  }
+
+  /** Take the `demand*` arrays set again (homes and jobs, with those grown since) and the
+   * car trips a day they make, while the simulation runs. */
+  setDemand(dailyTrips: number): void {
+    if (this.exports.zg_set_demand(dailyTrips) !== 0) {
+      throw new Error('The traffic engine rejected the demand data');
+    }
   }
 
   addTrip(depart: number, fromEdge: number, toEdge: number, vehicleType = 0): void {

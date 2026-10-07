@@ -9,6 +9,7 @@ import { ZonesPanel } from '../ui/zonesPanel';
 import { GrowthLayer } from '../world/growthLayer';
 import type { HeightFn } from '../world/roadGeometry';
 import { ZoneLayer } from '../world/zoneLayer';
+import { type EdgeDemand, addedDemand } from './demand';
 import { Growth, restoreBuildings, saveBuildings } from './growth';
 import type { Lots } from './lots';
 import {
@@ -41,6 +42,10 @@ export interface ZoningDeps {
   /** Open or close the tool as its HUD button does. */
   open(): void;
   onClose(): void;
+  /** The edge a lot's trips use (-1: none); the lot's own street if not given. */
+  edgeOf?(lot: number): number;
+  /** What the finished buildings add to the city's homes and jobs, per edge. */
+  onDemand?(added: EdgeDemand): void;
 }
 
 export interface ZoningTool {
@@ -61,6 +66,8 @@ export interface ZoningTool {
 
 /** A stroke takes a new point once the pointer moved this share of the brush radius. */
 const POINT_SPACING = 0.3;
+/** Simulated seconds between updates of the traffic's homes and jobs, at most. */
+const DEMAND_EVERY = 300;
 
 export function setUpZoning(deps: ZoningDeps): ZoningTool {
   const { lots } = deps;
@@ -81,6 +88,16 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     deps.invalidate();
   };
   const keepGrowth = () => saveGrowth(saveBuildings(lots, growth));
+  // The traffic's homes and jobs: sent when buildings were finished or taken down.
+  let changes = 0;
+  let sent = { key: '', at: -Infinity };
+  const sendDemand = (force = false) => {
+    if (!deps.onDemand) return;
+    const key = `${growth.totals(now).built}:${changes}`;
+    if (key === sent.key || (!force && now - sent.at < DEMAND_EVERY)) return;
+    sent = { key, at: now };
+    deps.onDemand(addedDemand(lots, growth, now, deps.edgeOf));
+  };
   /** Buildings on lots zoned for something else come down. */
   const settle = () => {
     const gone = growth.sync(zones);
@@ -88,6 +105,8 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     if (gone.length) {
       layer.setZones(zones);
       keepGrowth();
+      changes++;
+      sendDemand(true);
     }
   };
   /** Keep and draw a new list of strokes (and, loading, the buildings grown on it). */
@@ -99,6 +118,8 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
       restoreBuildings(lots, growth, zones, buildings);
       grown.reset();
       keepGrowth();
+      changes++;
+      sendDemand(true);
     } else settle();
     layer.setZones(zones);
     saveZoning(strokes);
@@ -218,6 +239,7 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
         keepGrowth();
       }
       panel.setGrowth(growth.totals(t));
+      sendDemand();
       deps.invalidate();
     },
     setVisible: (on) => {

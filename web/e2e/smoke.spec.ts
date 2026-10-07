@@ -746,6 +746,21 @@ test('grows buildings on zoned lots as the day goes on', async ({ page }, testIn
     .toBeGreaterThan(0);
   const totals = await built();
   expect(totals.jobs).toBeGreaterThan(0);
+  // The houses' residents make car trips: the simulation's daily total goes up (M5c).
+  const today = await page.evaluate(
+    async () =>
+      (
+        (await (await fetch('data/manifest.json')).json()) as {
+          layers: { demand: { dailyCarTrips: number } };
+        }
+      ).layers.demand.dailyCarTrips,
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__!.sim!.demandTrips ?? 0), {
+      timeout: 240_000,
+      intervals: [5_000],
+    })
+    .toBeGreaterThan(today);
 
   // In the 3D view, and listed in the Zones panel.
   await page.keyboard.press('z');

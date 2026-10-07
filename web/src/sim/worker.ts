@@ -29,6 +29,8 @@ let lastEdgeSpeeds = -Infinity;
 /** Closed edges and edits, kept until the engine is built. */
 let closed: Uint32Array | undefined;
 let edits: { id: number; words: Uint32Array } | undefined;
+/** Homes and jobs grown since the start, kept until the engine is built. */
+let weights: Extract<ToWorker, { type: 'demandWeights' }> | undefined;
 /** A network with roads drawn that came before the engine was built. */
 let network: Extract<ToWorker, { type: 'network' }> | undefined;
 let render = true;
@@ -57,8 +59,17 @@ async function init(message: InitMessage): Promise<void> {
   post({ type: 'ready', buildMs: performance.now() - t0, signals: engine.signalPrograms() });
   if (network) swapNetwork(engine, network);
   if (edits) applyEdits(engine, edits);
+  if (weights) applyWeights(engine, weights);
   last = performance.now();
   tick();
+}
+
+function applyWeights(
+  sim: TrafficEngine,
+  message: Extract<ToWorker, { type: 'demandWeights' }>,
+): void {
+  for (const [name, data] of Object.entries(message.arrays)) sim.setArray(name, data);
+  sim.setDemand(message.dailyTrips);
 }
 
 function applyEdits(sim: TrafficEngine, message: { id: number; words: Uint32Array }): void {
@@ -163,6 +174,10 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
       break;
     case 'demand':
       engine?.setDemandScale(message.scale);
+      break;
+    case 'demandWeights':
+      weights = message;
+      if (engine) applyWeights(engine, message);
       break;
     case 'closures':
       closed = message.edges;

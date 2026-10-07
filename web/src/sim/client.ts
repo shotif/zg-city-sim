@@ -139,6 +139,16 @@ export class SimClient {
     this.send({ type: 'demand', scale });
   }
 
+  /** Homes and jobs per edge (the city's and those grown since) and the car trips a day
+   * they make, in place of those the simulation started with. */
+  setDemandWeights(arrays: Record<string, NumericArray>, dailyTrips: number): void {
+    this.demandTrips = dailyTrips;
+    this.send({ type: 'demandWeights', arrays, dailyTrips });
+  }
+
+  /** Car trips a day of the homes last sent with `setDemandWeights` (none: the city's). */
+  demandTrips?: number;
+
   /** Close these edges to routing (live road closures), replacing earlier closures. */
   setClosures(edges: Uint32Array): void {
     this.send({ type: 'closures', edges });

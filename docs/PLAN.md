@@ -198,10 +198,16 @@ Known gaps:
     - Residents and jobs come from floor area (80 % of the gross is usable): 30 m² of home per resident, and per job 20 m² in offices, 35 m² in shops and 80-120 m² in industry. These are estimates, from the 2021 census's dwelling space per person and typical employment densities.
     - A lot zoned for something else loses its building. Buildings are saved in the browser and in the zoning's share link; a visit starts the simulated day again, so they come back finished.
     - The growth rate is fixed until demand drives it (M5d).
-- **M5c, growth makes trips.**
+- **M5c, growth makes trips** (done 2026-10-07).
   - Each new building adds residents or jobs from its floor area, at today's densities by kind, on the street its lot faces.
   - The engine takes new home and work weights and a new daily trip total while it runs, so new residents' trips and new jobs' commuters, including those from beyond the map, join the traffic.
   - Engine tests: homes added on a hand-built network make trips from there; jobs added attract them.
+  - As built (`web/src/grow/demand.ts`, `Demand::set_weights`, `zg_set_demand`):
+    - Each finished building's residents go to the street its first lot faces, as a weight of trips from home: residents in the City count once, those outside it at the counties' car trip rate (0.87 against 0.65, a weight of 1.33). Its jobs go there as a work weight.
+    - The app merges them with today's demand and sends the merged arrays to the worker, with the day's car trips raised by 0.65 per City resident. That happens when buildings are finished or taken down, at most every 5 simulated minutes.
+    - The engine replaces its weights and daily total in place (`Demand::set_weights`) and keeps the gateways and the gravity model. New homes' trips start at once; new jobs draw trips, including commuters from beyond the map, without adding any (as today's jobs do).
+    - With a planned project open, a lot's trips use the street in front of it on the project's network, found by position.
+    - The simulation compared in Before and after runs today's demand without what grew.
 - **M5d, demand and land value.**
   - Demand per zone: homes are wanted where jobs outnumber workers, shops where residents spend, offices and industry where workers can reach them. It comes from the city's totals and simulated travel times.
   - Land value per lot from accessibility (jobs and residents reachable by car in 20 minutes on measured travel times), parks and water nearby, and noise from traffic volumes. It is drawn as a map. Buildings grow taller where land is dearer.

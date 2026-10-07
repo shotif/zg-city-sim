@@ -220,6 +220,28 @@ impl Demand {
         }
     }
 
+    /// Replace the home and work weights and the trips a day within the map, keeping the
+    /// gateways and the decay: residents and jobs added while the simulation runs (the
+    /// buildings that grow on zoned land). Gateway traffic's destinations and origins
+    /// follow the new weights too.
+    pub fn set_weights(
+        &mut self,
+        net: &Network,
+        edges: Vec<u32>,
+        home: &[f32],
+        work: &[f32],
+        daily_trips: f64,
+    ) {
+        let fresh = Demand::new(net, edges, home, work, daily_trips);
+        self.edges = fresh.edges;
+        self.pos = fresh.pos;
+        self.truck_ok = fresh.truck_ok;
+        self.home_cum = fresh.home_cum;
+        self.work_cum = fresh.work_cum;
+        self.any_cum = fresh.any_cum;
+        self.daily_trips = daily_trips;
+    }
+
     /// Placeholder demand from the network alone: homes along local streets, work along
     /// main roads. Used until building-based weights are loaded.
     pub fn from_network(net: &Network, daily_trips: f64) -> Demand {
