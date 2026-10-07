@@ -141,10 +141,11 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
   canvas.addEventListener('pointerup', finish);
   canvas.addEventListener('pointercancel', finish);
 
-  // Zoning from a shared link, else this browser's.
-  const fromLink = /[#&]zoning=([^&]+)/.exec(location.hash)?.[1];
-  if (fromLink) {
-    decodeZoningFromUrl(fromLink)
+  // Zoning from a shared link (at start, or pasted into this tab later), else this
+  // browser's.
+  const linked = () => /[#&]zoning=([^&]+)/.exec(location.hash)?.[1];
+  const loadFromLink = (encoded: string) =>
+    decodeZoningFromUrl(encoded)
       .then((list) => {
         use(list);
         deps.open();
@@ -154,7 +155,13 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
       })
       .catch(() => panel.setStatus('The link has no zoning that could be read.'))
       .finally(() => history.replaceState(null, '', location.pathname + location.search));
-  } else use(loadSavedZoning());
+  const fromLink = linked();
+  if (fromLink) void loadFromLink(fromLink);
+  else use(loadSavedZoning());
+  window.addEventListener('hashchange', () => {
+    const encoded = linked();
+    if (encoded) void loadFromLink(encoded);
+  });
 
   const tool: ZoningTool = {
     lots,

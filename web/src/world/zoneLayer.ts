@@ -14,7 +14,7 @@ const INSET = 0.8;
 const BUDGET = 40;
 /** Width (px) of the planned land use map. */
 const PLAN_WIDTH = 2048;
-const UNZONED = '#f4f1e8';
+const UNZONED = '#ffffff';
 
 /**
  * Zoning on the map (M5a): zoned lots in their zone's colour, the other lots too while the
@@ -24,7 +24,7 @@ export class ZoneLayer {
   readonly object = new THREE.Group();
   private readonly chunkLots = new Map<string, number[]>();
   private readonly chunkOf: string[];
-  private readonly meshes = new Map<string, THREE.Mesh>();
+  private readonly meshes = new Map<string, THREE.Group>();
   private readonly dirty = new Set<string>();
   private zones: Uint8Array;
   private showAll = false;
@@ -38,6 +38,13 @@ export class ZoneLayer {
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
+  });
+  /** Lots not zoned: faint outlines. */
+  private readonly outlineMaterial = new THREE.LineBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
   });
   private plan?: THREE.Mesh;
   private readonly brush: THREE.Mesh;
@@ -151,38 +158,50 @@ export class ZoneLayer {
     const old = this.meshes.get(key);
     if (old) {
       this.object.remove(old);
-      old.geometry.dispose();
-      this.meshes.delete(key);
+      old.traverse((o) => {
+        if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments) o.geometry.dispose();
+      });
     }
-    const shown = (this.chunkLots.get(key) ?? []).filter((i) => this.showAll || this.zones[i] > 0);
-    if (!shown.length) {
-      // An empty marker, so the chunk is not looked at again until it changes.
-      const empty = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
-      empty.visible = false;
-      this.meshes.set(key, empty);
-      return;
-    }
+    const ids = this.chunkLots.get(key) ?? [];
+    const zoned = ids.filter((i) => this.zones[i] > 0);
+    const open = this.showAll ? ids.filter((i) => this.zones[i] === 0) : [];
+    const group = new THREE.Group();
+    group.name = `lots ${key}`;
+    if (zoned.length) group.add(this.fill(zoned));
+    if (open.length) group.add(this.outline(open));
+    this.object.add(group);
+    this.meshes.set(key, group);
+  }
+
+  /** Corners of lot `i` on the ground, a little inside its edges. */
+  private cornersOf(i: number): [number, number, number][] {
     const lots = this.lots;
-    const positions = new Float32Array(shown.length * 12);
-    const colors = new Float32Array(shown.length * 12);
-    const index = new Uint32Array(shown.length * 6);
-    shown.forEach((i, k) => {
-      const ux = Math.cos(lots.angle[i]);
-      const uz = Math.sin(lots.angle[i]);
-      const f = lots.frontage[i] / 2 - INSET;
-      const d = lots.depth[i] / 2 - INSET;
-      const corners = [
-        [-f, -d],
-        [f, -d],
-        [f, d],
-        [-f, d],
-      ];
+    const ux = Math.cos(lots.angle[i]);
+    const uz = Math.sin(lots.angle[i]);
+    const f = lots.frontage[i] / 2 - INSET;
+    const d = lots.depth[i] / 2 - INSET;
+    return [
+      [-f, -d],
+      [f, -d],
+      [f, d],
+      [-f, d],
+    ].map(([a, b]) => {
+      // Along the street by a, to its right (x east, z south) by b.
+      const x = lots.x[i] + ux * a - uz * b;
+      const z = lots.z[i] + uz * a + ux * b;
+      return [x, this.height(x, z) + LIFT, z];
+    });
+  }
+
+  /** Zoned lots, filled in their zone's colour. */
+  private fill(ids: number[]): THREE.Mesh {
+    const positions = new Float32Array(ids.length * 12);
+    const colors = new Float32Array(ids.length * 12);
+    const index = new Uint32Array(ids.length * 6);
+    ids.forEach((i, k) => {
       const color = this.colors[this.zones[i]];
-      corners.forEach(([a, b], c) => {
-        // Along the street by a, to its right (x east, z south) by b.
-        const x = lots.x[i] + ux * a - uz * b;
-        const z = lots.z[i] + uz * a + ux * b;
-        positions.set([x, this.height(x, z) + LIFT, z], (k * 4 + c) * 3);
+      this.cornersOf(i).forEach((p, c) => {
+        positions.set(p, (k * 4 + c) * 3);
         colors.set([color.r, color.g, color.b], (k * 4 + c) * 3);
       });
       const v = k * 4;
@@ -195,9 +214,25 @@ export class ZoneLayer {
     geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, this.material);
     mesh.renderOrder = 2;
-    mesh.name = `lots ${key}`;
-    this.object.add(mesh);
-    this.meshes.set(key, mesh);
+    return mesh;
+  }
+
+  /** Lots not zoned, as outlines. */
+  private outline(ids: number[]): THREE.LineSegments {
+    const positions = new Float32Array(ids.length * 24);
+    ids.forEach((i, k) => {
+      const c = this.cornersOf(i);
+      for (let e = 0; e < 4; e++) {
+        positions.set(c[e], (k * 8 + e * 2) * 3);
+        positions.set(c[(e + 1) % 4], (k * 8 + e * 2 + 1) * 3);
+      }
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.computeBoundingSphere();
+    const lines = new THREE.LineSegments(geometry, this.outlineMaterial);
+    lines.renderOrder = 2;
+    return lines;
   }
 
   /** The planned land use as a map draped over the terrain. */

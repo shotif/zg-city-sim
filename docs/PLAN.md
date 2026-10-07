@@ -162,7 +162,7 @@ Known gaps:
 
 **Plan (M5 Grow, 2026-10-07).** Zagreb grows where the player zones land, and what grows makes trips the traffic simulation drives. Today's city stays as it is: growth happens on free land along streets. Steps, each pushed to `main` when it works:
 
-- **M5a, zoning.**
+- **M5a, zoning** (done 2026-10-07: the Zones tool, key `Z`).
   - *Lots*: a pipeline step `zoning` divides free land along streets into lots of about 20 m of frontage and 30 m depth, the size of a family-house plot in Zagreb's outskirts. Free means no building, road, railway or water on it, and not land the City's plan keeps open: forests, parks, protective green, sport grounds, cemeteries, water and infrastructure.
   - Each lot records the street it faces (the edge its trips use), its planned use and its land cover.
   - *The City's plan*: the planned land use of the City (`geoportal-planirana-namjena-2023`: 8,999 polygons from the general, urban and detailed plans in force in 2023, Otvorena dozvola) is grouped into residential, mixed, commercial, office, industrial, civic, green, agricultural, water and transport. Outside the City there is no plan, and lots there have none.
@@ -170,6 +170,15 @@ Known gaps:
   - *Tool*: a Zones panel (key `Z`). Choose a zone and a brush size and paint over the map: the lots under the brush take the zone. "As the City plans" paints each lot with the zone its plan gives it, and "Remove zoning" clears them. The planned land use can be drawn under the lots.
   - Zoning is kept in the browser and shared as a link, as brush strokes by position, so it survives the network being rebuilt.
   - Tests: lot making on a hand-made map (lots face their street, avoid buildings, roads and water, and skip land kept open); zone painting and saving; a Playwright test that paints zones and finds them after a reload.
+  - As built (`pipeline/zoning.py`, `web/src/grow/`):
+    - Lots are laid along both sides of every street except motorways, trunk roads and slip roads, 15 m clear of each street's ends, and kept where the land is free. That leaves 195,034 of 524,662 candidates: 269,408 fall on buildings (with 2 m clear), lanes, tram tracks or railways; 25,957 on land the plan keeps open; 504 on water; and 33,759 overlap a lot of a quieter street.
+    - About 27,800 lots are in the City: 8,382 on land planned for housing, 2,109 mixed, 574 commercial, 757 business, 912 industrial and 15,052 on farmland. The other 167,000 are outside the City, where there is no plan. The City is mostly built up or kept green; its free land is in its southern and eastern villages.
+    - Speed limits do not decide which streets get lots: many town streets carry netconvert's default of 100 km/h where OpenStreetMap has no limit.
+    - The plan's 298 uses (in 20 groups) are grouped into eleven classes. Forests, parks, sport, cemeteries, water, transport and infrastructure, public and social, and military land get no lots.
+    - "As the City plans" zones the lots the plan zones and leaves the others as they are. Housing land takes the density of the buildings within 150 m: houses among buildings of up to two storeys, low-rise flats up to six storeys or where nothing is built yet, high-rise flats beyond.
+    - In the app, lots are drawn in 500 m chunks near the view: zoned lots filled in their zone's colour, the others as faint outlines while the tool is open. The plan is a 2,048-pixel map (about 15 m a pixel) draped over the terrain.
+    - Painting stops the map from being dragged; Esc stops painting. The zoning is saved as brush strokes rounded to 1 m, in the browser and as a `#zoning=` link.
+    - The lot data adds 4 MB (gzip) and about 2 minutes to the data build.
 - **M5b, buildings that grow.**
   - Zoned lots grow buildings over simulated time, faster where demand is higher (M5d). Neighbouring lots of the same zone join for larger buildings.
   - Zagreb's types: family houses of two or three storeys with tiled pitched roofs; urban villas and five-storey blocks; slabs and towers of 10-19 storeys as in Novi Zagreb; perimeter blocks with shops at street level near the centre; shops and retail parks; office blocks; halls and warehouses. Footprints, setbacks and heights are taken from today's buildings of the same kind in ZG3D.

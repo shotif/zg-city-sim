@@ -76,7 +76,9 @@ export function plannedZone(lots: Lots, i: number): number {
 /** Points along a stroke this far apart (a share of its radius) are painted. */
 const STEP = 0.4;
 
-/** Paint a stroke onto `zones` (one code per lot); the lots it changed. */
+/** Paint a stroke onto `zones` (one code per lot); the lots it changed. The plan's brush
+ * zones only the lots the plan zones, and leaves the others (farmland, no plan) as they
+ * are. */
 export function applyStroke(lots: Lots, zones: Uint8Array, stroke: Stroke): number[] {
   const changed = new Set<number>();
   const paint = (x: number, z: number) => {
@@ -87,6 +89,7 @@ export function applyStroke(lots: Lots, zones: Uint8Array, stroke: Stroke): numb
           : stroke.brush === 'plan'
             ? plannedZone(lots, i)
             : zoneCode(stroke.brush);
+      if (stroke.brush === 'plan' && code === 0) continue;
       if (zones[i] !== code) {
         zones[i] = code;
         changed.add(i);

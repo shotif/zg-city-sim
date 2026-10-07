@@ -117,9 +117,10 @@ describe('zoning', () => {
       0,
     ]);
     const strokes: Stroke[] = [
-      { brush: 'plan', radius: 300, points: [[100, 20]] },
       { brush: 'houses', radius: 15, points: [[190, 20]] },
+      { brush: 'plan', radius: 300, points: [[100, 20]] },
     ];
+    // The plan zones its lots, and leaves the houses zoned on land it does not zone.
     const zones = zonesFrom(lots, strokes);
     expect(Array.from(zones)).toEqual([...plan.slice(0, 9), zoneCode('houses')]);
     const totals = zoneTotals(lots, zones);
