@@ -105,6 +105,8 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
   await page.getByRole('button', { name: '16×' }).click();
   await page.waitForTimeout(2000);
   await page.keyboard.press(' ');
+  // The last frame before the pause may still be on its way: read the clock once it is in.
+  await page.waitForTimeout(1500);
   const paused = await page.locator('.hud-sim-clock').textContent();
   await page.waitForTimeout(1500);
   await expect(page.locator('.hud-sim-clock')).toHaveText(paused!);
@@ -919,10 +921,15 @@ test('lights the city as the time of day: noon, and night with street lamps', as
   await page.screenshot({ path: testInfo.outputPath('night.png') });
 
   // Always day: light as at midday, whatever the time; kept for the next visit.
+  // (A frame of the night view in software rendering can take several seconds.)
   await page.getByRole('button', { name: 'Always day' }).click();
-  await expect.poll(() => page.evaluate(() => window.__ZG__!.light!.night)).toBe(0);
   await expect
-    .poll(() => page.evaluate(() => window.__ZG__!.streetLights!.object.visible))
+    .poll(() => page.evaluate(() => window.__ZG__!.light!.night), { timeout: 30_000 })
+    .toBe(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__!.streetLights!.object.visible), {
+      timeout: 30_000,
+    })
     .toBe(false);
   await page.reload();
   await ready();
