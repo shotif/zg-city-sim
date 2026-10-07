@@ -100,6 +100,19 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
   await page.waitForTimeout(3000);
   await page.screenshot({ path: testInfo.outputPath('traffic.png') });
   expect(await page.evaluate(() => window.__ZG__?.vehicles?.drawn ?? 0)).toBeGreaterThan(0);
+  // Cars of several shapes among them (M6c).
+  const shapes = await page.evaluate(
+    () =>
+      new Set(
+        window
+          .__ZG__!.vehicles!.object.children.filter(
+            (m) => (m as unknown as { count: number }).count > 0,
+          )
+          .map((m) => m.name)
+          .filter((name) => /^vehicles [0-4]$/.test(name)),
+      ).size,
+  );
+  expect(shapes).toBeGreaterThan(1);
 
   // Speed up, then pause: the clock follows.
   await page.getByRole('button', { name: '16×' }).click();
