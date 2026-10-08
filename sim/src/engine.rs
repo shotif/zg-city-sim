@@ -84,8 +84,11 @@ const REROUTE_CHECK: f32 = 60.0;
 const REROUTE_SLOWER: f32 = 0.25;
 const REROUTE_LOSS: f32 = 60.0;
 const REROUTE_LANE_ROOM: f32 = 100.0;
-/// Edges at most this long (m) are too short to change lanes on: lane choice looks past them.
+/// Edges at most this long (m), or this many seconds long at their speed limit, are too
+/// short to change lanes on: lane choice looks past them. On a motorway at 100 km/h, a lane
+/// that ends 190 m on needs looking out for before.
 const LANE_CHANGE_ROOM: f32 = 150.0;
+const LANE_CHANGE_SECONDS: f32 = 10.0;
 /// How many short edges ahead lane choice looks through.
 const SHORT_EDGE_LOOKAHEAD: u32 = 4;
 /// Routing cost of a closed road (s): routes avoid it wherever there is another way.
@@ -1940,7 +1943,7 @@ impl Engine {
         let Some(&next) = route.get(i + 1) else {
             return true;
         };
-        if depth == 0 || self.net.edge_length[route[i] as usize] > LANE_CHANGE_ROOM {
+        if depth == 0 || self.room_to_change_lanes(route[i]) {
             return true;
         }
         self.net.lane_links(lane).any(|l| {
@@ -1949,6 +1952,12 @@ impl Engine {
                 && d.lane_edge[to as usize] == next
                 && self.lane_continues(to, route, i + 1, vclass, depth - 1)
         })
+    }
+
+    /// Whether an edge is long enough to change lanes on at its speed limit.
+    fn room_to_change_lanes(&self, edge: u32) -> bool {
+        let e = edge as usize;
+        self.net.edge_length[e] > LANE_CHANGE_ROOM.max(self.net.edge_speed[e] * LANE_CHANGE_SECONDS)
     }
 
     /// Link to take from `lane` (on route edge `i`) toward the next route edge.

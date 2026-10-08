@@ -2362,3 +2362,50 @@ fn drivers_take_another_way_when_the_road_ahead_jams() {
     // Without re-routing, drivers stay in the jam.
     assert_eq!(run(true, false), (false, 0));
 }
+
+#[test]
+fn drivers_move_over_for_an_exit_lane_before_it_begins() {
+    // A two-lane motorway (600 m at 100 km/h) widens to three for the last 190 m before an
+    // exit, which only the new right-hand lane leads off: as on the A3 at Jankomir. A driver
+    // in the left lane bound for the exit gets into the right lane before the third begins,
+    // as drivers do from the signs, rather than crossing two lanes in 190 m.
+    let mut b = Builder::default();
+    let a = b.junction(0.0, 0.0);
+    let m = b.junction(600.0, 0.0);
+    let x = b.junction(790.0, 0.0);
+    let r = b.junction(900.0, 60.0);
+    let z = b.junction(1500.0, 0.0);
+    let approach = b.road(a, m, 2, 27.8);
+    let widened = b.road(m, x, 3, 27.8);
+    let ramp = b.road(x, r, 1, 16.7);
+    let on = b.road(x, z, 2, 27.8);
+    for (from, to) in [(0, 0), (0, 1), (1, 2)] {
+        let (fl, tl) = (b.lane(approach, from), b.lane(widened, to));
+        b.connect(fl, tl, m, dir::STRAIGHT, b'M');
+    }
+    let (fl, tl) = (b.lane(widened, 0), b.lane(ramp, 0));
+    b.connect(fl, tl, x, dir::RIGHT, b'M');
+    for (from, to) in [(1, 0), (2, 1)] {
+        let (fl, tl) = (b.lane(widened, from), b.lane(on, to));
+        b.connect(fl, tl, x, dir::STRAIGHT, b'M');
+    }
+    let mut engine = Engine::new(b.build(), 5);
+    let left = engine.net.edge_lanes(approach).start + 1;
+    let v = engine.insert_at(vtype::CAR, vec![approach, widened, ramp], left, 10.0, 25.0);
+    let mut last_on_approach = NONE;
+    let mut took_ramp = false;
+    run_until(&mut engine, 90.0, |e| {
+        let veh = &e.vehs[v as usize];
+        if !veh.alive() || veh.lane == NONE {
+            return;
+        }
+        match e.net.d.lane_edge[veh.lane as usize] {
+            edge if edge == approach => last_on_approach = veh.lane,
+            edge if edge == ramp => took_ramp = true,
+            _ => {}
+        }
+    });
+    assert_eq!(last_on_approach, engine.net.edge_lanes(approach).start);
+    assert!(took_ramp);
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (1, 0));
+}
