@@ -203,6 +203,14 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
                 d.edges.len()
             );
             let mut demand = Demand::new(net, d.edges, &d.home, &d.work, daily);
+            // GATEWAY_LOCAL_KM=8: another decay for traffic across the map's edge on roads
+            // other than motorways, to calibrate.
+            if let Some(km) = std::env::var("GATEWAY_LOCAL_KM")
+                .ok()
+                .and_then(|v| v.parse::<f32>().ok())
+            {
+                demand.local_gateway_decay = km * 1000.0;
+            }
             if std::env::var("NO_GATEWAYS").is_err() {
                 demand.set_gateways(net, &d.gateways);
             }

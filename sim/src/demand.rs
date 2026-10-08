@@ -37,16 +37,29 @@ fn purposes(hour: usize) -> (f32, f32) {
     }
 }
 
-/// Candidate destinations the gravity model chooses between.
+/// Candidate destinations the gravity model chooses between: drawn by attractiveness, one
+/// chosen by distance. Few candidates soften the distance decay; trips within the map and
+/// on motorways across its edge are calibrated with 8.
 const CANDIDATES: usize = 8;
+/// Candidates for traffic across the map's edge on other roads: with 8, drawn from the
+/// whole map's jobs and homes, a regional road's traffic at Zabok nearly all headed for
+/// Zagreb, 25 km on.
+const LOCAL_CANDIDATES: usize = 128;
 /// Share of trips across the map's edge that are commutes (the rest are errands, business
 /// and visits), and the share of those commuters who live beyond the map (the rest live
 /// inside it and work beyond it).
 const COMMUTE_SHARE: f32 = 0.55;
 const COMMUTERS_FROM_OUTSIDE: f32 = 0.75;
 /// Distance (m) over which places lose attractiveness by a factor e for trips across the
-/// map's edge: people who come from far away mind the last few kilometres less.
+/// map's edge on motorways and expressways: people who come from far away mind the last
+/// few kilometres less.
 const GATEWAY_DECAY: f32 = 12_000.0;
+/// The same for traffic across the map's edge on other roads, mostly between the towns on
+/// either side of it.
+pub const LOCAL_GATEWAY_DECAY: f32 = 6_000.0;
+/// Roads at least this fast (m/s, 97 km/h) carry traffic from far away across the map's
+/// edge: motorways and expressways.
+const FAST_ROAD: f32 = 27.0;
 /// Through traffic leaves at a gateway at least this far (m) from where it came in.
 const THROUGH_MIN_DISTANCE: f32 = 10_000.0;
 /// How much earlier (s) traffic coming in crosses the map's edge than the city's own trips
@@ -121,6 +134,11 @@ pub struct Demand {
     acc: f64,
     gateways: Vec<Gateway>,
     gateway_pos: Vec<(f32, f32)>,
+    /// Per gateway: the distance decay and candidates its traffic's destinations are chosen
+    /// with (fast roads or others).
+    gateway_reach: Vec<(f32, usize)>,
+    /// Distance decay for traffic across the map's edge on roads other than fast ones.
+    pub local_gateway_decay: f32,
     entry_truck_ok: Vec<bool>,
     exit_truck_ok: Vec<bool>,
     inbound: Flow,
@@ -215,6 +233,8 @@ impl Demand {
             acc: 0.0,
             gateways: Vec::new(),
             gateway_pos: Vec::new(),
+            gateway_reach: Vec::new(),
+            local_gateway_decay: LOCAL_GATEWAY_DECAY,
             entry_truck_ok: Vec::new(),
             exit_truck_ok: Vec::new(),
             inbound: Flow::default(),
@@ -315,6 +335,17 @@ impl Demand {
         self.gateway_pos = gs
             .iter()
             .map(|g| net.edge_mid[if g.entry != NONE { g.entry } else { g.exit } as usize])
+            .collect();
+        self.gateway_reach = gs
+            .iter()
+            .map(|g| {
+                let e = if g.entry != NONE { g.entry } else { g.exit };
+                if net.edge_speed[e as usize] >= FAST_ROAD {
+                    (GATEWAY_DECAY, CANDIDATES)
+                } else {
+                    (self.local_gateway_decay, LOCAL_CANDIDATES)
+                }
+            })
             .collect();
         self.entry_truck_ok = gs
             .iter()
@@ -467,7 +498,7 @@ impl Demand {
             let Some(o) = sample(from_cum, rng) else {
                 return;
             };
-            let Some(d) = self.near(self.pos[o], o, to_cum, self.decay, rng) else {
+            let Some(d) = self.near(self.pos[o], o, to_cum, self.decay, CANDIDATES, rng) else {
                 continue;
             };
             let truck = rng.f32() < truck_share && self.truck_ok[o] && self.truck_ok[d];
@@ -507,7 +538,8 @@ impl Demand {
                 break;
             };
             let cum = [&self.work_cum, &self.home_cum, &self.any_cum][pick(mix, rng)];
-            let Some(d) = self.near(self.gateway_pos[g], usize::MAX, cum, GATEWAY_DECAY, rng)
+            let (decay, candidates) = self.gateway_reach[g];
+            let Some(d) = self.near(self.gateway_pos[g], usize::MAX, cum, decay, candidates, rng)
             else {
                 continue;
             };
@@ -528,7 +560,8 @@ impl Demand {
                 break;
             };
             let cum = [&self.home_cum, &self.work_cum, &self.any_cum][pick(mix, rng)];
-            let Some(o) = self.near(self.gateway_pos[g], usize::MAX, cum, GATEWAY_DECAY, rng)
+            let (decay, candidates) = self.gateway_reach[g];
+            let Some(o) = self.near(self.gateway_pos[g], usize::MAX, cum, decay, candidates, rng)
             else {
                 continue;
             };
@@ -599,14 +632,16 @@ impl Demand {
         exclude: usize,
         cum: &[f64],
         decay: f32,
+        candidates: usize,
         rng: &mut Rng,
     ) -> Option<usize> {
-        let mut cand = [0usize; CANDIDATES];
-        let mut weight = [0f32; CANDIDATES];
+        let candidates = candidates.min(LOCAL_CANDIDATES);
+        let mut cand = [0usize; LOCAL_CANDIDATES];
+        let mut weight = [0f32; LOCAL_CANDIDATES];
         let mut total = 0.0;
         let mut n = 0;
-        for _ in 0..CANDIDATES * 2 {
-            if n == CANDIDATES {
+        for _ in 0..candidates * 2 {
+            if n == candidates {
                 break;
             }
             let c = sample(cum, rng)?;
