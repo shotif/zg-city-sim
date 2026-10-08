@@ -203,13 +203,6 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
                 d.edges.len()
             );
             let mut demand = Demand::new(net, d.edges, &d.home, &d.work, daily);
-            // GRAVITY_KM=5: another distance decay for trips within the map, to calibrate.
-            if let Some(km) = std::env::var("GRAVITY_KM")
-                .ok()
-                .and_then(|v| v.parse::<f32>().ok())
-            {
-                demand.decay = km * 1000.0;
-            }
             if std::env::var("NO_GATEWAYS").is_err() {
                 demand.set_gateways(net, &d.gateways);
             }
