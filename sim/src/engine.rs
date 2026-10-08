@@ -53,9 +53,11 @@ const YIELD_MARGIN: f32 = 1.5;
 /// where oncoming drivers can still brake comfortably, and drivers who could stop let it go
 /// first.
 const PUSH_IN_WAIT: f32 = 15.0;
-/// After waiting this long (s, red lights included: between signals a metre apart the way on
-/// may only clear at a red), a driver enters a junction even if the road behind it is full,
-/// so gridlocks can unwind.
+/// After waiting this long at a signal (s, red lights included: between signals a metre apart
+/// the way on may only clear at a red), a driver enters a junction even if the road behind it
+/// is full, so gridlocks can unwind. At junctions without signals drivers wait for room: one
+/// who pushed into a full junction on Zabok's D307, between roundabouts 5-40 m apart, stood
+/// in it and held up everyone crossing.
 const BLOCK_BOX_WAIT: f32 = 60.0;
 /// A vehicle standing inside a junction this long (s) no longer stops others from crossing
 /// its path (SUMO's --ignore-junction-blocker), so gridlocks can unwind.
@@ -1471,7 +1473,8 @@ impl Engine {
         // Into a roundabout only with room at the exit taken off it, however long the wait:
         // a driver who stops on the ring for a full exit blocks everyone behind.
         let entering = self.enters_roundabout(link);
-        if (entering || veh.wait < BLOCK_BOX_WAIT)
+        let signal = matches!(state, b'G' | b'g' | b'y');
+        if (entering || !signal || veh.wait < BLOCK_BOX_WAIT)
             && dist < speed * speed / (2.0 * p.decel) + p.length + 5.0
             && (!self.exit_has_room(link, veh)
                 || entering && !self.roundabout_exit_has_room(link, veh))
