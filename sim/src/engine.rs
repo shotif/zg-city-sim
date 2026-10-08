@@ -463,6 +463,10 @@ pub struct Engine {
     pub skip_phases: bool,
     /// Drivers look for another way when the roads ahead jam (`reroute_en_route`).
     pub reroute: bool,
+    /// Signals are re-timed from the traffic they serve (`retime_from_flows`).
+    pub retime: bool,
+    /// Vehicles that crossed the stop line onto each link since the last re-timing.
+    link_flow: Vec<u32>,
     router: Router,
     pending: BinaryHeap<Pending>,
     waiting: VecDeque<Waiting>,
@@ -490,8 +494,23 @@ pub struct Engine {
 /// Shortest green a re-timed phase gets (s).
 const MIN_GREEN: f32 = 6.0;
 /// Cycle of programs with four or more green phases (s): Zagreb's big junctions run cycles
-/// of 90-120 s.
+/// of 90-120 s. Also the longest cycle signals are re-timed to from the traffic they serve.
 const LONG_CYCLE: f32 = 120.0;
+/// Signals are re-timed from the traffic they served this often (s), as engineers set
+/// time-of-day plans from counts (`retime_from_flows`).
+const RETIME_INTERVAL: f32 = 900.0;
+/// Vehicles a lane lets through in an hour of green (the tests measure about 1,970).
+const SATURATION_FLOW: f32 = 1900.0;
+/// Green time lost starting each green phase (s).
+const STARTUP_LOST: f32 = 2.0;
+/// Shortest cycle a re-timed program runs (s).
+const MIN_CYCLE: f32 = 40.0;
+/// Webster's cycle grows without bound as the busiest lanes' flows near what a lane lets
+/// through; it is worked out with their shares of the cycle summing to at most this.
+const MAX_FLOW_RATIO: f32 = 0.9;
+/// Share of a new timing in each re-timing, the rest kept from the one before, so timings
+/// settle rather than chase the traffic they move.
+const RETIME_BLEND: f32 = 0.5;
 
 /// Netconvert's guessed signal programs give every phase about the same green, so a
 /// six-lane avenue gets as long as a side street, and programs it joins for clusters of
@@ -859,6 +878,7 @@ impl Engine {
         let n_lanes = net.lane_count();
         let n_edges = net.edge_count();
         let n_tls = net.d.tls_offset.len();
+        let n_links = net.d.link_from.len();
 
         let (tls_link_offsets, tls_links) = patch::tls_links(&net);
         merge_signal_phases(&mut net, &tls_link_offsets, &tls_links);
@@ -882,6 +902,8 @@ impl Engine {
             track_delay: false,
             skip_phases: true,
             reroute: true,
+            retime: true,
+            link_flow: vec![0; n_links],
             travel_time: free_time.clone(),
             free_time,
             edge_speed_sum: vec![0.0; n_edges],
@@ -985,6 +1007,9 @@ impl Engine {
         #[cfg(not(feature = "profile"))]
         let lap = |_: &mut Engine, _: usize| {};
         self.generate_demand();
+        if self.retime && self.step_no.is_multiple_of((RETIME_INTERVAL / DT) as u32) {
+            self.retime_from_flows();
+        }
         self.update_signals();
         lap(self, 0);
         self.plan();
@@ -1086,6 +1111,110 @@ impl Engine {
                 self.tls_elapsed[t] = 0.0;
             }
         }
+    }
+
+    /// Re-time the signals from the traffic they serve, by Webster's method, as engineers
+    /// time plans from counts. Each green phase needs the share of the cycle its busiest
+    /// incoming lane's traffic takes at a lane's saturation flow: the vehicles that crossed
+    /// the stop line since the last re-timing plus those still waiting, a movement green in
+    /// several phases counted in each by share. The cycle follows from those shares and the
+    /// time lost changing phases (`MIN_CYCLE` to `LONG_CYCLE`), its green is shared out by
+    /// them (at least `MIN_GREEN` each), and the timing moves halfway there. Trams call their
+    /// own phases (`skip_idle_phases`); programs the player set run as given.
+    fn retime_from_flows(&mut self) {
+        let hours = RETIME_INTERVAL / 3600.0;
+        let mut lanes: Vec<(u32, f32)> = Vec::new();
+        let mut shares: Vec<Option<f32>> = Vec::new();
+        for t in 0..self.net.d.tls_offset.len() {
+            let (a, b) = self.phase_range(t);
+            if self.net.tls_fixed(t) || b <= a + 1 {
+                continue;
+            }
+            let d = &self.net.d;
+            let links = &self.tls_links
+                [self.tls_link_offsets[t] as usize..self.tls_link_offsets[t + 1] as usize];
+            let states = |p: usize| {
+                &d.phase_states
+                    [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize]
+            };
+            let green_phase = |p: usize| {
+                let s = states(p);
+                !s.iter().any(|&c| matches!(c, b'y' | b'Y'))
+                    && s.iter().any(|&c| matches!(c, b'G' | b'g'))
+            };
+            let green = |p: usize, l: u32| {
+                matches!(
+                    states(p).get(d.link_tls_index[l as usize] as usize),
+                    Some(b'G' | b'g')
+                )
+            };
+            shares.clear();
+            let mut fixed = 0.0;
+            for p in a..b {
+                if !green_phase(p) {
+                    fixed += d.phase_duration[p];
+                    shares.push(None);
+                    continue;
+                }
+                lanes.clear();
+                for &l in links {
+                    let from = d.link_from[l as usize];
+                    if !green(p, l)
+                        || d.lane_allow[from as usize] & (vclass::PASSENGER | vclass::BUS) == 0
+                    {
+                        continue;
+                    }
+                    let phases = (a..b).filter(|&q| green_phase(q) && green(q, l)).count();
+                    let demand = (self.link_flow[l as usize] + self.waiting_for(from, l)) as f32
+                        / phases.max(1) as f32;
+                    match lanes.iter_mut().find(|(lane, _)| *lane == from) {
+                        Some(entry) => entry.1 += demand,
+                        None => lanes.push((from, demand)),
+                    }
+                }
+                let busiest = lanes.iter().map(|&(_, q)| q).fold(0.0, f32::max);
+                shares.push(Some(busiest / hours / SATURATION_FLOW));
+            }
+            let greens = shares.iter().flatten().count();
+            if greens < 2 {
+                continue;
+            }
+            let total: f32 = shares.iter().flatten().sum();
+            let lost = fixed + STARTUP_LOST * greens as f32;
+            let floor = fixed + MIN_GREEN * greens as f32;
+            let cycle = ((1.5 * lost + 5.0) / (1.0 - total.min(MAX_FLOW_RATIO)))
+                .clamp(MIN_CYCLE.max(floor), LONG_CYCLE.max(floor));
+            let spare = cycle - floor;
+            let d = &mut self.net.d;
+            for (k, share) in shares.iter().enumerate() {
+                let Some(y) = *share else {
+                    continue;
+                };
+                let p = a + k;
+                let split = if total > 0.0 {
+                    y / total
+                } else {
+                    1.0 / greens as f32
+                };
+                let target = MIN_GREEN + spare * split;
+                let green = RETIME_BLEND * target + (1.0 - RETIME_BLEND) * d.phase_duration[p];
+                d.phase_duration[p] = green;
+                d.phase_min_dur[p] = d.phase_min_dur[p].min(green);
+                d.phase_max_dur[p] = d.phase_max_dur[p].max(green);
+            }
+        }
+        self.link_flow.fill(0);
+    }
+
+    /// Vehicles standing on `lane` that wait to take `link`.
+    fn waiting_for(&self, lane: u32, link: u32) -> u32 {
+        self.lane_vehs[lane as usize]
+            .iter()
+            .filter(|&&u| {
+                let veh = &self.vehs[u as usize];
+                veh.next_link == link && veh.speed < 1.0
+            })
+            .count() as u32
     }
 
     /// The phase an actuated signal goes to from phase `left` instead of `next`: a green
@@ -2341,6 +2470,7 @@ impl Engine {
                 veh.cur_link = link as u32;
                 veh.next_link = NONE;
                 veh.stop_done = NONE;
+                self.link_flow[link] += 1;
             }
             {
                 let veh = &mut self.vehs[v as usize];
