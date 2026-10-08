@@ -112,6 +112,7 @@ Environment variables for the native runs:
 | Signal re-timing (`MIN_GREEN`, `LONG_CYCLE`, `MAX_EXTENSION`, `TRAM_TRACK_SHARE`) | `sim/src/engine.rs` | 6 s, 120 s, 20 s, 0.25 |
 | Phase skipping: lanes too short to show a call (`CALL_LANE`, plus a tram where trams run) | `sim/src/engine.rs` | 20 m (52 m) |
 | Tram junctions joined into road junctions within (`TRAM_JOIN_DIST`) | `pipeline/network.py` | 3 m |
+| Room to change lanes: lane choice looks past shorter roads (`LANE_CHANGE_ROOM`, `LANE_CHANGE_SECONDS`) | `sim/src/engine.rs` | 150 m, or 10 s at the speed limit if longer |
 | Re-routing on the way (`REROUTE_CHECK`, `REROUTE_SLOWER`, `REROUTE_LOSS`, `REROUTE_LANE_ROOM`) | `sim/src/engine.rs` | every 60 s, when the rest takes 25 % and 60 s longer than expected; 100 m to change lanes |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
 | Driver parameters | `sim/src/vtype.rs` | |
