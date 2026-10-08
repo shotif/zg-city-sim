@@ -92,10 +92,9 @@ CAR_TRIP_RATE = {
 }
 SETTLEMENTS = PIPELINE_DIR / "data" / "census_2021_settlements.json"
 # Share of the estimated demand the simulation runs (docs/VALIDATION.md). The simulated
-# junctions carry less than Zagreb's real ones: at full demand the morning queues never
-# clear, and at 70 % they still lock up by 10:00. Until junctions and signals are calibrated,
-# the demand is scaled to what the network carries.
-DEMAND_SCALE = 0.6
+# junctions carry less than Zagreb's real ones: at 80 % the afternoon locks up. At 70 % the
+# counts fit as well as at 60 % (M7, docs/PLAN.md) with about 1 % of trips removed.
+DEMAND_SCALE = 0.7
 # Height of one storey, used when a building's number of storeys is unknown.
 STOREY = 3.0
 # Share of floor area that is usable (walls, stairs, plant rooms excluded).

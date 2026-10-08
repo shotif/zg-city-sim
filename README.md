@@ -75,7 +75,7 @@ cd .. && python -m pipeline.validate /tmp/day   # writes docs/VALIDATION.md
 ```
 
 Both runners and the app simulate the calibrated share of the demand (`DEMAND_SCALE` in
-`pipeline/demand.py`, 60 % for now; see the validation report). Set `DEMAND_SCALE=1` in the
+`pipeline/demand.py`, 70 % for now; see the validation report). Set `DEMAND_SCALE=1` in the
 environment to run all of it natively.
 
 To work out a planned project's before and after numbers (the morning peak, 06:00-10:00, about

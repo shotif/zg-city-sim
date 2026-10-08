@@ -70,7 +70,7 @@ cd .. && python -m pipeline.projects compare <id> /tmp/p.json /tmp/today.json /t
 ```
 
 Environment variables for the native runs:
-- `DEMAND_SCALE=0.7` overrides the calibrated share of demand.
+- `DEMAND_SCALE=0.8` overrides the calibrated share of demand.
 - `DEBUG_EDGES=123,456` logs the vehicles removed from those edges, with what they see ahead.
 - `SEED=2` (the `day` and `run` examples) runs the same day with another seed, to see how much days vary.
 - `GRAVITY_KM=5` and `GATEWAY_LOCAL_KM=8` (the `day` and `run` examples) set the distance decay of trips within the map and across its edge on roads other than motorways, to calibrate them.
@@ -103,7 +103,7 @@ Environment variables for the native runs:
 
 | Knob | Where | Now |
 |---|---|---|
-| Share of estimated demand simulated (`DEMAND_SCALE`) | `pipeline/demand.py` | 0.6 |
+| Share of estimated demand simulated (`DEMAND_SCALE`) | `pipeline/demand.py` | 0.7 |
 | Car trips per resident (`CAR_TRIP_RATE`) | `pipeline/demand.py` | 0.65 in the City, 0.87 in the counties around it, 1.0 in Krapina-Zagorje |
 | Hourly profile and trip purposes (`HOURLY`, `purposes`) | `sim/src/demand.rs` | measured at 33 count stations (2025) |
 | Gravity decay | `sim/src/demand.rs` | 4 km |
