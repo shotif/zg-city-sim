@@ -78,11 +78,14 @@ const LATERAL_SPEED: f32 = 1.1;
 const EDGE_STATS_INTERVAL: u32 = 120;
 /// Drivers on their way weigh their route this often (s), and look for another way when the
 /// rest of it takes this share and these seconds longer than they expected
-/// (`reroute_en_route`). A new way that needs another lane is taken only with this much
-/// road left (m) to change lanes on.
+/// (`reroute_en_route`). They take a new way that saves at least this share and these
+/// seconds of the time left, and one that needs another lane only with this much road left
+/// (m) to change lanes on.
 const REROUTE_CHECK: f32 = 60.0;
 const REROUTE_SLOWER: f32 = 0.25;
 const REROUTE_LOSS: f32 = 60.0;
+const REROUTE_GAIN: f32 = 0.1;
+const REROUTE_GAIN_TIME: f32 = 60.0;
 const REROUTE_LANE_ROOM: f32 = 100.0;
 /// Edges at most this long (m), or this many seconds long at their speed limit, are too
 /// short to change lanes on: lane choice looks past them. On a motorway at 100 km/h, a lane
@@ -3779,8 +3782,9 @@ impl Engine {
     /// Drivers on their way weigh their route every `REROUTE_CHECK` seconds, each at its own
     /// moment: when the rest of it now takes a quarter and a minute longer than they expected
     /// (the roads ahead have jammed), they look for a faster way, as drivers with navigation
-    /// apps do (SUMO's rerouting device). A new way is taken only where the lane they are in
-    /// leads on along it or there is room to change lanes first.
+    /// apps do (SUMO's rerouting device). A new way is taken when it saves a tenth of the time
+    /// left and at least a minute, and only where the lane they are in leads on along it or
+    /// there is room to change lanes first.
     fn reroute_en_route(&mut self) {
         if !self.reroute {
             return;
@@ -3795,11 +3799,16 @@ impl Engine {
 
     /// The time the rest of a vehicle's route takes at today's measured speeds (s).
     fn route_cost_ahead(&self, veh: &Vehicle) -> f32 {
+        self.route_cost(veh, &veh.route[veh.route_idx as usize + 1..])
+    }
+
+    /// The time from where a vehicle is to the end of its road, then along `rest` (s).
+    fn route_cost(&self, veh: &Vehicle, rest: &[u32]) -> f32 {
         let d = &self.net.d;
         let lane = veh.lane as usize;
         let here = self.travel_time[d.lane_edge[lane] as usize]
             * (1.0 - veh.pos / d.lane_length[lane].max(0.1)).max(0.0);
-        here + veh.route[veh.route_idx as usize + 1..]
+        here + rest
             .iter()
             .map(|&e| self.travel_time[e as usize])
             .sum::<f32>()
@@ -3847,7 +3856,10 @@ impl Engine {
             && route[..] != veh.route[veh.route_idx as usize..]
         {
             let link = self.choose_link(lane, &route, 0, vclass);
-            if link != NONE || room > REROUTE_LANE_ROOM {
+            let saved = cost - self.route_cost(veh, &route[1..]);
+            if saved >= (REROUTE_GAIN * cost).max(REROUTE_GAIN_TIME)
+                && (link != NONE || room > REROUTE_LANE_ROOM)
+            {
                 self.stats.en_route_reroutes += 1;
                 let veh = &mut self.vehs[v as usize];
                 veh.route = route;
