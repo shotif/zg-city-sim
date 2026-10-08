@@ -55,8 +55,13 @@ const YIELD_MARGIN: f32 = 1.5;
 const PUSH_IN_WAIT: f32 = 15.0;
 /// After waiting this long (s, red lights included: between signals a metre apart the way on
 /// may only clear at a red), a driver enters a junction even if the road behind it is full,
-/// so gridlocks can unwind.
+/// so gridlocks can unwind; but not on the way into a roundabout (`ROUNDABOUT_AHEAD`).
 const BLOCK_BOX_WAIT: f32 = 60.0;
+/// Drivers whose road leads into a roundabout within this far (m) keep the junctions on the
+/// way clear, as drivers do at a roundabout's mouth. On Zabok's D307 a driver who pushed
+/// into a junction 40 m before the D14 roundabout stood in it and held up the traffic
+/// leaving the roundabout, whose ring then filled with drivers waiting for that exit.
+const ROUNDABOUT_AHEAD: f32 = 60.0;
 /// A vehicle standing inside a junction this long (s) no longer stops others from crossing
 /// its path (SUMO's --ignore-junction-blocker), so gridlocks can unwind.
 const JUNCTION_BLOCKER_TIME: f32 = 60.0;
@@ -1471,7 +1476,7 @@ impl Engine {
         // Into a roundabout only with room at the exit taken off it, however long the wait:
         // a driver who stops on the ring for a full exit blocks everyone behind.
         let entering = self.enters_roundabout(link);
-        if (entering || veh.wait < BLOCK_BOX_WAIT)
+        if (entering || veh.wait < BLOCK_BOX_WAIT || self.roundabout_ahead(link, veh))
             && dist < speed * speed / (2.0 * p.decel) + p.length + 5.0
             && (!self.exit_has_room(link, veh)
                 || entering && !self.roundabout_exit_has_room(link, veh))
@@ -1604,6 +1609,29 @@ impl Engine {
         let edge = |lane: u32| d.lane_edge[lane as usize];
         !self.net.is_roundabout(edge(d.link_from[link as usize]))
             && self.net.is_roundabout(edge(d.link_to[link as usize]))
+    }
+
+    /// Whether a vehicle taking `link` reaches a roundabout's ring within `ROUNDABOUT_AHEAD`
+    /// along its route.
+    fn roundabout_ahead(&self, link: u32, veh: &Vehicle) -> bool {
+        let d = &self.net.d;
+        let vclass = veh.params().vclass;
+        let (mut link, mut dist) = (link, 0.0);
+        for idx in (veh.route_idx + 1..).take(6) {
+            if self.enters_roundabout(link) {
+                return true;
+            }
+            let lane = d.link_to[link as usize];
+            dist += d.lane_length[lane as usize];
+            if dist > ROUNDABOUT_AHEAD {
+                return false;
+            }
+            link = self.choose_link_or_detour(lane, &veh.route, idx, vclass);
+            if link == NONE {
+                return false;
+            }
+        }
+        false
     }
 
     /// Room at the start of the road a vehicle entering a roundabout by `link` will leave
