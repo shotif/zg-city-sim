@@ -279,7 +279,6 @@ impl Engine {
 
         self.tls_link_offsets = tls_link_offsets;
         self.tls_links = tls_links;
-        self.link_flow = vec![0; self.net.d.link_from.len()];
         self.tls_phase = tls_phase;
         self.tls_elapsed = tls_elapsed;
 
