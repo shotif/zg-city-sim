@@ -56,7 +56,9 @@ const COMMUTERS_FROM_OUTSIDE: f32 = 0.75;
 const GATEWAY_DECAY: f32 = 12_000.0;
 /// The same for traffic across the map's edge on other roads, mostly between the towns on
 /// either side of it.
-pub const LOCAL_GATEWAY_DECAY: f32 = 6_000.0;
+/// Calibrated against the counts: 8 km cut gridlock by 15 % and brought the counts nearer
+/// on the whole; 4 km left the counted roads with too little traffic.
+pub const LOCAL_GATEWAY_DECAY: f32 = 8_000.0;
 /// Roads at least this fast (m/s, 97 km/h) carry traffic from far away across the map's
 /// edge: motorways and expressways.
 const FAST_ROAD: f32 = 27.0;

@@ -2466,3 +2466,52 @@ fn signals_are_retimed_from_the_traffic_they_serve() {
     let (before, after, _) = run(false);
     assert_eq!(before, after);
 }
+
+#[test]
+fn regional_traffic_across_the_map_s_edge_stays_regional() {
+    // A road leaves the map 2 km from a town and 24 km from a city with 20 times its jobs
+    // and homes. On a regional road, much of the traffic coming in stops in the town; on a
+    // motorway, most of it drives on to the city.
+    let town_share = |speed: f32| {
+        let mut b = Builder::default();
+        let j: Vec<u32> = [0.0, 2_000.0, 2_500.0, 24_000.0, 25_000.0]
+            .iter()
+            .map(|&x| b.junction(x, 0.0))
+            .collect();
+        let entry = b.road(j[0], j[1], 1, speed);
+        let exit = b.road(j[1], j[0], 1, speed);
+        let town = b.road(j[1], j[2], 1, 13.9);
+        b.road(j[2], j[3], 1, 25.0);
+        let city = b.road(j[3], j[4], 1, 13.9);
+        let net = b.build();
+        let mut demand = Demand::new(&net, vec![town, city], &[1.0, 20.0], &[1.0, 20.0], 0.0);
+        demand.set_gateways(
+            &net,
+            &[Gateway {
+                entry,
+                exit,
+                daily: 10_000.0,
+                through: 0.0,
+            }],
+        );
+        let mut rng = Rng::new(5);
+        let (mut to_town, mut all) = (0u32, 0u32);
+        let mut t = 0.0;
+        while t < 86_400.0 {
+            demand.generate(t, 0.5, 1.0, &mut rng, &mut |trip| {
+                if trip.flags == trip::ENTER {
+                    all += 1;
+                    to_town += (trip.to == town) as u32;
+                }
+            });
+            t += 0.5;
+        }
+        assert!(all > 4_000, "{all} trips in");
+        to_town as f32 / all as f32
+    };
+    let (regional, motorway) = (town_share(22.2), town_share(36.1));
+    assert!(
+        regional > 0.35 && regional > 2.0 * motorway,
+        "to the town: {regional:.2} on a regional road, {motorway:.2} on a motorway"
+    );
+}
