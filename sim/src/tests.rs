@@ -2308,3 +2308,57 @@ fn reach_counts_homes_and_jobs_by_travel_time_measured() {
         vec![[0.0, 0.0]; 2]
     );
 }
+
+#[test]
+fn drivers_take_another_way_when_the_road_ahead_jams() {
+    // On a 3 km road towards A, with two ways on from A: straight (1 km) or a 1.4 km detour
+    // through C. The straight way jams while the car is on its way to A, after it first
+    // weighed its route (a minute in).
+    let run = |jam: bool, reroute: bool| {
+        let mut b = Builder::default();
+        let s = b.junction(-3000.0, 0.0);
+        let a = b.junction(0.0, 0.0);
+        let m = b.junction(1000.0, 0.0);
+        let c = b.junction(500.0, 500.0);
+        let z = b.junction(1500.0, 0.0);
+        let entry = b.road(s, a, 1, 13.9);
+        let direct = b.road(a, m, 1, 13.9);
+        let up = b.road(a, c, 1, 13.9);
+        let down = b.road(c, m, 1, 13.9);
+        let last = b.road(m, z, 1, 13.9);
+        let lane = |b: &Builder, e| b.lane(e, 0);
+        for (from, to, j) in [
+            (entry, direct, a),
+            (entry, up, a),
+            (up, down, c),
+            (direct, last, m),
+            (down, last, m),
+        ] {
+            let (fl, tl) = (lane(&b, from), lane(&b, to));
+            b.connect(fl, tl, j, dir::STRAIGHT, b'M');
+        }
+        let mut engine = Engine::new(b.build(), 3);
+        engine.reroute = reroute;
+        let start = engine.net.edge_lanes(entry).start;
+        let v = engine.insert_at(vtype::CAR, vec![entry, direct, last], start, 10.0, 13.0);
+        let mut took_detour = false;
+        let steps = (400.0 / DT) as u32;
+        for k in 0..steps {
+            if jam && k == (70.0 / DT) as u32 {
+                engine.travel_time[direct as usize] = 1000.0;
+            }
+            engine.step();
+            let veh = &engine.vehs[v as usize];
+            if veh.alive() && veh.lane != NONE && engine.net.d.lane_edge[veh.lane as usize] == up {
+                took_detour = true;
+            }
+        }
+        assert_eq!(engine.stats.arrived, 1);
+        (took_detour, engine.stats.en_route_reroutes)
+    };
+    assert_eq!(run(true, true), (true, 1));
+    // Nothing jams: the driver keeps to the way chosen.
+    assert_eq!(run(false, true), (false, 0));
+    // Without re-routing, drivers stay in the jam.
+    assert_eq!(run(true, false), (false, 0));
+}

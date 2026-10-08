@@ -76,6 +76,14 @@ const CHANGE_THRESHOLD: f32 = 0.3;
 const LATERAL_SPEED: f32 = 1.1;
 /// Seconds between statistics updates of edge travel times and speeds.
 const EDGE_STATS_INTERVAL: u32 = 120;
+/// Drivers on their way weigh their route this often (s), and look for another way when the
+/// rest of it takes this share and these seconds longer than they expected
+/// (`reroute_en_route`). A new way that needs another lane is taken only with this much
+/// road left (m) to change lanes on.
+const REROUTE_CHECK: f32 = 60.0;
+const REROUTE_SLOWER: f32 = 0.25;
+const REROUTE_LOSS: f32 = 60.0;
+const REROUTE_LANE_ROOM: f32 = 100.0;
 /// Edges at most this long (m) are too short to change lanes on: lane choice looks past them.
 const LANE_CHANGE_ROOM: f32 = 150.0;
 /// How many short edges ahead lane choice looks through.
@@ -214,6 +222,11 @@ pub struct Vehicle {
     pub lc_timer: f32,
     /// Seconds until a failed detour may be tried again.
     pub reroute_timer: f32,
+    /// When the driver last weighed its route on the way (s, simulation time; negative:
+    /// not yet), and the seconds it then expected the rest of the way to take
+    /// (`reroute_en_route`).
+    pub plan_time: f64,
+    pub plan_cost: f32,
     /// A vehicle that needs to change into this vehicle's lane just ahead of it.
     pub coop: u32,
     /// Indicator: 1 left, -1 right.
@@ -253,6 +266,8 @@ impl Vehicle {
             wait_total: 0.0,
             lc_timer: 0.0,
             reroute_timer: 0.0,
+            plan_time: -1.0,
+            plan_cost: 0.0,
             coop: NONE,
             blink: 0,
             depart: 0.0,
@@ -294,6 +309,8 @@ pub struct Stats {
     /// Vehicles that found themselves in a lane with no way on along their route and went
     /// another way (M7e).
     pub lane_reroutes: u64,
+    /// Vehicles that took another way on their way because the roads ahead jammed.
+    pub en_route_reroutes: u64,
     /// Why removed vehicles were stuck (`Holdup` names).
     pub teleport_reasons: std::collections::BTreeMap<String, u64>,
     /// Details of the first few removals per reason (with `Engine::debug`).
@@ -438,6 +455,8 @@ pub struct Engine {
     pub track_delay: bool,
     /// Actuated signals skip green phases nobody is waiting for (`skip_idle_phases`).
     pub skip_phases: bool,
+    /// Drivers look for another way when the roads ahead jam (`reroute_en_route`).
+    pub reroute: bool,
     router: Router,
     pending: BinaryHeap<Pending>,
     waiting: VecDeque<Waiting>,
@@ -856,6 +875,7 @@ impl Engine {
             delay_root: Vec::new(),
             track_delay: false,
             skip_phases: true,
+            reroute: true,
             travel_time: free_time.clone(),
             free_time,
             edge_speed_sum: vec![0.0; n_edges],
@@ -970,6 +990,7 @@ impl Engine {
         self.start_transit();
         self.insert_vehicles();
         self.replan_some();
+        self.reroute_en_route();
         self.build_landmarks();
         lap(self, 4);
         self.collect_stats();
@@ -2666,6 +2687,7 @@ impl Engine {
                 veh.will_pass = true;
                 veh.wait = 0.0;
                 veh.blocked = 0.0;
+                veh.plan_time = -1.0;
                 return;
             }
         }
@@ -3742,6 +3764,92 @@ impl Engine {
         veh.route_idx = 0;
         veh.next_link = link;
         veh.reroute_timer = 0.0;
+        veh.plan_time = -1.0;
+    }
+
+    /// Drivers on their way weigh their route every `REROUTE_CHECK` seconds, each at its own
+    /// moment: when the rest of it now takes a quarter and a minute longer than they expected
+    /// (the roads ahead have jammed), they look for a faster way, as drivers with navigation
+    /// apps do (SUMO's rerouting device). A new way is taken only where the lane they are in
+    /// leads on along it or there is room to change lanes first.
+    fn reroute_en_route(&mut self) {
+        if !self.reroute {
+            return;
+        }
+        let period = (REROUTE_CHECK / DT) as u32;
+        let mut v = self.step_no % period;
+        while (v as usize) < self.vehs.len() {
+            self.weigh_route(v);
+            v += period;
+        }
+    }
+
+    /// The time the rest of a vehicle's route takes at today's measured speeds (s).
+    fn route_cost_ahead(&self, veh: &Vehicle) -> f32 {
+        let d = &self.net.d;
+        let lane = veh.lane as usize;
+        let here = self.travel_time[d.lane_edge[lane] as usize]
+            * (1.0 - veh.pos / d.lane_length[lane].max(0.1)).max(0.0);
+        here + veh.route[veh.route_idx as usize + 1..]
+            .iter()
+            .map(|&e| self.travel_time[e as usize])
+            .sum::<f32>()
+    }
+
+    fn weigh_route(&mut self, v: u32) {
+        let veh = &self.vehs[v as usize];
+        if !veh.alive()
+            || veh.transit.is_some()
+            || veh.lane == NONE
+            || self.net.lane_internal[veh.lane as usize]
+            || veh.route_idx as usize + 2 >= veh.route.len()
+        {
+            return;
+        }
+        let cost = self.route_cost_ahead(veh);
+        let now = self.time;
+        if veh.plan_time < 0.0 {
+            let veh = &mut self.vehs[v as usize];
+            (veh.plan_time, veh.plan_cost) = (now, cost);
+            return;
+        }
+        let expected = (veh.plan_cost - (now - veh.plan_time) as f32).max(0.0);
+        if cost <= expected * (1.0 + REROUTE_SLOWER) + REROUTE_LOSS {
+            return;
+        }
+        // Look for another way, but not right before the junction ahead, where the way on is
+        // already chosen; whatever is found, what the rest of the way takes now is what the
+        // driver expects from here on.
+        let d = &self.net.d;
+        let lane = veh.lane;
+        let room = d.lane_length[lane as usize] - veh.pos;
+        if room < REPLAN_MARGIN {
+            return;
+        }
+        let vclass = veh.params().vclass;
+        let here = d.lane_edge[lane as usize];
+        let dest = *veh.route.last().unwrap();
+        self.router.tolls = veh.weighs_tolls;
+        let found = self
+            .router
+            .route(&self.net, &self.travel_time, here, dest, vclass);
+        let veh = &self.vehs[v as usize];
+        if let Some(route) = found
+            && route[..] != veh.route[veh.route_idx as usize..]
+        {
+            let link = self.choose_link(lane, &route, 0, vclass);
+            if link != NONE || room > REROUTE_LANE_ROOM {
+                self.stats.en_route_reroutes += 1;
+                let veh = &mut self.vehs[v as usize];
+                veh.route = route;
+                veh.route_idx = 0;
+                veh.next_link = link;
+            }
+        }
+        let veh = &self.vehs[v as usize];
+        let cost = self.route_cost_ahead(veh);
+        let veh = &mut self.vehs[v as usize];
+        (veh.plan_time, veh.plan_cost) = (now, cost);
     }
 
     /// Re-plan the next few vehicles waiting since the last edit.

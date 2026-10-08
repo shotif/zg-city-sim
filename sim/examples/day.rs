@@ -15,7 +15,8 @@
 //! queued at junctions by holdup).
 //!
 //! `SEED=2` runs the same day with another seed; `NO_PHASE_SKIP=1` runs actuated signals
-//! through every phase of their cycle.
+//! through every phase of their cycle; `NO_REROUTE=1` keeps drivers on the route they chose
+//! at the start, however the roads ahead jam.
 
 use std::time::Instant;
 
@@ -72,6 +73,7 @@ fn main() {
     // Where junctions lose time (M7a).
     engine.track_delay = true;
     engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
+    engine.reroute = std::env::var("NO_REROUTE").is_err();
     let delay_total = |e: &Engine| -> [f64; Holdup::COUNT] {
         let mut sum = [0f64; Holdup::COUNT];
         for row in &e.delay {
@@ -198,7 +200,7 @@ fn main() {
         .collect();
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
-         \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"removedBecause\": {:?}, \
+         \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"removedBecause\": {:?}, \
          \"removedAt\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
@@ -207,6 +209,7 @@ fn main() {
         s.teleported,
         s.no_route,
         s.insert_failed,
+        s.en_route_reroutes,
         s.teleport_reasons,
         removed_at.join(", "),
         HOLDUPS,

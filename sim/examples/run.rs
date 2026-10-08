@@ -295,6 +295,7 @@ fn main() {
     engine.set_time(start * 3600.0);
     engine.track_delay = true;
     engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
+    engine.reroute = std::env::var("NO_REROUTE").is_err();
 
     // WATCH_JUNCTIONS=j1,j2: every simulated minute, the stopped front vehicle of each queue
     // into those junctions, why it waits and who it looks out for.
@@ -430,6 +431,10 @@ fn main() {
     println!(
         "lane changes missed: {} vehicles went another way from a lane with no way on",
         s.lane_reroutes
+    );
+    println!(
+        "routes changed on the way, around jams ahead: {}",
+        s.en_route_reroutes
     );
     println!("removed vehicles were: {:?}", s.teleport_reasons);
     let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
