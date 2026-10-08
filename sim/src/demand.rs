@@ -37,8 +37,10 @@ fn purposes(hour: usize) -> (f32, f32) {
     }
 }
 
-/// Candidate destinations the gravity model chooses between.
-const CANDIDATES: usize = 8;
+/// Candidate destinations the gravity model chooses between: drawn by attractiveness, then
+/// one chosen by distance. With 8, from a town at the map's edge all of them were often far
+/// away, and trips within the map averaged 11.7 km instead of 10.3 km in the morning peak.
+const CANDIDATES: usize = 64;
 /// Share of trips across the map's edge that are commutes (the rest are errands, business
 /// and visits), and the share of those commuters who live beyond the map (the rest live
 /// inside it and work beyond it).
