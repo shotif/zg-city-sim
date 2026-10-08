@@ -7,7 +7,7 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | Source | What we use it for | Licence | Status in the project |
 |---|---|---|---|
 | Copernicus DEM GLO-30 | Terrain | Copernicus (free, attribution) | ✅ in use |
-| ESA WorldCover 2021 | Ground land cover | CC BY 4.0 | ✅ in use |
+| ESA WorldCover 2021 | Ground land cover; which roads without a speed limit run through settlements (M7l) | CC BY 4.0 | ✅ in use |
 | OpenStreetMap (OSM US Slice extract) | Road network, building types and roof shapes, buildings outside the City | ODbL 1.0 | ✅ in use |
 | ZG3D 2022, City of Zagreb | Buildings: 357,683 footprints with measured heights; LoD2 3D models | Otvorena dozvola | ✅ in use (footprints, heights, roof type from volume); LoD2 roofs later |
 | ZET GTFS static | Tram and bus routes, stops, timetables | Otvorena dozvola | ✅ in use: weekday timetable on the network |
