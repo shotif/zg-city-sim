@@ -18,8 +18,11 @@ import numpy as np
 import osmium
 import shapely
 import sumo
+from pyproj import Transformer
+from scipy.ndimage import gaussian_filter
 
-from .config import CACHE_DIR, OUTPUT_DIR
+from .config import CACHE_DIR, CRS, OUTPUT_DIR, WORLD
+from .landcover import BUILT_UP, landcover_grid
 
 if TYPE_CHECKING:
     from .projects import Patch
@@ -106,7 +109,77 @@ def wanted_way(tags: osmium.osm.TagList) -> bool:
 
 #: Version of the roads written for netconvert (`filter_roads`): bump it when they change, so
 #: cached networks are built again.
-ROADS_VERSION = 2
+ROADS_VERSION = 3
+
+#: Main road classes OpenStreetMap often leaves without a speed limit (38 % of secondary
+#: and 79 % of tertiary roads by length). Netconvert then assumes 100 km/h (primary,
+#: secondary) or 80 km/h (tertiary) through towns too, so a county road through Oroslavje
+#: beat the D307 beside it, tagged 50 km/h, and took nearly all its traffic.
+SPEED_CLASSES = {
+    "primary",
+    "primary_link",
+    "secondary",
+    "secondary_link",
+    "tertiary",
+    "tertiary_link",
+}
+#: Mean share of built-up land (ESA WorldCover) within about 50 m along a road at or above
+#: which it runs through a settlement.
+BUILT_UP_SHARE = 0.25
+#: Resolution (m) of the built-up map and the spacing of samples along a road.
+BUILT_UP_RES = 10.0
+BUILT_UP_STEP = 20.0
+
+
+def default_maxspeed(tags: dict[str, str], built_up: float) -> str | None:
+    """Croatian law's speed limit for a main road OpenStreetMap gives none: 50 km/h in a
+    settlement (built up around the road, or the road named a street or square, as village
+    streets with gardens look like fields from space), 90 km/h outside it on primary and
+    secondary roads. Tertiary roads outside keep netconvert's 80 km/h: most are narrow and
+    winding."""
+    highway = tags.get("highway", "")
+    if highway not in SPEED_CLASSES or any(k.startswith("maxspeed") for k in tags):
+        return None
+    name = tags.get("name", "").lower()
+    if built_up >= BUILT_UP_SHARE or "ulica" in name or "trg" in name.split():
+        return "50"
+    return "90" if highway.startswith(("primary", "secondary")) else None
+
+
+def speed_limits(src: Path, ways: set[int]) -> dict[int, str]:
+    """`default_maxspeed` for these ways (main roads without a speed limit), from the mean
+    share of built-up land within about 50 m, sampled every `BUILT_UP_STEP` along them."""
+    if not ways:
+        return {}
+    grid = landcover_grid(BUILT_UP_RES)
+    share = gaussian_filter((grid == BUILT_UP).astype(np.float32), sigma=50.0 / BUILT_UP_RES)
+    rows, cols = share.shape
+    to_crs = Transformer.from_crs("EPSG:4326", CRS, always_xy=True)
+    limits: dict[int, str] = {}
+    for obj in osmium.FileProcessor(str(src), osmium.osm.NODE | osmium.osm.WAY).with_locations():
+        if not obj.is_way() or obj.id not in ways:
+            continue
+        lon = [n.lon for n in obj.nodes if n.location.valid()]
+        lat = [n.lat for n in obj.nodes if n.location.valid()]
+        if len(lon) < 2:
+            continue
+        e, n = (np.asarray(v) for v in to_crs.transform(lon, lat))
+        seg = np.hypot(np.diff(e), np.diff(n))
+        k = np.maximum(1, (seg / BUILT_UP_STEP).astype(int))
+        frac = np.concatenate([(np.arange(m) + 0.5) / m for m in k])
+        idx = np.repeat(np.arange(len(seg)), k)
+        se = e[idx] + frac * (e[idx + 1] - e[idx])
+        sn = n[idx] + frac * (n[idx + 1] - n[idx])
+        c = ((se - WORLD.min_e) / BUILT_UP_RES).astype(int)
+        r = ((WORLD.max_n - sn) / BUILT_UP_RES).astype(int)
+        inside = (r >= 0) & (r < rows) & (c >= 0) & (c < cols)
+        weights = np.repeat(seg / k, k)
+        values = np.where(inside, share[r.clip(0, rows - 1), c.clip(0, cols - 1)], 0.0)
+        built_up = float((values * weights).sum() / max(weights.sum(), 1e-6))
+        if limit := default_maxspeed(dict(obj.tags), built_up):
+            limits[obj.id] = limit
+    return limits
+
 
 #: Road classes whose missing lane counts are taken from their neighbours (`infer_lanes`).
 LANE_CLASSES = {"motorway", "trunk", "primary", "secondary", "tertiary"}
@@ -164,6 +237,7 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
     way_ids: set[int] = set()
     node_ids: set[int] = set()
     main: dict[int, tuple[list[int], dict[str, str]]] = {}
+    unlimited: set[int] = set()
     for way in osmium.FileProcessor(str(src), osmium.osm.WAY):
         if way.id in patch_ways:
             way_ids.add(way.id)
@@ -172,7 +246,12 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
             node_ids.update(n.ref for n in way.nodes)
             if way.tags.get("highway") in LANE_CLASSES and len(way.nodes) > 1:
                 main[way.id] = ([n.ref for n in way.nodes], dict(way.tags))
+            if way.tags.get("highway") in SPEED_CLASSES and not any(
+                t.k.startswith("maxspeed") for t in way.tags
+            ):
+                unlimited.add(way.id)
     lanes = infer_lanes(main)
+    limits = speed_limits(src, unlimited)
     for nodes, _ in patch_ways.values():
         node_ids.update(nodes)
     new_ways = {w: v for w, v in patch_ways.items() if w not in way_ids}
@@ -206,10 +285,13 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
             if obj.id in patch_ways:
                 nodes, tags = patch_ways[obj.id]
                 writer.add_way(obj.replace(nodes=nodes, tags=tags))
-            elif obj.id in lanes:
-                writer.add_way(obj.replace(tags={**dict(obj.tags), "lanes": str(lanes[obj.id])}))
             elif obj.id in way_ids:
-                writer.add_way(obj)
+                extra = {}
+                if obj.id in lanes:
+                    extra["lanes"] = str(lanes[obj.id])
+                if obj.id in limits:
+                    extra["maxspeed"] = limits[obj.id]
+                writer.add_way(obj.replace(tags={**dict(obj.tags), **extra}) if extra else obj)
             continue
         if not ways_done:
             finish_ways()
@@ -230,6 +312,7 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
         "nodes": len(node_ids),
         "restrictions": restrictions,
         "lanesInferred": len(lanes),
+        "speedLimits": {v: sum(1 for x in limits.values() if x == v) for v in ("50", "90")},
     }
 
 
