@@ -2411,63 +2411,6 @@ fn drivers_move_over_for_an_exit_lane_before_it_begins() {
 }
 
 #[test]
-fn signals_are_retimed_from_the_traffic_they_serve() {
-    // Actuated greens for east-west and north-south, timed alike to start with (by lanes,
-    // 4 to 2). Eastbound traffic comes every 3 s, northbound every minute: after a quarter
-    // of an hour the east-west green is planned much longer than the north-south one, and
-    // the cycle stays within what Zagreb's signals run.
-    let mut d = signalled_crossroads_data(&[
-        (30.0, "GGGGrr"),
-        (3.0, "yyyyrr"),
-        (30.0, "rrrrGG"),
-        (3.0, "rrrryy"),
-    ]);
-    for p in [0, 2] {
-        d.phase_min_dur[p] = 5.0;
-        d.phase_max_dur[p] = 50.0;
-    }
-    let run = |retime: bool| {
-        let mut engine = Engine::new(Network::build(d.clone()).unwrap(), 1);
-        engine.retime = retime;
-        engine.set_time(0.0);
-        let (eb_in, eb_out, nb_in, nb_out) = (0, 1, 4, 5);
-        for k in 0..340 {
-            engine.add_trip(Trip {
-                depart: k as f64 * 3.0,
-                from: eb_in,
-                to: eb_out,
-                vtype: vtype::CAR,
-                flags: 0,
-            });
-        }
-        for k in 0..17 {
-            engine.add_trip(Trip {
-                depart: k as f64 * 60.0,
-                from: nb_in,
-                to: nb_out,
-                vtype: vtype::CAR,
-                flags: 0,
-            });
-        }
-        let before = program(&engine);
-        run_until(&mut engine, 960.0, assert_no_overlaps);
-        (before, program(&engine), engine.stats.teleported)
-    };
-    let (before, after, removed) = run(true);
-    assert_eq!(removed, 0);
-    let (ew, ns) = (after[0].1, after[2].1);
-    assert!(
-        ew > 2.0 * ns,
-        "east-west {ew:.1} s, north-south {ns:.1} s (before {before:?})"
-    );
-    let cycle: f32 = after.iter().map(|(_, t)| t).sum();
-    assert!((40.0..=120.0).contains(&cycle), "cycle {cycle:.1} s");
-    // Without re-timing the program stays as it was.
-    let (before, after, _) = run(false);
-    assert_eq!(before, after);
-}
-
-#[test]
 fn regional_traffic_across_the_map_s_edge_stays_regional() {
     // A road leaves the map 2 km from a town and 24 km from a city with 20 times its jobs
     // and homes. On a regional road, much of the traffic coming in stops in the town; on a

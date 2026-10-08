@@ -304,7 +304,6 @@ fn main() {
     engine.track_delay = true;
     engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
     engine.reroute = std::env::var("NO_REROUTE").is_err();
-    engine.retime = std::env::var("NO_RETIME").is_err();
 
     // WATCH_JUNCTIONS=j1,j2: every simulated minute, the stopped front vehicle of each queue
     // into those junctions, why it waits and who it looks out for.

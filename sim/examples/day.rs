@@ -16,7 +16,7 @@
 //!
 //! `SEED=2` runs the same day with another seed; `NO_PHASE_SKIP=1` runs actuated signals
 //! through every phase of their cycle; `NO_REROUTE=1` keeps drivers on the route they chose
-//! at the start, however the roads ahead jam; `NO_RETIME=1` keeps signal timings as guessed.
+//! at the start, however the roads ahead jam.
 
 use std::time::Instant;
 
@@ -74,7 +74,6 @@ fn main() {
     engine.track_delay = true;
     engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
     engine.reroute = std::env::var("NO_REROUTE").is_err();
-    engine.retime = std::env::var("NO_RETIME").is_err();
     let delay_total = |e: &Engine| -> [f64; Holdup::COUNT] {
         let mut sum = [0f64; Holdup::COUNT];
         for row in &e.delay {
