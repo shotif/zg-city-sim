@@ -69,11 +69,6 @@ NETCONVERT_OPTIONS = [
     "--junctions.join-dist", "15",
     "--roundabouts.guess",
     "--tls.guess-signals",
-    # OSM maps many of Zagreb's signals on the approaches, a little way out from the junction,
-    # often with one approach (a minor road, a level crossing) without one: allow 35 m and one
-    # approach without a signal, or Slavonska avenija at Kruge runs as a give-way junction.
-    "--tls.guess-signals.dist", "35",
-    "--tls.guess-signals.slack", "1",
     "--tls.discard-simple",
     "--tls.join",
     "--tls.default-type", "actuated",
