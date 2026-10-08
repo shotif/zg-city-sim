@@ -113,7 +113,7 @@ Environment variables for the native runs:
 | Phase skipping: lanes too short to show a call (`CALL_LANE`, plus a tram where trams run) | `sim/src/engine.rs` | 20 m (52 m) |
 | Tram junctions joined into road junctions within (`TRAM_JOIN_DIST`) | `pipeline/network.py` | 3 m |
 | Room to change lanes: lane choice looks past shorter roads (`LANE_CHANGE_ROOM`, `LANE_CHANGE_SECONDS`) | `sim/src/engine.rs` | 150 m, or 10 s at the speed limit if longer |
-| Re-routing on the way (`REROUTE_CHECK`, `REROUTE_SLOWER`, `REROUTE_LOSS`, `REROUTE_LANE_ROOM`) | `sim/src/engine.rs` | every 60 s, when the rest takes 25 % and 60 s longer than expected; 100 m to change lanes |
+| Re-routing on the way (`REROUTE_CHECK`, `REROUTE_SLOWER`, `REROUTE_LOSS`, `REROUTE_GAIN`, `REROUTE_GAIN_TIME`, `REROUTE_LANE_ROOM`) | `sim/src/engine.rs` | every 60 s, when the rest takes 25 % and 60 s longer than expected; a new way that saves 10 % and 60 s; 100 m to change lanes |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
 | Driver parameters | `sim/src/vtype.rs` | |
 | Weather factors on driving (`Weather::RAIN`, …) | `sim/src/weather.rs`, mirrored in `web/src/world/weather.ts` | rain 0.95 speed, 1.1 headway, 0.95 acceleration; heavy snow 0.65, 1.4, 0.65 |
