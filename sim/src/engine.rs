@@ -137,7 +137,9 @@ pub mod stat {
     pub const VEHICLE_HOURS: usize = 17;
     pub const DELAY_HOURS: usize = 18;
     pub const VEHICLE_KM: usize = 19;
-    pub const LEN: usize = 20;
+    /// HŽ trains running.
+    pub const TRAINS: usize = 20;
+    pub const LEN: usize = 21;
 }
 
 /// Trip flags.
@@ -3943,6 +3945,7 @@ impl Engine {
         out[stat::VEHICLE_HOURS] = s.vehicle_seconds / 3600.0;
         out[stat::DELAY_HOURS] = s.delay_seconds / 3600.0;
         out[stat::VEHICLE_KM] = s.vehicle_metres / 1000.0;
+        out[stat::TRAINS] = s.trains as f64;
         out
     }
 

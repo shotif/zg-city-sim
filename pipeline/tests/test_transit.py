@@ -1,7 +1,15 @@
 import numpy as np
 import shapely
 
-from pipeline.transit import parse_time, place_stop, tangent, weekday_service
+from pipeline.transit import (
+    TrackGraph,
+    along_shape,
+    parse_time,
+    place_stop,
+    quickest_tracks,
+    tangent,
+    weekday_service,
+)
 
 
 def test_parse_time_past_midnight():
@@ -41,3 +49,55 @@ def test_place_stop_takes_the_lane_running_the_routes_way():
     assert abs(frac - 0.25) < 1e-6
     # Nothing in range.
     assert place_stop(shapely.Point(25, 500), np.array([1.0, 0.0]), tree, lines, 30.0) is None
+
+
+def test_stops_on_an_out_and_back_route_go_on_their_own_side():
+    # East along a street to a turning loop at x = 1000, then back west 6 m to the north.
+    shape = shapely.LineString([(0, 0), (1000, 0), (1010, 3), (1000, 6), (0, 6)])
+    # Stops in the order served: two going east (on y = 0), two coming back (on y = 6).
+    stops = np.array([[200, 1], [600, 1], [600, 5], [200, 5]])
+    at = along_shape(shape, stops)
+    assert abs(at[0] - 200) < 5 and abs(at[1] - 600) < 5
+    back = shape.length - 200
+    assert abs(at[2] - (back - 400)) < 5 and abs(at[3] - back) < 5
+    np.testing.assert_allclose(tangent(shape, at[3]), [-1, 0], atol=1e-6)
+
+
+def rail_net(lengths: list[float], links: list[tuple[int, int]]) -> tuple[dict, dict]:
+    """A rail network of one-lane edges at 20 m/s (lane i on edge i) and links between them."""
+    n = len(lengths)
+    net = {
+        "edgeFlags": np.zeros(n, np.uint8),
+        "edgeFrom": np.arange(n, dtype=np.uint32),
+        "laneEdge": np.arange(n, dtype=np.uint32),
+        "laneAllow": np.full(n, 16, np.uint16),
+        "laneLength": np.asarray(lengths, np.float32),
+        "laneSpeed": np.full(n, 20.0, np.float32),
+        "linkFrom": np.asarray([a for a, _ in links], np.uint32),
+        "linkTo": np.asarray([b for _, b in links], np.uint32),
+        "linkVia": np.full(len(links), 0xFFFFFFFF, np.uint32),
+    }
+    return net, {"flags": {"internal": 1}}
+
+
+def test_trains_take_the_platform_their_track_leads_to():
+    # The train comes in on edge 0. The station after has two platforms: edge 2, nearest
+    # the station, which the train can reach only by backing out of a 2 km siding (3, 4),
+    # and edge 1, a little further off, straight ahead. Edge 5 leads nowhere.
+    graph = TrackGraph(
+        *rail_net([1000, 500, 500, 2000, 2000, 500], [(0, 1), (0, 3), (3, 4), (4, 2)]), 16
+    )
+    assert abs(graph.between(0, 0.5, 1, 0.5) - 37.5) < 0.01
+    assert abs(graph.between(0, 0.5, 2, 0.5) - 237.5) < 0.01
+    assert graph.between(1, 0.5, 0, 0.5) == np.inf
+    picked = quickest_tracks(
+        graph,
+        [[(0, 0.5, 0.0)], [(2, 0.5, 0.0), (1, 0.5, 4.0)], [(5, 0.5, 0.0)]],
+    )
+    assert picked == [(0, 0.5), (1, 0.5), None]
+    # A station no track leads to from the one before is left out, not the trip.
+    assert quickest_tracks(graph, [[(5, 0.5, 0.0)], [(0, 0.2, 0.0)], [(1, 0.5, 0.0)]]) == [
+        None,
+        (0, 0.2),
+        (1, 0.5),
+    ]

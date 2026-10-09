@@ -578,6 +578,17 @@ def report(
         f"- Busiest hour: {peak['hour']:02d}:00 with {fmt(peak['running'])} vehicles on the "
         f"road on average ({fmt(peak['outside'])} of them coming from or going beyond the "
         f"map), mean speed {peak['meanSpeedKmh']:.0f} km/h.",
+    ]
+    if transit := day.get("transit"):
+        # How late buses, trams and trains left their stops (day runs since M8a).
+        for i, kind in enumerate(transit["types"]):
+            lines.append(
+                f"- {kind.capitalize()} runs started: {fmt(transit['started'][i])} "
+                f"({fmt(transit['notRouted'][i])} not routed); they left "
+                f"{fmt(transit['departures'][i])} stops {transit['lateMean'][i]:.0f} s late on "
+                f"average, at most {transit['lateMax'][i] / 60:.0f} min."
+            )
+    lines += [
         "",
         "| Hour | Vehicles on the road | Crossing the map's edge | Mean speed (km/h) | "
         "Stopped | Trips started | Mean trip (min) | Mean trip (km) |",

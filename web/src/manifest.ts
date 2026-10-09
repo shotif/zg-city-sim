@@ -63,14 +63,16 @@ export interface DemandLayer {
   attribution?: Attribution | Attribution[];
 }
 
-/** ZET trams and buses, a weekday's timetable placed on the network (pipeline/transit.py). */
+/** ZET trams and buses and HŽ trains, a weekday's timetable placed on the network
+ * (pipeline/transit.py). */
 export interface TransitLayer {
   index: string;
   serviceDate: string;
   trips: number;
   tramTrips: number;
   busTrips: number;
-  attribution?: Attribution;
+  trainTrips?: number;
+  attribution?: Attribution | Attribution[];
 }
 
 /** Places the news reported traffic trouble at (pipeline/news.py). */

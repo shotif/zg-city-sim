@@ -129,6 +129,7 @@ Two layers carry a **restrictive** DGU clause (use only for approved purposes): 
   - All `calendar.txt` weekday flags are 0. Service comes only from `calendar_dates`: 95 dates, 2026-09-28 → 2026-12-31.
   - Three Kvaternikov trg stops (`236`, `236_10`, `236_13`) have bogus coordinates.
   - `shape_dist_traveled` is empty.
+  - Some shapes wander: tram line 3's (`3_3`) is 61.7 km long for a route of about 10 km, running back and forth past its stops, so the shape's direction at a stop can be the wrong way. Tram stops therefore go on any tram track within 30 m, and each run of stops takes the tracks with the quickest way between them (as HŽ's stations do). Bus stops go on a lane running the way the shape does where it passes them, taken in the order the stops are served (a route running out and back along one street passes each stop on both sides).
 
 ### GTFS-RT
 
@@ -145,8 +146,11 @@ The national access point also lists ZET and HŽ GTFS, but under a contract with
 - **Listing:** <https://data.gov.hr/ckan/dataset/vozni-red-h-putni-kog-prijevoza-u-gtfs-obliku>, by HŽ Putnički prijevoz d.o.o., "so the public can easily read the data", last updated 2026-04-15.
 - **Licence:** none stated ("Ne postoji licenca"). Used with attribution in the app and here; the raw files are downloaded at build time and never committed. The national access point's copy is under a paid contract; this is HŽPP's own free download.
 - **Feed (downloaded 2026-10-09):** 143 routes (138 rail, 5 replacement bus), 460 stops (45 inside the map), 44,491 trips, 616,353 stop times. No `shapes.txt` and no `calendar_dates.txt`: service comes from 45,647 `calendar.txt` ranges (mostly one week each) from 2025-12-08 to 2026-12-13. Times to the minute.
-- **On 2026-09-30 (a Wednesday, ZET's service date):** 748 trips run, 344 of them call inside the map; Zagreb Glavni kolodvor 264 calls, Dugo Selo 133, Zaprešić 118, Maksimir 118, Sesvete 111, Zabok 109.
-- **Quirks:** without shapes, each station's track is the one running from the station before towards the station after. OSM draws most railways one way: netconvert takes them as one-way, so the pipeline marks main-line tracks without a direction as usable both ways.
+- **On 2026-09-30 (a Wednesday, ZET's service date):** 748 trips run (727 of them trains), 292 trains call at a station inside the map and 291 are simulated; Zagreb Glavni kolodvor 264 calls, Dugo Selo 133, Zaprešić 118, Maksimir 118, Sesvete 111, Zabok 109. All 44 stations inside the map with calls that day are served.
+- **Quirks:**
+  - Without shapes, a station's track is one of those within 80 m running from the station before towards the station after, and each trip takes those with the quickest way between them: the nearest platform track can be one the train's own track does not lead to without turning back at a siding kilometres away.
+  - OSM draws most railways one way: netconvert takes them as one-way, so the pipeline marks main-line tracks without a direction as usable both ways.
+  - OSM gives 20 km/h on stretches of the M102 and M103 near Dugo Selo (1.5 km on the M103, for example), which the timetable does not allow for: 31 legs between stations take longer at the speed limits than the timetable gives, by up to 127 s.
 
 ## 3. Census 2021 (DZS)
 

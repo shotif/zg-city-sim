@@ -198,10 +198,26 @@ fn main() {
         .take(25)
         .map(|(n, e)| format!("[{e}, {n}]"))
         .collect();
+    // Buses, trams and trains (engine types 2-4): runs started and not routed, departures
+    // from stops, and how late they left them (mean and most, s).
+    let transit = engine.transit.as_ref().map_or("null".to_string(), |tr| {
+        let k = 2..5;
+        format!(
+            "{{\"types\": [\"bus\", \"tram\", \"train\"], \"started\": {:?}, \"notRouted\": {:?}, \
+             \"departures\": {:?}, \"lateMean\": {:?}, \"lateMax\": {:?}}}",
+            &tr.started_by[k.clone()],
+            &tr.failed_by[k.clone()],
+            &tr.departures[k.clone()],
+            k.clone()
+                .map(|i| (tr.late_sum[i] / tr.departures[i].max(1) as f64).round())
+                .collect::<Vec<_>>(),
+            k.map(|i| tr.late_max[i].round()).collect::<Vec<_>>(),
+        )
+    });
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"removedBecause\": {:?}, \
-         \"removedAt\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
+         \"removedAt\": [{}], \"transit\": {transit}, \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
         s.departed,

@@ -21,6 +21,8 @@ from pathlib import Path
 import numpy as np
 import shapely
 from pyproj import Transformer
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import dijkstra
 
 from .config import CACHE_DIR, CRS, ORIGIN_E, ORIGIN_N, OUTPUT_DIR, WORLD
 from .packed import read_packed, write_packed
@@ -59,6 +61,23 @@ TRACK_END_REACH = 4000.0
 DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 # A lane serves a stop's direction if it runs within this angle of the route's shape.
 MIN_ALIGNMENT = 0.5  # cosine
+# Where a route's shape passes a stop: places on the shape (sampled this often, m) nearest
+# the stop on each pass within this much (m) of the nearest of all. Stops are taken in order
+# along the shape; one out of order counts as this far off it (m).
+SHAPE_STEP = 5.0
+SHAPE_SLACK = 20.0
+SHAPE_BACK = 1000.0
+# A station's track is one of the tracks running the train's way within `STOP_RADIUS` (the
+# nearest this many), and a train from beyond the map enters on one of the track ends nearest
+# the line from the station before: each trip takes those with the quickest way between its
+# stations, so that it never has to turn back at a siding to reach a platform on a track its
+# own does not lead to.
+TRACK_CHOICES = 12
+# Seconds counted for each metre a track lies off the station (or a track end off the line
+# between the stations either side of it), so that of tracks equally quick the nearest wins.
+OFF_STATION_COST = 0.2
+# Seconds counted for a station a trip leaves out, as no track leads there from those before.
+LEFT_OUT_COST = 3600.0
 
 
 def fetch_gtfs(max_age_days: int = MAX_AGE_DAYS) -> Path:
@@ -145,6 +164,36 @@ def tangent(line: shapely.LineString, distance: float, step: float = 8.0) -> np.
     return v / n if n > 0 else v
 
 
+def along_shape(shape: shapely.LineString, points: np.ndarray) -> list[float]:
+    """How far along `shape` each of `points` (a trip's stops, in order) lies. A shape can pass
+    a stop more than once (a route running out and back along one street passes each stop
+    on both sides): of the places nearest the stop on each pass, the stops take those in the
+    order they are served that lie nearest them in all (Viterbi)."""
+    d = np.minimum(np.arange(0.0, shape.length + SHAPE_STEP, SHAPE_STEP), shape.length)
+    xy = shapely.get_coordinates(shapely.line_interpolate_point(shape, d))
+    passes = []
+    for p in points:
+        dist = np.hypot(*(xy - p).T)
+        padded = np.concatenate([[np.inf], dist, [np.inf]])
+        nearest = (dist <= padded[:-2]) & (dist <= padded[2:]) & (dist <= dist.min() + SHAPE_SLACK)
+        i = np.flatnonzero(nearest)
+        passes.append((d[i], dist[i]))
+    cost = passes[0][1]
+    back = []
+    for (here, off), (before, _) in zip(passes[1:], passes, strict=False):
+        # Going back along the shape counts as this far off (m).
+        total = cost[None, :] + np.where(before[None, :] <= here[:, None], 0.0, SHAPE_BACK)
+        best = np.argmin(total, axis=1)
+        cost = total[np.arange(len(here)), best] + off
+        back.append(best)
+    k = int(np.argmin(cost))
+    out = [float(passes[-1][0][k])]
+    for n in range(len(points) - 2, -1, -1):
+        k = int(back[n][k])
+        out.append(float(passes[n][0][k]))
+    return out[::-1]
+
+
 def network_lanes(net: dict[str, np.ndarray], index: dict, vclass: int):
     """Normal lanes allowing `vclass`: ids, edges, SUMO lengths and shapes as lines."""
     internal = (net["edgeFlags"][net["laneEdge"]] & index["flags"]["internal"]) != 0
@@ -184,6 +233,52 @@ def place_stop(
     return (best[1], best[2]) if best else None
 
 
+class TrackGraph:
+    """The rail or tram network as a graph of its edges, for the quickest way between stops:
+    the time to drive each edge at its speed limit, and which edges a vehicle of `vclass` can
+    go on to."""
+
+    def __init__(self, net: dict[str, np.ndarray], index: dict, vclass: int):
+        internal = (net["edgeFlags"] & index["flags"]["internal"]) != 0
+        lane_edge = net["laneEdge"].astype(np.int64)
+        rail = (net["laneAllow"] & vclass) != 0
+        lane_time = net["laneLength"] / np.maximum(net["laneSpeed"], 1.0)
+        lanes = np.flatnonzero(rail & ~internal[lane_edge])
+        self.edges = np.unique(lane_edge[lanes])
+        self.node = np.full(len(net["edgeFrom"]), -1, np.int64)
+        self.node[self.edges] = np.arange(len(self.edges))
+        self.time = np.zeros(len(self.edges))
+        self.time[self.node[lane_edge[lanes]]] = lane_time[lanes]
+        frm, to, via = (net[k].astype(np.int64) for k in ("linkFrom", "linkTo", "linkVia"))
+        a, b = self.node[lane_edge[frm]], self.node[lane_edge[to]]
+        keep = rail[frm] & rail[to] & (a >= 0) & (b >= 0)
+        a, b, via = a[keep], b[keep], via[keep]
+        inside = via < len(lane_time)
+        cost = self.time[b] + np.where(inside, lane_time[np.where(inside, via, 0)], 0.0)
+        # One arc per pair of edges (the matrix would add repeats up), none of zero cost
+        # (which it would leave out).
+        order = np.lexsort((cost, b, a))
+        first = np.ones(len(order), bool)
+        first[1:] = (a[order][1:] != a[order][:-1]) | (b[order][1:] != b[order][:-1])
+        pick = order[first]
+        n = len(self.edges)
+        self.graph = csr_matrix((cost[pick] + 1e-3, (a[pick], b[pick])), shape=(n, n))
+        self.reached: dict[int, np.ndarray] = {}
+
+    def between(self, a: int, frac_a: float, b: int, frac_b: float) -> float:
+        """Seconds from `frac_a` along edge `a` to `frac_b` along edge `b` at the speed
+        limits (infinite if no track leads there)."""
+        na, nb = int(self.node[a]), int(self.node[b])
+        if na < 0 or nb < 0:
+            return np.inf
+        if a == b and frac_b >= frac_a:
+            return (frac_b - frac_a) * self.time[na]
+        if na not in self.reached:
+            self.reached[na] = dijkstra(self.graph, indices=na)
+        reached = self.reached[na][nb]
+        return (1 - frac_a) * self.time[na] + reached - (1 - frac_b) * self.time[nb]
+
+
 def track_ends(
     net: dict[str, np.ndarray], lanes: tuple
 ) -> tuple[list[tuple[int, np.ndarray]], list[tuple[int, np.ndarray]]]:
@@ -215,15 +310,82 @@ def track_ends(
     return sources, sinks
 
 
-def nearest_end(
-    ends: list[tuple[int, np.ndarray]], a: np.ndarray, b: np.ndarray
-) -> tuple[int, np.ndarray] | None:
-    """The track end nearest the straight line from `a` to `b`, if within `TRACK_END_REACH`."""
+def nearest_ends(
+    ends: list[tuple[int, np.ndarray]], a: np.ndarray, b: np.ndarray, frac: float
+) -> list[tuple[int, float, float]]:
+    """The track ends within `TRACK_END_REACH` of the straight line from `a` to `b`, nearest
+    first: (edge, `frac`, how far off the line in seconds)."""
     line = shapely.LineString([a, b])
-    best = min(ends, key=lambda e: line.distance(shapely.Point(e[1])), default=None)
-    if best is None or line.distance(shapely.Point(best[1])) > TRACK_END_REACH:
-        return None
-    return best
+    near = sorted((line.distance(shapely.Point(p)), edge) for edge, p in ends)
+    return [
+        (edge, frac, d * OFF_STATION_COST)
+        for d, edge in near[:TRACK_CHOICES]
+        if d <= TRACK_END_REACH
+    ]
+
+
+def station_tracks(
+    point: shapely.Point,
+    direction: np.ndarray | None,
+    tree: shapely.STRtree,
+    lanes: tuple,
+    radius: float,
+) -> list[tuple[int, float, float]]:
+    """Tracks within `radius` of a station or stop (running in `direction`, if given),
+    nearest first: (edge, fraction of its length where the stop is, how far off in seconds)."""
+    lines = lanes[3]
+    near = []
+    for i in tree.query(point, predicate="dwithin", distance=radius):
+        line = lines[i]
+        along = line.project(point)
+        if direction is not None and np.dot(tangent(line, along, 3.0), direction) < MIN_ALIGNMENT:
+            continue
+        near.append((line.distance(point), int(lanes[1][i]), along / max(line.length, 1e-6)))
+    near.sort()
+    return [(edge, frac, d * OFF_STATION_COST) for d, edge, frac in near[:TRACK_CHOICES]]
+
+
+def quickest_tracks(
+    graph: TrackGraph, choices: list[list[tuple[int, float, float]]]
+) -> list[tuple[int, float] | None]:
+    """For each station in turn, the track of its `choices` that makes the trip quickest
+    (Viterbi), or None for a station left out: one no track before leads to, or one before
+    those no track goes on from (each counted as `LEFT_OUT_COST`)."""
+    stations = [i for i, here in enumerate(choices) if here]
+    cost: dict[int, np.ndarray] = {}
+    back: dict[int, list[tuple[int, int] | None]] = {}
+    for n, i in enumerate(stations):
+        here = choices[i]
+        off = np.array([c[2] for c in here])
+        # Starting here, leaving out the stations before.
+        cost[i] = LEFT_OUT_COST * n + off
+        back[i] = [None] * len(here)
+        for m in range(max(0, n - 3), n):
+            j = stations[m]
+            prev = choices[j]
+            step = np.array([[graph.between(p[0], p[1], h[0], h[1]) for p in prev] for h in here])
+            total = step + cost[j][None, :] + LEFT_OUT_COST * (n - m - 1)
+            best = np.argmin(total, axis=1)
+            reached = total[np.arange(len(here)), best] + off
+            for k in np.flatnonzero(reached < cost[i]):
+                cost[i][k] = reached[k]
+                back[i][k] = (j, int(best[k]))
+    picked: list[tuple[int, float] | None] = [None] * len(choices)
+    if not stations:
+        return picked
+    end = min(
+        (
+            (cost[i][k] + LEFT_OUT_COST * (len(stations) - n - 1), i, k)
+            for n, i in enumerate(stations)
+            for k in range(len(cost[i]))
+        ),
+    )
+    at: tuple[int, int] | None = (end[1], end[2])
+    while at is not None:
+        i, k = at
+        picked[i] = choices[i][k][:2]
+        at = back[i][k]
+    return picked
 
 
 def train_trips(
@@ -231,6 +393,7 @@ def train_trips(
     date: str,
     scene,
     net: dict[str, np.ndarray],
+    index: dict,
     lanes: tuple,
     tree: shapely.STRtree,
     route_base: int,
@@ -238,9 +401,10 @@ def train_trips(
     """HŽ's trains running on `date` that call at a station inside the map, each from where
     it enters the map (or its first station) to where it leaves (or its last). Stations go on
     a track running the way the train does, judged from the stations before and after; a
-    train coming from beyond the map starts on the track crossing the map's edge nearest the
-    line to its last station outside, at the time it would pass there (by distance between
-    the stations), and one going beyond it ends on the track leaving the map."""
+    train coming from beyond the map starts on a track crossing the map's edge near the line
+    to its last station outside, at the time it would pass there (by distance between the
+    stations), and one going beyond it ends on a track leaving the map. Of the tracks that
+    could serve, each trip takes those with the quickest way between them."""
     with zipfile.ZipFile(path) as feed:
         routes = {r["route_id"]: r for r in read_table(feed, "routes.txt")}
         names = feed.namelist()
@@ -277,51 +441,66 @@ def train_trips(
         )
     )
     sources, sinks = track_ends(net, lanes)
-    placed: dict[tuple[str, int], tuple[int, float] | None] = {}
+    graph = TrackGraph(net, index, VCLASS[TRAIN])
+    tracks: dict[tuple[str, int], list[tuple[int, float, float]]] = {}
 
-    def place(stop_id: str, direction: np.ndarray):
+    def choices(stop_id: str, direction: np.ndarray) -> list[tuple[int, float, float]]:
         n = np.hypot(*direction)
         if n == 0:
-            return None
+            return []
         direction = direction / n
         sector = int((np.arctan2(direction[1], direction[0]) + np.pi) / (2 * np.pi) * 8) % 8
         key = (stop_id, sector)
-        if key not in placed:
+        if key not in tracks:
             point = shapely.Point(xy[stop_id])
-            hit = place_stop(point, direction, tree, lanes[3], STOP_RADIUS[TRAIN])
-            placed[key] = (int(lanes[1][hit[0]]), float(hit[1])) if hit else None
-        return placed[key]
+            tracks[key] = station_tracks(point, direction, tree, lanes, STOP_RADIUS[TRAIN])
+        return tracks[key]
 
     route_ids = sorted({t["route_id"] for t in trips})
     route_index = {r: route_base + i for i, r in enumerate(route_ids)}
+    source_point = dict(sources)
     out = []
-    entering = leaving = 0
+    entering = leaving = unreached = 0
+    served: set[str] = set()
+    tight: list[float] = []
     for trip in trips:
         seq = sorted(times.get(trip["trip_id"], []))
         pts = [xy[s[1]] for s in seq]
-        hits = [
-            place(seq[i][1], pts[min(i + 1, len(pts) - 1)] - pts[max(i - 1, 0)])
+        options = [
+            choices(seq[i][1], pts[min(i + 1, len(pts) - 1)] - pts[max(i - 1, 0)])
             for i in range(len(seq))
         ]
-        inside = [i for i, h in enumerate(hits) if h is not None]
+        inside = [i for i, c in enumerate(options) if c]
         if not inside:
             continue
         first, last = inside[0], inside[-1]
+        # Stations inside the map, between the tracks entering and leaving it if it comes
+        # from or goes beyond the map.
+        entry = nearest_ends(sources, pts[first - 1], pts[first], 0.0) if first > 0 else []
+        exit_ = nearest_ends(sinks, pts[last], pts[last + 1], 1.0) if last < len(seq) - 1 else []
+        picked = quickest_tracks(graph, [entry] + [options[i] for i in inside] + [exit_])
         stops_out: list[tuple[int, float, float]] = []
-        if first > 0 and (end := nearest_end(sources, pts[first - 1], pts[first])):
-            d0 = np.hypot(*(end[1] - pts[first - 1]))
-            d1 = np.hypot(*(pts[first] - end[1]))
+        if picked[0] is not None:
+            end = source_point[picked[0][0]]
+            d0 = np.hypot(*(end - pts[first - 1]))
+            d1 = np.hypot(*(pts[first] - end))
             t0, t1 = seq[first - 1][3], seq[first][2]
-            stops_out.append((end[0], 0.0, t0 + (t1 - t0) * d0 / max(d0 + d1, 1.0)))
+            stops_out.append((picked[0][0], 0.0, t0 + (t1 - t0) * d0 / max(d0 + d1, 1.0)))
             entering += 1
-        for i in inside:
-            edge, frac = hits[i]
+        for i, hit in zip(inside, picked[1:-1], strict=True):
+            if hit is None:
+                unreached += 1
+                continue
+            edge, frac = hit
+            served.add(seq[i][1])
             if stops_out and stops_out[-1][0] == edge and abs(stops_out[-1][1] - frac) < 0.02:
                 continue
             stops_out.append((edge, frac, seq[i][3]))
-        if last < len(seq) - 1 and (end := nearest_end(sinks, pts[last], pts[last + 1])):
-            stops_out.append((end[0], 1.0, seq[last + 1][2]))
+        if picked[-1] is not None:
+            stops_out.append((picked[-1][0], 1.0, seq[last + 1][2]))
             leaving += 1
+        for a, b in zip(stops_out, stops_out[1:], strict=False):
+            tight.append(graph.between(a[0], a[1], b[0], b[1]) - (b[2] - a[2]))
         if len(stops_out) >= 2:
             out.append((stops_out[0][2], TRAIN, route_index[trip["route_id"]], stops_out))
     table = [
@@ -336,8 +515,13 @@ def train_trips(
         "trainTrips": len(out),
         "trainsEntering": entering,
         "trainsLeaving": leaving,
-        "stationsPlaced": sum(1 for v in placed.values() if v is not None),
-        "stationsUnplaced": sum(1 for v in placed.values() if v is None),
+        "stationsServed": len(served),
+        # Calls left out: at a station no track from the one before leads to.
+        "stationCallsLeftOut": unreached,
+        # Legs between stations a train cannot drive in the time the timetable gives, even
+        # at the speed limits all the way (dwell, speeding up and slowing down aside).
+        "legsTooShort": int(sum(1 for t in tight if t > 0)),
+        "legsTooShortBy": round(float(max(tight, default=0.0)), 1),
         "trackEnds": [len(sources), len(sinks)],
     }
     return out, table, stats
@@ -408,20 +592,27 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
 
     # Each stop goes on a lane of its mode running the way the route's shape does there
     # (stops served in both directions, as at terminal loops, get a lane for each).
-    directions: dict[tuple[str, str], np.ndarray | None] = {}
+    directions: dict[tuple[str, tuple[str, ...]], list[np.ndarray | None]] = {}
     placed: dict[tuple[str, int, int], tuple[int, float] | None] = {}
 
-    def place(stop_id: str, mode: int, shape_id: str):
-        shape = shapes.get(shape_id)
-        if stop_id not in stop_xy or shape is None:
+    def shape_directions(shape_id: str, stop_ids: tuple[str, ...]) -> list[np.ndarray | None]:
+        key = (shape_id, stop_ids)
+        if key not in directions:
+            shape = shapes.get(shape_id)
+            known = [n for n, s in enumerate(stop_ids) if s in stop_xy]
+            found: list[np.ndarray | None] = [None] * len(stop_ids)
+            if shape is not None and known:
+                at = along_shape(shape, np.array([stop_xy[stop_ids[n]] for n in known]))
+                for n, d in zip(known, at, strict=True):
+                    v = tangent(shape, d)
+                    found[n] = v if np.hypot(*v) > 0 else None
+            directions[key] = found
+        return directions[key]
+
+    def place(stop_id: str, mode: int, direction: np.ndarray | None):
+        if stop_id not in stop_xy or direction is None:
             return None
         point = shapely.Point(stop_xy[stop_id])
-        if (stop_id, shape_id) not in directions:
-            direction = tangent(shape, shape.project(point))
-            directions[(stop_id, shape_id)] = direction if np.hypot(*direction) > 0 else None
-        direction = directions[(stop_id, shape_id)]
-        if direction is None:
-            return None
         sector = int((np.arctan2(direction[1], direction[0]) + np.pi) / (2 * np.pi) * 8) % 8
         key = (stop_id, mode, sector)
         if key not in placed:
@@ -437,6 +628,31 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
             routes[r]["route_short_name"],
         ),
     )
+    # A tram stop goes on any tram track within reach, whichever way it runs (some routes'
+    # shapes wander back and forth): each run of stops takes the tracks with the quickest way
+    # between them, as trains do.
+    tram_graph = TrackGraph(net, n_index, VCLASS[TRAM])
+    tram_choices: dict[str, list[tuple[int, float, float]]] = {}
+    tram_runs: dict[tuple[str, ...], list[tuple[int, float] | None]] = {}
+
+    def tram_tracks(stop_ids: tuple[str, ...]) -> list[tuple[int, float] | None]:
+        if stop_ids not in tram_runs:
+            for s in stop_ids:
+                if s not in tram_choices:
+                    tram_choices[s] = (
+                        station_tracks(
+                            shapely.Point(stop_xy[s]),
+                            None,
+                            trees[TRAM],
+                            lanes[TRAM],
+                            STOP_RADIUS[TRAM],
+                        )
+                        if s in stop_xy
+                        else []
+                    )
+            tram_runs[stop_ids] = quickest_tracks(tram_graph, [tram_choices[s] for s in stop_ids])
+        return tram_runs[stop_ids]
+
     route_index = {r: i for i, r in enumerate(route_ids)}
     out_trips = []
     dropped_stops = 0
@@ -444,8 +660,13 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
         seq = sorted(times.get(trip["trip_id"], []))
         mode = MODE_OF_ROUTE_TYPE[routes[trip["route_id"]]["route_type"]]
         stops_out = []
-        for _, stop_id, depart in seq:
-            hit = place(stop_id, mode, trip["shape_id"])
+        ids = tuple(s[1] for s in seq)
+        if mode == TRAM:
+            hits = tram_tracks(ids)
+        else:
+            heading = shape_directions(trip["shape_id"], ids)
+            hits = [place(s, mode, d) for s, d in zip(ids, heading, strict=True)]
+        for (_, _, depart), hit in zip(seq, hits, strict=True):
             if hit is None:
                 dropped_stops += 1
                 continue
@@ -457,7 +678,7 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
         if len(stops_out) >= 2:
             out_trips.append((stops_out[0][2], mode, route_index[trip["route_id"]], stops_out))
     trains, train_routes, train_stats = train_trips(
-        fetch_hz_gtfs(), date, scene, net, lanes[TRAIN], trees[TRAIN], len(route_ids)
+        fetch_hz_gtfs(), date, scene, net, n_index, lanes[TRAIN], trees[TRAIN], len(route_ids)
     )
     out_trips.extend(trains)
     out_trips.sort(key=lambda t: t[0])
@@ -490,8 +711,10 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
         "busTrips": int((arrays["transitTripType"] == BUS).sum()),
         **train_stats,
         "tripsWithoutStops": len(trips) - (len(out_trips) - len(trains)),
-        "stopsPlaced": sum(1 for v in placed.values() if v is not None),
-        "stopsUnplaced": sum(1 for v in placed.values() if v is None),
+        "stopsPlaced": sum(1 for v in placed.values() if v is not None)
+        + sum(1 for v in tram_choices.values() if v),
+        "stopsUnplaced": sum(1 for v in placed.values() if v is None)
+        + sum(1 for v in tram_choices.values() if not v),
         "stopVisitsDropped": dropped_stops,
     }
     (out_dir / "transit.json").write_text(

@@ -1327,6 +1327,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
             outside: sim.stats[STAT.outside] ?? 0,
             trams: sim.stats[STAT.trams],
             buses: sim.stats[STAT.buses],
+            trains: sim.stats[STAT.trains] ?? 0,
             meanSpeed: sim.stats[STAT.meanSpeed] * 3.6,
           });
         }
