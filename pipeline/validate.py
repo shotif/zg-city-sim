@@ -584,7 +584,7 @@ def report(
         for i, kind in enumerate(transit["types"]):
             lines.append(
                 f"- {kind.capitalize()} runs started: {fmt(transit['started'][i])} "
-                f"({fmt(transit['notRouted'][i])} not routed); they left "
+                f"({fmt(transit['notRouted'][i])} could not start); they left "
                 f"{fmt(transit['departures'][i])} stops {transit['lateMean'][i]:.0f} s late on "
                 f"average, at most {transit['lateMax'][i] / 60:.0f} min."
             )
