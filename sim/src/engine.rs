@@ -57,6 +57,15 @@ const PUSH_IN_WAIT: f32 = 15.0;
 /// may only clear at a red), a driver enters a junction even if the road behind it is full,
 /// so gridlocks can unwind.
 const BLOCK_BOX_WAIT: f32 = 60.0;
+/// Level crossings (M8b): the lights start to flash this long (s) before a train gets to
+/// the crossing, the barriers are down `CROSSING_WARN` s later (drivers who can stop in
+/// comfort stop at the lights; at the barriers only those who cannot stop at all go on),
+/// and they rise this long after the train's rear has cleared it. Trains look this far
+/// ahead (m) for crossings.
+const CROSSING_LEAD: f64 = 30.0;
+const CROSSING_WARN: f64 = 5.0;
+const CROSSING_RISE: f64 = 5.0;
+const CROSSING_LOOK: f32 = 3000.0;
 /// A vehicle standing inside a junction this long (s) no longer stops others from crossing
 /// its path (SUMO's --ignore-junction-blocker), so gridlocks can unwind.
 const JUNCTION_BLOCKER_TIME: f32 = 60.0;
@@ -428,6 +437,13 @@ pub struct Engine {
     lane_vehs: Vec<Vec<u32>>,
     /// Space on each lane promised to vehicles inside the junction before it (m).
     lane_reserved: Vec<f32>,
+    /// Level crossings (M8b), as `net.crossings`: since when each has been closing for a
+    /// train (s; NaN while open), and until when a train is due there.
+    crossing_since: Vec<f64>,
+    crossing_due: Vec<f64>,
+    /// Closures of each level crossing since the start, and seconds closed.
+    pub crossing_closures: Vec<u32>,
+    pub crossing_seconds: Vec<f64>,
     lane_active: Vec<bool>,
     active_lanes: Vec<u32>,
     /// Current phase (index into the network's phase arrays) of each traffic light.
@@ -827,6 +843,29 @@ fn merge_phase_states(net: &Network, links: &[u32], a: &[u8], b: &[u8]) -> Optio
 }
 
 /// Seconds to cover `d` metres from speed `v`, accelerating at `a` up to `vmax`.
+/// The state of `link` at `time` (see `Engine::link_state`), with the crossings' closures
+/// (`Engine::crossing_since`).
+fn link_state(
+    net: &Network,
+    tls_phase: &[u32],
+    crossing_since: &[f64],
+    time: f64,
+    link: u32,
+) -> u8 {
+    let c = net.link_crossing[link as usize];
+    if c != NONE
+        && let Some(&since) = crossing_since.get(c as usize)
+        && !since.is_nan()
+    {
+        return if time - since < CROSSING_WARN {
+            b'y'
+        } else {
+            b'r'
+        };
+    }
+    net.link_state_char(link, tls_phase)
+}
+
 pub fn travel_time(d: f32, v: f32, a: f32, vmax: f32) -> f32 {
     if d <= 0.0 {
         return 0.0;
@@ -894,6 +933,10 @@ impl Engine {
             closed: Vec::new(),
             lane_vehs: vec![Vec::new(); n_lanes],
             lane_reserved: vec![0.0; n_lanes],
+            crossing_since: Vec::new(),
+            crossing_due: Vec::new(),
+            crossing_closures: Vec::new(),
+            crossing_seconds: Vec::new(),
             lane_active: vec![false; n_lanes],
             active_lanes: Vec::new(),
             tls_phase: vec![0; n_tls],
@@ -989,6 +1032,7 @@ impl Engine {
         let lap = |_: &mut Engine, _: usize| {};
         self.generate_demand();
         self.update_signals();
+        self.update_level_crossings();
         lap(self, 0);
         self.plan();
         lap(self, 1);
@@ -1364,7 +1408,7 @@ impl Engine {
                         0
                     };
                 }
-                let state = net.link_state_char(link, &self.tls_phase);
+                let state = self.link_state(link);
                 let go = self.may_pass(v, veh, link, state, dist, own && !have_leader);
                 if own {
                     plan.pass = Some(go);
@@ -1474,7 +1518,8 @@ impl Engine {
         // Into a roundabout only with room at the exit taken off it, however long the wait:
         // a driver who stops on the ring for a full exit blocks everyone behind.
         let entering = self.enters_roundabout(link);
-        if (entering || veh.wait < BLOCK_BOX_WAIT)
+        let crossing = self.net.link_crossing[link as usize] != NONE;
+        if (entering || crossing || veh.wait < BLOCK_BOX_WAIT)
             && dist < speed * speed / (2.0 * p.decel) + p.length + 5.0
             && (!self.exit_has_room(link, veh)
                 || entering && !self.roundabout_exit_has_room(link, veh))
@@ -1592,9 +1637,129 @@ impl Engine {
         false
     }
 
+    /// The state of `link` right now: its signal's or its priority's, or, at a level
+    /// crossing closed for a train, yellow while the lights flash and red once the barriers
+    /// are down.
+    pub fn link_state(&self, link: u32) -> u8 {
+        link_state(
+            &self.net,
+            &self.tls_phase,
+            &self.crossing_since,
+            self.time,
+            link,
+        )
+    }
+
+    /// Close the level crossings trains are due at (M8b): from `CROSSING_LEAD` before a
+    /// train gets there (at its speed, speeding up to the line's, after the rest of its
+    /// stop if it stands at a station) until its rear has cleared the crossing and the
+    /// barriers have risen.
+    fn update_level_crossings(&mut self) {
+        let n = self.net.crossings.len();
+        if n == 0 {
+            return;
+        }
+        if self.crossing_since.len() != n {
+            self.crossing_since = vec![f64::NAN; n];
+            self.crossing_due = vec![f64::NEG_INFINITY; n];
+            self.crossing_closures = vec![0; n];
+            self.crossing_seconds = vec![0.0; n];
+        }
+        let now = self.time;
+        let mut due: Vec<u32> = Vec::new();
+        for veh in &self.vehs {
+            if !veh.alive() || veh.vtype != vtype::TRAIN {
+                continue;
+            }
+            if veh.cur_link != NONE {
+                let c = self.net.rail_crossing[veh.cur_link as usize];
+                if c != NONE {
+                    due.push(c);
+                }
+            }
+            self.crossings_ahead(veh, &mut due);
+        }
+        for c in due {
+            let c = c as usize;
+            if self.crossing_since[c].is_nan() {
+                self.crossing_since[c] = now;
+                self.crossing_closures[c] += 1;
+            }
+            self.crossing_due[c] = now;
+        }
+        for c in 0..n {
+            let since = self.crossing_since[c];
+            if !since.is_nan() && now - self.crossing_due[c] >= CROSSING_RISE {
+                self.crossing_seconds[c] += now - since;
+                self.crossing_since[c] = f64::NAN;
+            }
+        }
+    }
+
+    /// The level crossings ahead of train `veh` it gets to within `CROSSING_LEAD`.
+    fn crossings_ahead(&self, veh: &Vehicle, due: &mut Vec<u32>) {
+        let net = &self.net;
+        let d = &net.d;
+        let p = veh.params();
+        let standing = veh
+            .transit
+            .as_ref()
+            .filter(|run| run.dwelling)
+            .map_or(0.0, |run| (run.dwell_until - self.time).max(0.0));
+        let v_line = self.desired_speed(veh, veh.lane).max(veh.speed);
+        let last = veh.route.len() as u32 - 1;
+        let mut route_i = veh.route_idx;
+        let mut cur = veh.lane;
+        let mut dist = d.lane_length[cur as usize] - veh.pos;
+        for _ in 0..32 {
+            if dist > CROSSING_LOOK {
+                break;
+            }
+            let next;
+            if net.lane_internal[cur as usize] {
+                next = d.lane_next[cur as usize];
+                if next == NONE {
+                    break;
+                }
+                if !net.lane_internal[next as usize] {
+                    route_i += 1;
+                }
+            } else {
+                if route_i >= last {
+                    break;
+                }
+                let link = if cur == veh.lane {
+                    veh.next_link
+                } else {
+                    self.choose_link_or_detour(cur, &veh.route, route_i, p.vclass)
+                };
+                if link == NONE {
+                    break;
+                }
+                let c = net.rail_crossing[link as usize];
+                if c != NONE {
+                    let eta = standing + travel_time(dist, veh.speed, p.accel, v_line) as f64;
+                    if eta > CROSSING_LEAD {
+                        break;
+                    }
+                    due.push(c);
+                }
+                let via = d.link_via[link as usize];
+                next = if via != NONE {
+                    via
+                } else {
+                    route_i += 1;
+                    d.link_to[link as usize]
+                };
+            }
+            dist += d.lane_length[next as usize];
+            cur = next;
+        }
+    }
+
     /// Whether the light (or stop sign) at `link` lets a vehicle through right now.
     fn signal_allows(&self, link: u32, stop_done: u32) -> bool {
-        match self.net.link_state_char(link, &self.tls_phase) {
+        match self.link_state(link) {
             b'r' | b'u' | b'y' => false,
             b's' | b'w' => stop_done == link,
             _ => true,
@@ -2255,7 +2420,13 @@ impl Engine {
                     let red = link != NONE
                         && !internal
                         && matches!(
-                            self.net.link_state_char(link, &self.tls_phase),
+                            link_state(
+                                &self.net,
+                                &self.tls_phase,
+                                &self.crossing_since,
+                                self.time,
+                                link
+                            ),
                             b'r' | b'y' | b'u'
                         );
                     if !red {
@@ -2963,7 +3134,7 @@ impl Engine {
         if link == NONE {
             return Holdup::WrongLane;
         }
-        let state = net.link_state_char(link, &self.tls_phase);
+        let state = self.link_state(link);
         if matches!(state, b'r' | b'u' | b'y') {
             return Holdup::Signal;
         }
@@ -3122,7 +3293,7 @@ impl Engine {
                     let uv = &self.vehs[u.veh as usize];
                     out.push(format!(
                         "{kind} link {fl} '{}' veh {} type {} arrive {:.1} leave {:.1} speed {:.1}",
-                        net.link_state_char(fl, &self.tls_phase) as char,
+                        self.link_state(fl) as char,
                         u.veh,
                         uv.vtype,
                         u.arrive,
@@ -3356,7 +3527,7 @@ impl Engine {
         let lane = veh.lane as usize;
         let link = veh.next_link;
         let state = if link != NONE {
-            self.net.link_state_char(link, &self.tls_phase) as char
+            self.link_state(link) as char
         } else {
             '-'
         };
@@ -3421,7 +3592,7 @@ impl Engine {
                     );
                     break;
                 }
-                let state = net.link_state_char(link, &self.tls_phase);
+                let state = self.link_state(link);
                 let go = self.may_pass(v, veh, link, state, dist, own);
                 out += &format!(
                     " | stop line of link {link} at {dist:.1} m state '{}' go {go} exit room {} tls {}",

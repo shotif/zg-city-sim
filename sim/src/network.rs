@@ -216,6 +216,13 @@ pub struct Network {
     pub lane_wait: Vec<u32>,
     /// Per link, the wait on its way across the junction, or NONE.
     pub link_wait: Vec<u32>,
+    /// Level crossings (M8b): junctions where road traffic crosses a railway's path.
+    pub crossings: Vec<u32>,
+    /// Per link, the level crossing (index into `crossings`) whose barriers it waits at:
+    /// road links crossing a railway's path. NONE elsewhere.
+    pub link_crossing: Vec<u32>,
+    /// Per link, the level crossing a train takes it across, or NONE.
+    pub rail_crossing: Vec<u32>,
 }
 
 impl Network {
@@ -414,10 +421,52 @@ impl Network {
             succ: Vec::new(),
             lane_wait,
             link_wait,
+            crossings: Vec::new(),
+            link_crossing: vec![NONE; n_links],
+            rail_crossing: vec![NONE; n_links],
         };
         net.refresh_speeds();
         net.refresh_links();
+        net.find_level_crossings();
         Ok(net)
+    }
+
+    /// Level crossings: road links whose path crosses a railway's at their junction (SUMO's
+    /// `rail_crossing` junctions, and any other junction where a road meets the tracks).
+    fn find_level_crossings(&mut self) {
+        const ROAD: u16 = vclass::PASSENGER | vclass::BUS | vclass::TRUCK;
+        let d = &self.d;
+        let kind = |link: usize| d.lane_allow[d.link_from[link] as usize];
+        let mut index = vec![NONE; d.junction_link_count.len()];
+        for link in 0..d.link_from.len() {
+            let (j, r) = (d.link_junction[link], d.link_request[link]);
+            let allow = kind(link);
+            if j == NONE || r == u16::MAX || allow & ROAD == 0 || allow & vclass::RAIL != 0 {
+                continue;
+            }
+            if (r as u32) >= d.junction_link_count[j as usize] as u32 {
+                continue;
+            }
+            let rail = self.foes(j, r as u32).any(|foe| {
+                let f = self.request_link(j, foe);
+                f != NONE && kind(f as usize) & vclass::RAIL != 0 && kind(f as usize) & ROAD == 0
+            });
+            if rail {
+                if index[j as usize] == NONE {
+                    index[j as usize] = self.crossings.len() as u32;
+                    self.crossings.push(j);
+                }
+                self.link_crossing[link] = index[j as usize];
+            }
+        }
+        let d = &self.d;
+        for link in 0..d.link_from.len() {
+            let j = d.link_junction[link];
+            let allow = d.lane_allow[d.link_from[link] as usize];
+            if j != NONE && index[j as usize] != NONE && allow & vclass::RAIL != 0 {
+                self.rail_crossing[link] = index[j as usize];
+            }
+        }
     }
 
     /// Edge speeds from their lanes' limits (the rightmost lane's, as SUMO's edge speed).

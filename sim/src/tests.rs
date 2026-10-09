@@ -2503,3 +2503,111 @@ fn a_train_keeps_its_timetable_and_dwells_at_stations() {
     assert_eq!((tr.started, tr.failed), (1, 0));
     assert_eq!(engine.stats.arrived, 1);
 }
+
+#[test]
+fn a_level_crossing_closes_for_a_train_and_opens_after_it() {
+    use crate::transit::{Transit, TransitData};
+    // A railway west to east at 120 km/h, crossed 1.5 km along by a road north to south with
+    // a car every 5 s. The train starts 1.4 km before the crossing.
+    let mut b = Builder::default();
+    let (w, c, e) = (
+        b.junction(0.0, 0.0),
+        b.junction(1500.0, 0.0),
+        b.junction(3000.0, 0.0),
+    );
+    let (n, s) = (b.junction(1500.0, -500.0), b.junction(1500.0, 500.0));
+    let rail_in = b.road(w, c, 1, 33.3);
+    let rail_out = b.road(c, e, 1, 33.3);
+    let road_in = b.road(n, c, 1, 13.9);
+    let road_out = b.road(c, s, 1, 13.9);
+    let road = vclass::PASSENGER | vclass::TRUCK | vclass::BUS;
+    for (edge, allow) in [
+        (rail_in, vclass::RAIL),
+        (rail_out, vclass::RAIL),
+        (road_in, road),
+        (road_out, road),
+    ] {
+        let lane = b.lane(edge, 0);
+        b.d.lane_allow[lane as usize] = allow;
+    }
+    let (ri, ro) = (b.lane(rail_in, 0), b.lane(rail_out, 0));
+    let train_link = b.connect(ri, ro, c, dir::STRAIGHT, b'M');
+    let (ci, co) = (b.lane(road_in, 0), b.lane(road_out, 0));
+    let car_link = b.connect(ci, co, c, dir::STRAIGHT, b'o');
+    b.set_logic(c, &[(0, 0b10), (0b01, 0b01)]);
+    let mut engine = Engine::new(b.build(), 4);
+    assert_eq!(engine.net.crossings, vec![c]);
+    assert_eq!(engine.net.link_crossing[car_link as usize], 0);
+    assert_eq!(engine.net.rail_crossing[train_link as usize], 0);
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::TRAIN],
+        trip_route: vec![0],
+        trip_stops: vec![0, 2],
+        stop_edge: vec![rail_in, rail_out],
+        stop_frac: vec![0.05, 0.95],
+        stop_time: vec![0.0, 150.0],
+    }));
+    engine.set_time(0.0);
+    for k in 0..30 {
+        engine.add_trip(Trip {
+            depart: 5.0 * k as f64,
+            from: road_in,
+            to: road_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    let car_via = engine.net.d.link_via[car_link as usize];
+    let train_via = engine.net.d.link_via[train_link as usize];
+    let (mut closed_at, mut opened_at, mut train_at) = (None, None, None);
+    let mut cars_waited = 0.0f32;
+    run_until(&mut engine, 300.0, |e| {
+        assert_no_overlaps(e);
+        let red = e.link_state(car_link) == b'r';
+        if e.link_state(car_link) != b'o' && closed_at.is_none() {
+            closed_at = Some(e.time);
+        }
+        if closed_at.is_some() && opened_at.is_none() && e.link_state(car_link) == b'o' {
+            opened_at = Some(e.time);
+        }
+        if train_at.is_none() && !e.vehicles_on(train_via).is_empty() {
+            train_at = Some(e.time);
+        }
+        // Nobody drives onto the crossing once the barriers are down while the train is near.
+        if red && train_at.is_some() {
+            assert!(
+                e.vehicles_on(car_via).is_empty(),
+                "a car on the crossing at {}",
+                e.time
+            );
+        }
+        if red {
+            cars_waited += e
+                .vehicles_on(ci)
+                .iter()
+                .filter(|&&v| e.vehs[v as usize].speed < 0.1)
+                .count() as f32
+                * DT;
+        }
+    });
+    let (closed, opened, train) = (closed_at.unwrap(), opened_at.unwrap(), train_at.unwrap());
+    assert!(
+        (25.0..40.0).contains(&(train - closed)),
+        "closed {closed} s, train there at {train} s"
+    );
+    assert!(
+        (36.0..50.0).contains(&(opened - closed)),
+        "closed from {closed} s to {opened} s"
+    );
+    assert_eq!(engine.crossing_closures, vec![1]);
+    assert!(
+        cars_waited > 20.0,
+        "cars waited {cars_waited} s at the barriers"
+    );
+    let s = &engine.stats;
+    assert_eq!(
+        (s.arrived, s.teleported),
+        (31, 0),
+        "every car and the train arrive"
+    );
+}

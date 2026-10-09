@@ -214,10 +214,20 @@ fn main() {
             k.map(|i| tr.late_max[i].round()).collect::<Vec<_>>(),
         )
     });
+    // Level crossings (M8b): per crossing closed for trains, [junction, closures, seconds].
+    let crossings: Vec<String> = (0..engine.crossing_closures.len())
+        .filter(|&c| engine.crossing_closures[c] > 0)
+        .map(|c| {
+            format!(
+                "[{}, {}, {:.0}]",
+                engine.net.crossings[c], engine.crossing_closures[c], engine.crossing_seconds[c]
+            )
+        })
+        .collect();
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"removedBecause\": {:?}, \
-         \"removedAt\": [{}], \"transit\": {transit}, \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
+         \"removedAt\": [{}], \"transit\": {transit}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
         s.departed,
@@ -228,6 +238,8 @@ fn main() {
         s.en_route_reroutes,
         s.teleport_reasons,
         removed_at.join(", "),
+        engine.net.crossings.len(),
+        crossings.join(", "),
         HOLDUPS,
         delay_hours.join(", "),
         hours.join(",\n  "),

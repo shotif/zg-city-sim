@@ -117,6 +117,7 @@ Environment variables for the native runs:
 | Room to change lanes: lane choice looks past shorter roads (`LANE_CHANGE_ROOM`, `LANE_CHANGE_SECONDS`) | `sim/src/engine.rs` | 150 m, or 10 s at the speed limit if longer |
 | Re-routing on the way (`REROUTE_CHECK`, `REROUTE_SLOWER`, `REROUTE_LOSS`, `REROUTE_GAIN`, `REROUTE_GAIN_TIME`, `REROUTE_LANE_ROOM`) | `sim/src/engine.rs` | every 60 s, when the rest takes 25 % and 60 s longer than expected; a new way that saves 10 % and 60 s; 100 m to change lanes |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
+| Level crossings (`CROSSING_LEAD`, `CROSSING_WARN`, `CROSSING_RISE`) | `sim/src/engine.rs` | close when a train is 30 s away (an estimate), lights 5 s before the barriers, open 5 s after it has cleared |
 | Driver parameters | `sim/src/vtype.rs` | |
 | Weather factors on driving (`Weather::RAIN`, …) | `sim/src/weather.rs`, mirrored in `web/src/world/weather.ts` | rain 0.95 speed, 1.1 headway, 0.95 acceleration; heavy snow 0.65, 1.4, 0.65 |
 | Growth rate (`START_RATE`), people per floor area | `web/src/grow/growth.ts` | 2 % of empty zoned lots a minute; 30 m² a resident, 20/35/80-120 m² a job |

@@ -323,6 +323,21 @@ def lost_time(
     return rows
 
 
+def crossing_rows(
+    net: dict[str, np.ndarray], index: dict, day: dict, delay: np.ndarray | None
+) -> list[tuple[str, int, float, float]]:
+    """The level crossings closed for trains (M8b): place, closures, seconds closed, and
+    vehicle-hours queued at them at a red (`delay` by where queues stood), most queued
+    first."""
+    signal = day["delayKinds"].index("signal") if "signal" in day["delayKinds"] else None
+    rows = []
+    for j, closures, seconds in day.get("crossingClosures", []):
+        queued = float(delay[j, signal]) / 3600 if delay is not None and signal is not None else 0
+        rows.append((junction_name(net, index, int(j)), int(closures), float(seconds), queued))
+    rows.sort(key=lambda r: (-r[3], -r[2]))
+    return rows
+
+
 def road_group(station: Station) -> str:
     if station.road.startswith("A"):
         return "motorways"
@@ -347,6 +362,7 @@ def report(
     stuck: list[tuple[str, int]] | None = None,
     lost: list[tuple[str, str, float, dict[str, float]]] | None = None,
     inputs: set[int] | None = None,
+    crossings: list[tuple[str, int, float, float]] | None = None,
 ) -> str:
     """docs/VALIDATION.md. `inputs`: stations whose counts set traffic across the map's
     edge."""
@@ -711,6 +727,25 @@ def report(
             f"{names[0].replace('-', ':00-')}:00 and {baseline[names[1]]:.0%} at "
             f"{names[1].replace('-', ':00-')}:00.",
         ]
+    if crossings:
+        closures = sum(r[1] for r in crossings)
+        seconds = sum(r[2] for r in crossings)
+        lines += [
+            "",
+            "## Level crossings",
+            "",
+            f"{len(crossings)} of the {day.get('levelCrossings', len(crossings))} level "
+            f"crossings closed for trains, {fmt(closures)} times, for {seconds / closures:.0f} s "
+            "on average (from 30 s before a train, an estimate, until 5 s after it has "
+            "cleared the crossing). Where most traffic queued at the barriers (vehicle-hours "
+            "standing at a red there over the day):",
+            "",
+            "| Crossing | Closures | Mean closure (s) | Closed (min a day) | "
+            "Queued (vehicle-hours) |",
+            "|---|---:|---:|---:|---:|",
+        ]
+        for name, n, secs, queued in crossings[:12]:
+            lines.append(f"| {name} | {n} | {secs / n:.0f} | {secs / 60:.0f} | {queued:.0f} |")
     lines += [
         "",
         "## How to repeat",
@@ -764,8 +799,18 @@ def main(argv: list[str] | None = None) -> None:
     stuck = stuck_places(net, index, day)
     delay = read_delay(args.run_dir)
     lost = lost_time(net, index, delay[1], day["delayKinds"]) if delay is not None else None
+    crossings = crossing_rows(net, index, day, delay[0] if delay is not None else None)
     args.out.write_text(
-        report(placements, unplaced, day, hotspots, stuck, lost=lost, inputs=inputs)
+        report(
+            placements,
+            unplaced,
+            day,
+            hotspots,
+            stuck,
+            lost=lost,
+            inputs=inputs,
+            crossings=crossings,
+        )
     )
     scale = float(day.get("demandScale", 1.0))
     for p in placements:

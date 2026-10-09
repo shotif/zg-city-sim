@@ -499,6 +499,34 @@ fn main() {
             s.trains
         );
     }
+    // Level crossings (M8b): how often and how long the barriers were down.
+    let closures: u32 = engine.crossing_closures.iter().sum();
+    if closures > 0 {
+        let seconds: f64 = engine.crossing_seconds.iter().sum();
+        let used = engine.crossing_closures.iter().filter(|&&n| n > 0).count();
+        println!(
+            "level crossings: {} in the network, {used} closed for trains, {closures} closures of {:.0} s on average",
+            engine.net.crossings.len(),
+            seconds / closures as f64
+        );
+        let mut busiest: Vec<usize> = (0..engine.crossing_closures.len()).collect();
+        busiest.sort_by(|&a, &b| engine.crossing_seconds[b].total_cmp(&engine.crossing_seconds[a]));
+        for &c in busiest.iter().take(8) {
+            let n = engine.crossing_closures[c];
+            if n == 0 {
+                break;
+            }
+            let j = engine.net.crossings[c] as usize;
+            let (x, z) = (
+                engine.net.d.junction_pos[2 * j],
+                engine.net.d.junction_pos[2 * j + 1],
+            );
+            println!(
+                "  crossing at junction {j} ({x:.0}, {z:.0}): {n} closures, {:.0} s on average",
+                engine.crossing_seconds[c] / n as f64
+            );
+        }
+    }
     for line in &s.teleport_log {
         println!("  removed: {line}");
     }
