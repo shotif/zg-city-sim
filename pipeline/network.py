@@ -109,7 +109,13 @@ def wanted_way(tags: osmium.osm.TagList) -> bool:
 
 #: Version of the roads written for netconvert (`filter_roads`): bump it when they change, so
 #: cached networks are built again.
-ROADS_VERSION = 3
+ROADS_VERSION = 4
+
+#: Netconvert takes a railway as one-way in the direction it was drawn, so on many lines HŽ's
+#: trains could only run one way (in at Savski Marof but not out). Main-line tracks without a
+#: direction of their own are written as usable both ways, as Croatian lines are signalled;
+#: tram tracks keep their direction.
+BOTH_WAYS = {"railway:preferred_direction": "both"}
 
 #: Main road classes OpenStreetMap often leaves without a speed limit (38 % of secondary
 #: and 79 % of tertiary roads by length). Netconvert then assumes 100 km/h (primary,
@@ -238,6 +244,7 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
     node_ids: set[int] = set()
     main: dict[int, tuple[list[int], dict[str, str]]] = {}
     unlimited: set[int] = set()
+    both_ways: set[int] = set()
     for way in osmium.FileProcessor(str(src), osmium.osm.WAY):
         if way.id in patch_ways:
             way_ids.add(way.id)
@@ -250,6 +257,10 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
                 t.k.startswith("maxspeed") for t in way.tags
             ):
                 unlimited.add(way.id)
+            if way.tags.get("railway") == "rail" and not any(
+                t.k == "railway:preferred_direction" or t.k == "oneway" for t in way.tags
+            ):
+                both_ways.add(way.id)
     lanes = infer_lanes(main)
     limits = speed_limits(src, unlimited)
     for nodes, _ in patch_ways.values():
@@ -291,6 +302,8 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
                     extra["lanes"] = str(lanes[obj.id])
                 if obj.id in limits:
                     extra["maxspeed"] = limits[obj.id]
+                if obj.id in both_ways:
+                    extra.update(BOTH_WAYS)
                 writer.add_way(obj.replace(tags={**dict(obj.tags), **extra}) if extra else obj)
             continue
         if not ways_done:
@@ -313,6 +326,7 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
         "restrictions": restrictions,
         "lanesInferred": len(lanes),
         "speedLimits": {v: sum(1 for x in limits.values() if x == v) for v in ("50", "90")},
+        "railBothWays": len(both_ways),
     }
 
 

@@ -2458,3 +2458,48 @@ fn regional_traffic_across_the_map_s_edge_stays_regional() {
         "to the town: {regional:.2} on a regional road, {motorway:.2} on a motorway"
     );
 }
+
+#[test]
+fn a_train_keeps_its_timetable_and_dwells_at_stations() {
+    use crate::transit::{Transit, TransitData};
+    // A 3 km single track at 120 km/h with three stations. The train is due out of the middle
+    // one at 10 s, long before it can get there: it still stands there half a minute.
+    let mut b = Builder::default();
+    let j0 = b.junction(0.0, 0.0);
+    let j1 = b.junction(3000.0, 0.0);
+    let track = b.road(j0, j1, 1, 33.3);
+    let lane = b.lane(track, 0);
+    b.d.lane_allow[lane as usize] = vclass::RAIL;
+    let mut engine = Engine::new(b.build(), 2);
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::TRAIN],
+        trip_route: vec![0],
+        trip_stops: vec![0, 3],
+        stop_edge: vec![track, track, track],
+        stop_frac: vec![0.05, 0.5, 0.95],
+        stop_time: vec![0.0, 10.0, 200.0],
+    }));
+    engine.set_time(0.0);
+    let middle = 0.5 * engine.net.d.lane_length[lane as usize];
+    let (mut stood, mut top, mut seen) = (0.0f32, 0.0f32, false);
+    run_until(&mut engine, 300.0, |e| {
+        for v in e
+            .vehs
+            .iter()
+            .filter(|v| v.alive() && v.vtype == vtype::TRAIN)
+        {
+            seen = true;
+            top = top.max(v.speed);
+            if (v.pos - middle).abs() < 3.0 && v.speed < 0.1 {
+                stood += DT;
+            }
+        }
+    });
+    assert!(seen, "the train never started");
+    // Half a minute from when it comes to a stand (the count misses the last of braking).
+    assert!(stood >= 28.0, "stood {stood} s at the middle station");
+    assert!(top > 25.0, "top speed {top} m/s");
+    let tr = engine.transit.as_ref().unwrap();
+    assert_eq!((tr.started, tr.failed), (1, 0));
+    assert_eq!(engine.stats.arrived, 1);
+}

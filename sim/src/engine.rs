@@ -39,8 +39,8 @@ pub const RENDER_STRIDE: usize = 8;
 pub const STUCK_TIME: f32 = 300.0;
 /// Seconds before a vehicle whose detour failed tries again.
 const REROUTE_RETRY: f32 = 20.0;
-/// Shortest stop of a bus or tram (s), for passengers to get on and off.
-const MIN_DWELL: [f64; 4] = [0.0, 0.0, 15.0, 20.0];
+/// Shortest stop of a bus, tram or train (s), for passengers to get on and off.
+const MIN_DWELL: [f64; 5] = [0.0, 0.0, 15.0, 20.0, 30.0];
 /// Trips that cannot start within this time (s), for lack of room at the stop, are dropped.
 const MAX_TRANSIT_DELAY: f64 = 300.0;
 /// Trips that cannot be inserted within this time are dropped.
@@ -322,6 +322,7 @@ pub struct Stats {
     /// Details of the first few removals per reason (with `Engine::debug`).
     pub teleport_log: Vec<String>,
     pub trams: u32,
+    pub trains: u32,
     pub buses: u32,
     /// Running vehicles coming from or going beyond the map.
     pub outside: u32,
@@ -2037,16 +2038,23 @@ impl Engine {
         let Some(stop) = run.next_stop() else {
             return;
         };
+        let scheduled = tr.day_start + tr.data.stop_time[stop as usize] as f64;
+        let mut left_late = None;
         if missed {
             run.next += 1;
             run.dwelling = false;
         } else if !run.dwelling {
             run.dwelling = true;
-            let scheduled = tr.day_start + tr.data.stop_time[stop as usize] as f64;
             run.dwell_until = (time + MIN_DWELL[vtype]).max(scheduled);
         } else if time >= run.dwell_until {
             run.next += 1;
             run.dwelling = false;
+            left_late = Some((time - scheduled).max(0.0));
+        }
+        if let (Some(late), Some(tr)) = (left_late, self.transit.as_mut()) {
+            tr.departures[vtype] += 1;
+            tr.late_sum[vtype] += late;
+            tr.late_max[vtype] = tr.late_max[vtype].max(late);
         }
     }
 
@@ -2079,10 +2087,17 @@ impl Engine {
         }
         let waiting = std::mem::take(&mut tr.waiting);
         for run in waiting {
+            let vtype = tr.data.trip_type[run.trip as usize] as usize;
             match self.start_run(&mut tr, run.trip, run.from_stop) {
-                Some(true) => tr.started += 1,
+                Some(true) => {
+                    tr.started += 1;
+                    tr.started_by[vtype] += 1;
+                }
                 Some(false) if self.time - run.since < MAX_TRANSIT_DELAY => tr.waiting.push(run),
-                _ => tr.failed += 1,
+                _ => {
+                    tr.failed += 1;
+                    tr.failed_by[vtype] += 1;
+                }
             }
         }
         self.transit = Some(tr);
@@ -2453,7 +2468,7 @@ impl Engine {
         let veh = &self.vehs[v as usize];
         let lane = veh.lane;
         // Trams stay on their rails; nobody changes lanes inside a junction.
-        if net.lane_internal[lane as usize] || veh.vtype == vtype::TRAM {
+        if net.lane_internal[lane as usize] || matches!(veh.vtype, vtype::TRAM | vtype::TRAIN) {
             return None;
         }
         let p = veh.params();
@@ -3445,7 +3460,7 @@ impl Engine {
         let mut sum = 0.0f64;
         let mut running = 0u32;
         let mut stopped = 0u32;
-        let (mut trams, mut buses, mut outside) = (0u32, 0u32, 0u32);
+        let (mut trams, mut buses, mut trains, mut outside) = (0u32, 0u32, 0u32, 0u32);
         let (mut driving, mut delay, mut metres) = (0f64, 0f64, 0f64);
         let mut stuck = std::mem::take(&mut self.scratch);
         stuck.clear();
@@ -3460,12 +3475,13 @@ impl Engine {
                 match veh.vtype {
                     vtype::TRAM => trams += 1,
                     vtype::BUS => buses += 1,
+                    vtype::TRAIN => trains += 1,
                     _ => {}
                 }
                 if veh.trip_flags != 0 {
                     outside += 1;
                 }
-                if veh.vtype != vtype::TRAM {
+                if !matches!(veh.vtype, vtype::TRAM | vtype::TRAIN) {
                     let limit = d.lane_speed[lane as usize].min(veh.params().max_speed);
                     driving += 1.0;
                     delay += (1.0 - veh.speed / limit.max(1.0)).clamp(0.0, 1.0) as f64;
@@ -3533,6 +3549,7 @@ impl Engine {
         s.running = running;
         s.stopped = stopped;
         s.trams = trams;
+        s.trains = trains;
         s.buses = buses;
         s.outside = outside;
         s.mean_speed = if running > 0 {

@@ -26,8 +26,9 @@ pub const CAR: u8 = 0;
 pub const TRUCK: u8 = 1;
 pub const BUS: u8 = 2;
 pub const TRAM: u8 = 3;
+pub const TRAIN: u8 = 4;
 
-pub static TYPES: [VType; 4] = [
+pub static TYPES: [VType; 5] = [
     VType {
         length: 4.5,
         min_gap: 2.0,
@@ -67,5 +68,17 @@ pub static TYPES: [VType; 4] = [
         tau: 1.8,
         max_speed: 19.5,
         vclass: vclass::TRAM,
+    },
+    // HŽ's suburban electric unit (Končar 6112): 75 m, 160 km/h, braking gently for its
+    // passengers; on most lines in the map the track's limit is lower.
+    VType {
+        length: 75.0,
+        min_gap: 10.0,
+        accel: 0.8,
+        decel: 0.8,
+        emergency_decel: 1.5,
+        tau: 3.0,
+        max_speed: 44.0,
+        vclass: vclass::RAIL,
     },
 ];

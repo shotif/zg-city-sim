@@ -97,6 +97,13 @@ pub struct Transit {
     pub started: u64,
     /// Stops skipped because the network cannot reach them.
     pub skipped_stops: u64,
+    /// By vehicle type (`vtype`): runs started and runs that could not be routed, and
+    /// departures from stops with how late they left (s, summed, and the latest).
+    pub started_by: [u64; 5],
+    pub failed_by: [u64; 5],
+    pub departures: [u64; 5],
+    pub late_sum: [f64; 5],
+    pub late_max: [f64; 5],
 }
 
 impl Transit {
@@ -110,6 +117,11 @@ impl Transit {
             failed: 0,
             started: 0,
             skipped_stops: 0,
+            started_by: [0; 5],
+            failed_by: [0; 5],
+            departures: [0; 5],
+            late_sum: [0.0; 5],
+            late_max: [0.0; 5],
         }
     }
 

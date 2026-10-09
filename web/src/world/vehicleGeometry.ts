@@ -21,10 +21,13 @@ const CAR_COLOR_TOTAL = CAR_COLORS.reduce((sum, [, w]) => sum + w, 0);
 const TRUCK_CABS = [0xf2f2ef, 0xf2f2ef, 0x1f3f73, 0x9c1c1c, 0xd9a521, 0x2b2d30];
 /** ZET blue. */
 export const ZET_BLUE = 0x1d4fa0;
+/** The blue band on HŽ's trains. */
+export const HZ_BLUE = 0x1b3c8c;
 
 /** Paint colour for a vehicle of `type` from its 16-bit colour seed. */
 export function vehicleColor(type: number, seed: number, out: THREE.Color): THREE.Color {
   if (type === 2 || type === 3) return out.setHex(ZET_BLUE, THREE.SRGBColorSpace);
+  if (type === 4) return out.setHex(HZ_BLUE, THREE.SRGBColorSpace);
   if (type === 1) return out.setHex(TRUCK_CABS[seed % TRUCK_CABS.length], THREE.SRGBColorSpace);
   let pick = (seed / 65536) * CAR_COLOR_TOTAL;
   for (const [hex, weight] of CAR_COLORS) {

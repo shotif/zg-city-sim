@@ -12,6 +12,7 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | ZG3D 2022, City of Zagreb | Buildings: 357,683 footprints with measured heights; LoD2 3D models | Otvorena dozvola | ✅ in use (footprints, heights, roof type from volume); LoD2 roofs later |
 | ZET GTFS static | Tram and bus routes, stops, timetables | Otvorena dozvola | ✅ in use: weekday timetable on the network |
 | ZET GTFS-RT | Live tram and bus positions | Otvorena dozvola, "test purpose only" | M6 (needs a proxy) |
+| HŽ Putnički prijevoz GTFS | Train routes, stations, timetables | none stated (published for public use; used with attribution, by the owner's decision) | ✅ in use (M8a): a weekday's trains in the map |
 | DZS Census 2021 | Population by district and settlement, commuters | attribution requested | ✅ population of each of the 17 districts and of 384 settlements around the City in use for demand (`pipeline/data/census_2021_settlements.json`) |
 | Hrvatske ceste counts 2025 | Calibration (AADT and hourly profiles at counting stations) | page says Otvorena dozvola, PDF says all rights reserved | ✅ 156 stations in and around the map, 90 with hourly profiles (`pipeline/data/hc_counts_2025.json`): traffic across the map's edge, the hourly demand profile and [validation](VALIDATION.md) |
 | Transport Master Plan (2020) | Calibration targets: trip rates, modal split | reports, no licence | M3 |
@@ -137,6 +138,15 @@ Two layers carry a **restrictive** DGU clause (use only for approved purposes): 
 - **No CORS**, so it needs a proxy for the live layer.
 
 The national access point also lists ZET and HŽ GTFS, but under a contract with a fee. Use zet.hr.
+
+## 2b. HŽ trains
+
+- **URL:** `https://www.hzpp.hr/GTFS_files.zip` (also `http://www.hzpp.hr/Media/Default/GTFS/GTFS_files.zip`, linked from data.gov.hr). It downloads with a plain client.
+- **Listing:** <https://data.gov.hr/ckan/dataset/vozni-red-h-putni-kog-prijevoza-u-gtfs-obliku>, by HŽ Putnički prijevoz d.o.o., "so the public can easily read the data", last updated 2026-04-15.
+- **Licence:** none stated ("Ne postoji licenca"). Used with attribution in the app and here; the raw files are downloaded at build time and never committed. The national access point's copy is under a paid contract; this is HŽPP's own free download.
+- **Feed (downloaded 2026-10-09):** 143 routes (138 rail, 5 replacement bus), 460 stops (45 inside the map), 44,491 trips, 616,353 stop times. No `shapes.txt` and no `calendar_dates.txt`: service comes from 45,647 `calendar.txt` ranges (mostly one week each) from 2025-12-08 to 2026-12-13. Times to the minute.
+- **On 2026-09-30 (a Wednesday, ZET's service date):** 748 trips run, 344 of them call inside the map; Zagreb Glavni kolodvor 264 calls, Dugo Selo 133, Zaprešić 118, Maksimir 118, Sesvete 111, Zabok 109.
+- **Quirks:** without shapes, each station's track is the one running from the station before towards the station after. OSM draws most railways one way: netconvert takes them as one-way, so the pipeline marks main-line tracks without a direction as usable both ways.
 
 ## 3. Census 2021 (DZS)
 

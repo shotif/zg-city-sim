@@ -483,6 +483,21 @@ fn main() {
             s.trams,
             s.buses
         );
+        let late: Vec<String> = (2..5)
+            .map(|k| format!("{:.0}", tr.late_sum[k] / tr.departures[k].max(1) as f64))
+            .collect();
+        println!(
+            "by type (bus, tram, train): started {:?}, not routed {:?}, departures {:?}, left {} s late on average, at most {:?} s; now {} trains",
+            &tr.started_by[2..],
+            &tr.failed_by[2..],
+            &tr.departures[2..],
+            late.join(", "),
+            tr.late_max[2..]
+                .iter()
+                .map(|x| x.round())
+                .collect::<Vec<_>>(),
+            s.trains
+        );
     }
     for line in &s.teleport_log {
         println!("  removed: {line}");

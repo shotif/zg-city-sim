@@ -351,6 +351,44 @@ export const TRAM: Model = {
   halfWidth: 1.15,
 }; // prettier-ignore
 
+/** One car of an HŽ train, from z0 to z1: a painted band low down, white above with a band
+ * of windows, a grey roof and two bogies. */
+function trainCar(z0: number, z1: number): Part[] {
+  return [
+    { min: [-1.45, 0.65, z0], max: [1.45, 1.35, z1], color: PAINT },
+    { min: [-1.45, 1.35, z0], max: [1.45, 3.75, z1], color: WHITE },
+    { min: [-1.47, 2.0, z0 + 0.6], max: [1.47, 2.95, z1 - 0.6], color: GLASS },
+    { min: [-1.3, 3.75, z0], max: [1.3, 4.15, z1], color: GREY },
+    ...[z0 + 3.2, z1 - 3.2].flatMap((z) => both({ min: [0.55, 0.1, z - 1.4], max: [1.2, 0.65, z + 1.4], color: DARK })),
+  ];
+} // prettier-ignore
+
+/** HŽ's 75 m suburban electric unit (Končar 6112): three cars, sloped cabs, a pantograph. */
+export const TRAIN: Model = {
+  name: 'HŽ train',
+  parts: [
+    ...trainCar(-36.0, -12.6),
+    ...trainCar(-12.3, 12.3),
+    ...trainCar(12.6, 36.0),
+    // The cabs: sloping glass at both ends.
+    { profile: [[36.0, 0.65], [37.5, 0.65], [37.5, 1.6], [36.6, 3.6], [36.0, 4.15]], x: [-1.45, 1.45], color: WHITE },
+    { profile: [[36.2, 1.7], [37.52, 1.7], [36.65, 3.5], [36.2, 3.5]], x: [-1.35, 1.35], color: GLASS },
+    { profile: [[-36.0, 0.65], [-37.5, 0.65], [-37.5, 1.6], [-36.6, 3.6], [-36.0, 4.15]], x: [-1.45, 1.45], color: WHITE },
+    { profile: [[-36.2, 1.7], [-37.52, 1.7], [-36.65, 3.5], [-36.2, 3.5]], x: [-1.35, 1.35], color: GLASS },
+    // Gangways between the cars and the pantograph on the middle car.
+    { min: [-1.2, 0.8, -12.6], max: [1.2, 3.6, -12.3], color: DARK },
+    { min: [-1.2, 0.8, 12.3], max: [1.2, 3.6, 12.6], color: DARK },
+    { min: [-0.05, 4.15, -0.8], max: [0.05, 4.9, 0.8], color: DARK },
+    { min: [-0.8, 4.9, -0.1], max: [0.8, 4.95, 0.1], color: DARK },
+  ],
+  head: lamps(37.5, 1, [0.9, 1.25], [0.75, 1.05], HEAD),
+  tail: lamps(-37.5, -1, [0.9, 1.25], [0.75, 1.05], TAIL),
+  left: indicators(-1, 37.5, -37.5, 1.1, 1.3),
+  right: indicators(1, 37.5, -37.5, 1.1, 1.3),
+  front: 37.5,
+  halfWidth: 1.45,
+}; // prettier-ignore
+
 /** A part's extent: [x0, y0, z0, x1, y1, z1]. */
 function extent(parts: Part[]): number[] {
   const e = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
@@ -417,8 +455,8 @@ export function farModel(model: Model): Model {
   };
 }
 
-/** The models for each engine vehicle type (car, lorry, bus, tram). */
-export const MODELS: Model[][] = [CARS.map((c) => c.model), LORRIES, [BUS], [TRAM]];
+/** The models for each engine vehicle type (car, lorry, bus, tram, train). */
+export const MODELS: Model[][] = [CARS.map((c) => c.model), LORRIES, [BUS], [TRAM], [TRAIN]];
 
 const CAR_TOTAL = CARS.reduce((n, c) => n + c.weight, 0);
 
