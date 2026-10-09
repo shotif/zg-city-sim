@@ -13,6 +13,7 @@ from . import (
     manifest,
     network,
     news,
+    pedestrians,
     projects,
     terrain,
     transit,
@@ -28,6 +29,8 @@ STEPS = {
     "demand": demand.build_demand,
     "transit": transit.build_transit,
     "news": news.build_news,
+    # Pedestrian crossings on the drivable roads, with pedestrians a day (needs demand and transit).
+    "pedestrians": pedestrians.build_pedestrians,
     # Lots for zoning along today's streets, and the City's planned land use.
     "zoning": zoning.build_zoning,
     # Planned road projects, each built into a network of its own (all of the above first).

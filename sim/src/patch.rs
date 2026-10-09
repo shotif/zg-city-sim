@@ -282,6 +282,14 @@ impl Engine {
         self.tls_phase = tls_phase;
         self.tls_elapsed = tls_elapsed;
 
+        // Level crossings are found again (all open); pedestrians keep their crossings on the
+        // lanes kept, and the links their signals use are found again.
+        self.crossing_since.clear();
+        if let Some(mut ped) = self.pedestrians.take() {
+            ped.attach(&self.net);
+            self.pedestrians = Some(ped);
+        }
+
         // Per edge: measured times stay for the roads that did not change.
         let old_times = std::mem::take(&mut self.travel_time);
         let free: Vec<f32> = (0..n_edges)

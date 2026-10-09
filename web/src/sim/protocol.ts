@@ -55,6 +55,8 @@ export interface FrameMessage {
   time: number;
   /** Vehicle slots, RENDER.stride words each (see wasm.ts). */
   render: Uint32Array;
+  /** Pedestrians at each crossing (wasm.ts `crossings`), when drawn. */
+  crossings?: Uint8Array;
   stats: Float64Array;
   /** Simulated seconds per real second over the last few seconds. */
   rate: number;

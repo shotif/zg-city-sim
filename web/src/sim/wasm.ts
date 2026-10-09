@@ -33,6 +33,8 @@ export interface EngineExports {
   zg_render_stride(): number;
   zg_stats_ptr(): number;
   zg_stats_len(): number;
+  zg_crossings_update(): number;
+  zg_crossings_ptr(): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
 }
@@ -256,6 +258,16 @@ export class TrafficEngine {
     const ex = this.exports;
     const words = ex.zg_render_slots() * ex.zg_render_stride();
     return new Uint32Array(this.memory, ex.zg_render_ptr(), words).slice();
+  }
+
+  /** Pedestrians at each crossing (M8c): two bytes each, those waiting (at most 255) and
+   * how far across the last to start are (0-254; 255: nobody on it). Empty without them. */
+  crossings(): Uint8Array {
+    const ex = this.exports;
+    const len = ex.zg_crossings_update();
+    return len > 0
+      ? new Uint8Array(this.memory, ex.zg_crossings_ptr(), len).slice()
+      : new Uint8Array(0);
   }
 
   stats(): Float64Array {

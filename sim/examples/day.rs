@@ -41,6 +41,7 @@ const HOLDUPS: [&str; Holdup::COUNT] = [
     "other",
     "slowRoad",
     "standingMidRoad",
+    "pedestrians",
 ];
 
 /// The simulated day runs from 3:00 to 3:00, starting on empty roads at the quietest hour.
@@ -66,6 +67,7 @@ fn main() {
         }
         _ => println!("transit: none"),
     }
+    run::attach_pedestrians(&mut engine, &format!("{root}/pedestrians"));
     engine.demand = Some(demand);
     engine.demand_scale = run::demand_scale(&format!("{root}/demand"));
     println!("demand scale: {}", engine.demand_scale);

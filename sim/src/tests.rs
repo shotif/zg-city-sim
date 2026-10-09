@@ -2611,3 +2611,170 @@ fn a_level_crossing_closes_for_a_train_and_opens_after_it() {
         "every car and the train arrive"
     );
 }
+
+fn crossing(
+    lane: u32,
+    pos: f32,
+    kind: u8,
+    junction: u32,
+    per_hour: f32,
+) -> crate::pedestrians::CrossingData {
+    crate::pedestrians::CrossingData {
+        lane_offsets: vec![0, 1],
+        lanes: vec![lane],
+        pos: vec![pos],
+        kind: vec![kind],
+        length: vec![7.0],
+        junction: vec![junction],
+        daily: vec![per_hour * 24.0],
+        hourly: [1.0 / 24.0; 24],
+    }
+}
+
+#[test]
+fn drivers_give_way_to_pedestrians_on_a_zebra() {
+    use crate::pedestrians::{Pedestrians, kind};
+    // A zebra 200 m along a road with a car every 4 s; about a pedestrian every 20 s.
+    let (b, e0, e1) = straight_road(500.0, 1);
+    let net = b.build();
+    let lane = net.edge_lanes(e0).start;
+    let mut engine = Engine::new(net, 5);
+    let data = crossing(lane, 200.0, kind::ZEBRA, NONE, 180.0);
+    engine.pedestrians = Some(Pedestrians::new(data, &engine.net));
+    for k in 0..75 {
+        engine.add_trip(Trip {
+            depart: 4.0 * k as f64,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    let (mut slowed, mut through_busy) = (0.0f32, 0);
+    run_until(&mut engine, 500.0, |e| {
+        assert_no_overlaps(e);
+        let ped = e.pedestrians.as_ref().unwrap();
+        let busy = ped.busy_until[0] > e.time + 1.0 && e.time - ped.walk_since[0] > 1.0;
+        for &v in e.vehicles_on(lane) {
+            let veh = &e.vehs[v as usize];
+            if busy
+                && veh.pos > 200.0
+                && veh.pos - TYPES[veh.vtype as usize].length < 200.0
+                && veh.speed > 1.0
+            {
+                through_busy += 1;
+            }
+            // Slow just before the crossing while pedestrians are on it.
+            if busy && veh.pos > 170.0 && veh.pos < 200.0 && veh.speed < 5.0 {
+                slowed += DT;
+            }
+        }
+    });
+    let ped = engine.pedestrians.as_ref().unwrap();
+    assert!(ped.crossed >= 10, "{} pedestrians crossed", ped.crossed);
+    assert!(
+        slowed > 10.0,
+        "drivers slowed for pedestrians for {slowed} s"
+    );
+    assert_eq!(through_busy, 0, "drivers drove through pedestrians");
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (75, 0));
+}
+
+#[test]
+fn a_crossing_with_its_own_signals_stops_drivers_at_most_once_a_minute() {
+    use crate::pedestrians::{OWN_SIGNAL_GAP, Pedestrians, kind};
+    let (b, e0, e1) = straight_road(500.0, 1);
+    let net = b.build();
+    let lane = net.edge_lanes(e0).start;
+    let mut engine = Engine::new(net, 6);
+    let data = crossing(lane, 200.0, kind::OWN_SIGNAL, NONE, 600.0);
+    engine.pedestrians = Some(Pedestrians::new(data, &engine.net));
+    for k in 0..100 {
+        engine.add_trip(Trip {
+            depart: 3.0 * k as f64,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    let mut reds: Vec<f64> = Vec::new();
+    let mut was_red = false;
+    run_until(&mut engine, 400.0, |e| {
+        assert_no_overlaps(e);
+        let red = e.pedestrians.as_ref().unwrap().state(0, e.time) != b'G';
+        if red && !was_red {
+            reds.push(e.time);
+        }
+        was_red = red;
+    });
+    assert!(reds.len() >= 4, "turned red at {reds:?}");
+    assert!(
+        reds.windows(2).all(|w| w[1] - w[0] >= OWN_SIGNAL_GAP),
+        "turned red at {reds:?}"
+    );
+    let ped = engine.pedestrians.as_ref().unwrap();
+    assert!(ped.crossed >= 30, "{} pedestrians crossed", ped.crossed);
+    assert_eq!(engine.stats.teleported, 0);
+}
+
+#[test]
+fn pedestrians_cross_a_signalled_junction_while_the_traffic_across_has_red() {
+    use crate::pedestrians::{MIN_WALK, Pedestrians, kind};
+    // The east-west road has 30 s of green, the north-south one 10 s (actuated, 5-60 s). A
+    // crossing over the north road's southbound lane, just before the junction, gets a
+    // pedestrian every 10 s: they walk only while north-south traffic has red, and the
+    // east-west green (the phase they walk in) lasts at least their walk and clearance.
+    let mut data = signalled_crossroads_data(&[
+        (30.0, "GGGGrr"),
+        (3.0, "yyyyrr"),
+        (10.0, "rrrrGG"),
+        (3.0, "rrrryy"),
+    ]);
+    for p in 0..4 {
+        data.phase_min_dur[p] = if p % 2 == 0 { 5.0 } else { 3.0 };
+        data.phase_max_dur[p] = if p % 2 == 0 { 60.0 } else { 3.0 };
+    }
+    let net = Network::build(data).unwrap();
+    // Southbound lane in: the north road's edge into the junction (junction 1).
+    let sb_in = (0..net.edge_count() as u32)
+        .find(|&e| net.d.edge_to[e as usize] == 1 && net.edge_mid[e as usize].1 < -100.0)
+        .unwrap();
+    let lane = net.edge_lanes(sb_in).start;
+    let len = net.d.lane_length[lane as usize];
+    let mut engine = Engine::new(net, 7);
+    let data = crossing(lane, len - 0.5, kind::JUNCTION_SIGNAL, 1, 360.0);
+    let ped = Pedestrians::new(data, &engine.net);
+    assert!(!ped.blocking_links(0).is_empty() && ped.tls[0] != NONE);
+    engine.pedestrians = Some(ped);
+    let (mut walked_on_green, mut cut_short, mut walks) = (0, 0, 0);
+    run_until(&mut engine, 600.0, |e| {
+        let ped = e.pedestrians.as_ref().unwrap();
+        let since = ped.walk_since[0];
+        let green = ped
+            .blocking_links(0)
+            .iter()
+            .any(|&l| e.link_state(l) == b'G');
+        if (e.time - since).abs() < 0.01 {
+            walks += 1;
+            if green {
+                walked_on_green += 1;
+            }
+        }
+        // Green for the traffic across before the walk and clearance are over.
+        if green && e.time < since + MIN_WALK + ped.crossing_time(0) - DT as f64 {
+            cut_short += 1;
+        }
+    });
+    let ped = engine.pedestrians.as_ref().unwrap();
+    assert!(
+        ped.crossed >= 40,
+        "{} pedestrians crossed in {walks} walks",
+        ped.crossed
+    );
+    assert_eq!(
+        walked_on_green, 0,
+        "pedestrians started while traffic across had green"
+    );
+    assert_eq!(cut_short, 0, "the walk was cut short");
+}

@@ -72,6 +72,7 @@ import { BuiltArea, StreetLightLayer } from './world/streetLights';
 import { Precipitation } from './world/precipitation';
 import { sunAt, zagrebOffset, zagrebToday } from './world/sun';
 import { TRAFFIC_BANDS, TrafficLayer } from './world/trafficLayer';
+import { type CrossingArrays, PedestrianLayer } from './world/pedestrianLayer';
 import { VehicleLayer } from './world/vehicleLayer';
 import { FrameStats, type Perf, PerfOverlay } from './ui/perfOverlay';
 import {
@@ -122,6 +123,25 @@ async function loadLayerArrays(
     return await loadPacked(DATA_URL + folder + index.file, index);
   } catch (error) {
     console.warn(`${what} could not be loaded`, error);
+    return undefined;
+  }
+}
+
+/** Pedestrian crossings (M8c): their arrays, with each hour's share of the day's pedestrians
+ * as `crossingHourly`. */
+async function loadCrossings(
+  indexPath: string | undefined,
+): Promise<Record<string, TypedArray> | undefined> {
+  if (!indexPath) return undefined;
+  try {
+    const response = await fetch(DATA_URL + indexPath);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const index = (await response.json()) as PackedIndex & { hourly: number[] };
+    const folder = indexPath.slice(0, indexPath.lastIndexOf('/') + 1);
+    const arrays = await loadPacked(DATA_URL + folder + index.file, index);
+    return { ...arrays, crossingHourly: Float32Array.from(index.hourly) };
+  } catch (error) {
+    console.warn('Pedestrian crossings could not be loaded', error);
     return undefined;
   }
 }
@@ -205,6 +225,7 @@ export interface DebugApi {
   buildingsReady: boolean;
   sim?: SimClient;
   vehicles?: VehicleLayer;
+  pedestrians?: PedestrianLayer;
   traffic?: TrafficLayer;
   news?: NewsLayer;
   newsPanel?: NewsPanel;
@@ -882,16 +903,17 @@ export async function startApp(container: HTMLElement): Promise<void> {
           return Promise.resolve({ net, travel: travelData, index: loadedIndex, toToday });
         }
         todayRoads ??= (async () => {
-          const [todayNet, demand, transit] = await Promise.all([
+          const [todayNet, demand, transit, crossings] = await Promise.all([
             loadRoadNetwork(today.network!.index),
             loadLayerArrays(today.demand?.index, 'Travel demand'),
             loadLayerArrays(today.transit?.index, 'The ZET timetable'),
+            loadCrossings(today.pedestrians?.index),
           ]);
           const todayIndex = new RoadIndex(todayNet);
           return {
             net: todayNet,
             travel: {
-              arrays: { ...demand, ...transit },
+              arrays: { ...demand, ...transit, ...crossings },
               dailyTrips: today.demand?.dailyCarTrips ?? DAILY_TRIPS,
               demandScale: today.demand?.demandScale ?? 1,
             },
@@ -1048,6 +1070,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       invalidate();
     };
     let vehicles: VehicleLayer | undefined;
+    let pedestrians: PedestrianLayer | undefined;
     let news: NewsLayer | undefined;
     let speeds: Uint8Array | undefined;
     let simChanged = false;
@@ -1057,12 +1080,17 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const surface = terrain.heightfield.meshSurface(stride);
       // Car trips come from where people live and work (without that data, from the
       // streets); trams and buses run to ZET's timetable.
-      const { demand: demandLayer, transit: transitLayer } = manifest.layers;
+      const {
+        demand: demandLayer,
+        transit: transitLayer,
+        pedestrians: pedestriansLayer,
+      } = manifest.layers;
       const travel: Promise<TravelData> = Promise.all([
         loadLayerArrays(demandLayer?.index, 'Travel demand'),
         loadLayerArrays(transitLayer?.index, 'The ZET timetable'),
-      ]).then(([demand, transit]) => ({
-        arrays: { ...demand, ...transit },
+        loadCrossings(pedestriansLayer?.index),
+      ]).then(([demand, transit, crossings]) => ({
+        arrays: { ...demand, ...transit, ...crossings },
         dailyTrips: demand && demandLayer ? demandLayer.dailyCarTrips : DAILY_TRIPS,
         demandScale: demandLayer?.demandScale ?? 1,
       }));
@@ -1156,6 +1184,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
           debug.traffic = traffic;
           const travelData = await travel;
           todayDemand = travelData;
+          if (travelData.arrays.crossingXY) {
+            pedestrians = new PedestrianLayer(
+              net,
+              surface,
+              travelData.arrays as unknown as CrossingArrays,
+            );
+            scene.add(pedestrians.object);
+            debug.pedestrians = pedestrians;
+          }
           applyDemand();
           /** The simulation the player sees, with the edits in force. */
           const launch = (speed: number): SimClient => {
@@ -1314,6 +1351,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
           });
         }
         trafficMoving = trafficMoving && (vehicles.object.visible || wasVisible);
+        if (pedestrians && (simChanged || moving)) {
+          pedestrians.update(sim.crossings, view.target, view.viewHeight);
+        }
         simChanged = false;
         if (sim.stats && (now - lastHudSim > 250 || sim.paused)) {
           lastHudSim = now;

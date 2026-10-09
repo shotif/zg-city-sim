@@ -247,6 +247,7 @@ DELAY_NAMES = {
     "other": "other",
     "slowRoad": "the road beyond moving slowly",
     "standingMidRoad": "the road beyond standing away from a junction",
+    "pedestrians": "giving way to pedestrians",
 }
 
 

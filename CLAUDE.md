@@ -21,7 +21,7 @@ Read these before changing anything:
 
 | Path | What |
 |---|---|
-| `pipeline/` | Python data pipeline (`python -m pipeline <steps>`). Steps, in order: `terrain`, `ground`, `network` (OSM → SUMO netconvert → packed arrays, `simnet.py`), `buildings`, `demand` (residents, jobs, gateways), `transit` (ZET's and HŽ's GTFS), `news`, `zoning` (lots for zoning along streets, the City's planned land use), `projects`. Output goes to `web/public/data/`. |
+| `pipeline/` | Python data pipeline (`python -m pipeline <steps>`). Steps, in order: `terrain`, `ground`, `network` (OSM → SUMO netconvert → packed arrays, `simnet.py`), `buildings`, `demand` (residents, jobs, gateways), `transit` (ZET's and HŽ's GTFS), `pedestrians` (crossings on the drivable roads and pedestrians a day, M8c), `news`, `zoning` (lots for zoning along streets, the City's planned land use), `projects`. Output goes to `web/public/data/`. |
 | `pipeline/counts.py` | Hrvatske ceste count stations (2025), read from `pipeline/data/hc_counts_2025.json`, with working-day estimates. |
 | `pipeline/hc.py` | Tool, run by hand: downloads Hrvatske ceste's tables and PDF, places the stations on OSM roads by road number and section, reads the hourly and weekday charts, and writes `hc_counts_2025.json`. Never commit the PDF. |
 | `pipeline/census.py` | Tool, run by hand: DZS 2021 population by settlement for the counties around the City (`pipeline/data/census_2021_settlements.json`). |
@@ -37,6 +37,7 @@ Read these before changing anything:
 | `sim/src/demand.rs` | Trip generation: `HOURLY` profile, gravity model, gateways. |
 | `sim/src/weather.rs` | The weather's factors on desired speed, headway and acceleration (M6b). |
 | `sim/src/transit.rs` | Trams, buses and trains on timetable. |
+| `sim/src/pedestrians.rs` | Pedestrians at crossings (M8c): arrivals by the hour, zebras, walking with a junction's signals, crossings with signals of their own. |
 | `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
 | `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck; `--features profile` times each phase and the route searches), `day.rs` (a whole weekday, for validation, with the delay queued at each junction by cause), `compare.rs` (one network through the morning peak, for a project's before and after) and `routes.rs` (times route searches, and how much longer routes get with other heuristic weights). |
@@ -77,6 +78,7 @@ Environment variables for the native runs:
 - `WATCH_JUNCTIONS=51800,51531` (the `run` example) prints those junctions' signal programs as the engine runs them, then every simulated minute the stopped front vehicle of each queue into them: why it waits, who it gives way to, and what holds up the vehicles inside the junction.
 - `NO_PHASE_SKIP=1` (the `day` and `run` examples) runs actuated signals through every phase, as before M7d.
 - `NO_REROUTE=1` (the `day` and `run` examples) keeps drivers on the route they chose at the start, as before M7g.
+- `NO_PEDESTRIANS=1` (the `day`, `run` and `compare` examples) leaves pedestrians out, as before M8c; `PEDESTRIAN_SCALE=0.5` lets half of the estimated pedestrians arrive.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite
@@ -117,6 +119,8 @@ Environment variables for the native runs:
 | Room to change lanes: lane choice looks past shorter roads (`LANE_CHANGE_ROOM`, `LANE_CHANGE_SECONDS`) | `sim/src/engine.rs` | 150 m, or 10 s at the speed limit if longer |
 | Re-routing on the way (`REROUTE_CHECK`, `REROUTE_SLOWER`, `REROUTE_LOSS`, `REROUTE_GAIN`, `REROUTE_GAIN_TIME`, `REROUTE_LANE_ROOM`) | `sim/src/engine.rs` | every 60 s, when the rest takes 25 % and 60 s longer than expected; a new way that saves 10 % and 60 s; 100 m to change lanes |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
+| Pedestrians a day per crossing (`USES_PER_PERSON`, `WALKERS_PER_STOP`, `HOURLY`) | `pipeline/pedestrians.py` | 0.3 uses a day per resident or job beside a crossing, falling to none at 400 m; 6 per bus or tram stopping within 150 m (estimates) |
+| Pedestrians crossing (`WALK_SPEED`, `MIN_WALK`, `OWN_SIGNAL_GAP`) | `sim/src/pedestrians.rs` | 1.2 m/s plus 2 s to step off; at signals at least 5 s of walk before the clearance; own signals red at most once a minute |
 | Level crossings (`CROSSING_LEAD`, `CROSSING_WARN`, `CROSSING_RISE`) | `sim/src/engine.rs` | close when a train is 30 s away (an estimate), lights 5 s before the barriers, open 5 s after it has cleared |
 | Driver parameters | `sim/src/vtype.rs` | |
 | Weather factors on driving (`Weather::RAIN`, …) | `sim/src/weather.rs`, mirrored in `web/src/world/weather.ts` | rain 0.95 speed, 1.1 headway, 0.95 acceleration; heavy snow 0.65, 1.4, 0.65 |

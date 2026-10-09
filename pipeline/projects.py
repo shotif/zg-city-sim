@@ -45,6 +45,7 @@ from .news import build_news
 from .osm import ATTRIBUTION as OSM_ATTRIBUTION
 from .osm import fetch_osm
 from .packed import read_packed
+from .pedestrians import build_pedestrians
 from .transit import build_transit
 
 log = logging.getLogger(__name__)
@@ -549,6 +550,7 @@ def build_project(project: Project) -> dict:
     network = export_network(net_file, root / "network")
     demand = build_demand(root)
     transit = build_transit(root)
+    pedestrians = build_pedestrians(root)
     news = build_news(root)
     added, centre = new_edges(OUTPUT_DIR, root)
     log.info("%s: %d new edges, network %s", project.id, len(added), network["counts"])
@@ -568,6 +570,7 @@ def build_project(project: Project) -> dict:
             },
             "demand": {**demand, "index": prefix + demand["index"]},
             "transit": {**transit, "index": prefix + transit["index"]},
+            "pedestrians": {**pedestrians, "index": prefix + pedestrians["index"]},
             "news": {**news, "index": prefix + news["index"]},
         },
         "newEdges": added,

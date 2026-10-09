@@ -75,6 +75,14 @@ export interface TransitLayer {
   attribution?: Attribution | Attribution[];
 }
 
+/** Pedestrian crossings on the drivable roads, with pedestrians a day (pipeline/pedestrians.py). */
+export interface PedestriansLayer {
+  index: string;
+  crossings: number;
+  pedestriansDaily: number;
+  attribution?: Attribution | Attribution[];
+}
+
 /** Places the news reported traffic trouble at (pipeline/news.py). */
 export interface NewsLayerInfo {
   index: string;
@@ -113,6 +121,7 @@ export interface WorldManifest {
     buildings?: BuildingsLayer;
     demand?: DemandLayer;
     transit?: TransitLayer;
+    pedestrians?: PedestriansLayer;
     news?: NewsLayerInfo;
     projects?: ProjectsLayerInfo;
     zoning?: ZoningLayerInfo;

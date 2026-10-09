@@ -19,6 +19,7 @@ use crate::demand::Demand;
 use crate::edits::{self, Edit, Loaded};
 use crate::idm;
 use crate::network::{NONE, Network, NetworkData, dir, vclass};
+use crate::pedestrians::{self, MIN_WALK, OWN_SIGNAL_GAP, OWN_SIGNAL_YELLOW, Pedestrians};
 use crate::rng::Rng;
 use crate::router::{LandmarkBuild, Landmarks, Router};
 use crate::transit::{PendingRun, Transit, TransitRun};
@@ -410,13 +411,15 @@ pub enum Holdup {
     /// or of a queue standing away from its junction.
     SlowRoad,
     StandingMidRoad,
+    /// Giving way to pedestrians on a crossing (M8c).
+    Pedestrians,
 }
 
 impl Holdup {
     /// Kinds of holdup, for tables indexed by `holdup as usize`.
-    pub const COUNT: usize = 11;
+    pub const COUNT: usize = 12;
 }
-const _: () = assert!(Holdup::StandingMidRoad as usize + 1 == Holdup::COUNT);
+const _: () = assert!(Holdup::Pedestrians as usize + 1 == Holdup::COUNT);
 
 /// Junction delay is sampled every this many steps (`measure_delay`).
 const DELAY_EVERY: u32 = 10;
@@ -437,9 +440,11 @@ pub struct Engine {
     lane_vehs: Vec<Vec<u32>>,
     /// Space on each lane promised to vehicles inside the junction before it (m).
     lane_reserved: Vec<f32>,
+    /// Pedestrians at crossings (M8c), when loaded.
+    pub pedestrians: Option<Pedestrians>,
     /// Level crossings (M8b), as `net.crossings`: since when each has been closing for a
     /// train (s; NaN while open), and until when a train is due there.
-    crossing_since: Vec<f64>,
+    pub(crate) crossing_since: Vec<f64>,
     crossing_due: Vec<f64>,
     /// Closures of each level crossing since the start, and seconds closed.
     pub crossing_closures: Vec<u32>,
@@ -933,6 +938,7 @@ impl Engine {
             closed: Vec::new(),
             lane_vehs: vec![Vec::new(); n_lanes],
             lane_reserved: vec![0.0; n_lanes],
+            pedestrians: None,
             crossing_since: Vec::new(),
             crossing_due: Vec::new(),
             crossing_closures: Vec::new(),
@@ -1033,6 +1039,7 @@ impl Engine {
         self.generate_demand();
         self.update_signals();
         self.update_level_crossings();
+        self.update_pedestrians();
         lap(self, 0);
         self.plan();
         lap(self, 1);
@@ -1247,7 +1254,40 @@ impl Engine {
                 }
             }
         }
-        false
+        self.pedestrians_call(t, phase, except, called)
+    }
+
+    /// Whether pedestrians at a crossing of signal program `t` that walk in `phase` (and not
+    /// in `except`) are crossing in their walk and clearance time, or, with `called`, wait.
+    fn pedestrians_call(
+        &self,
+        t: usize,
+        phase: usize,
+        except: Option<usize>,
+        called: bool,
+    ) -> bool {
+        let Some(ped) = &self.pedestrians else {
+            return false;
+        };
+        let d = &self.net.d;
+        let walks = |c: usize, q: usize| {
+            let states = &d.phase_states
+                [d.phase_state_offsets[q] as usize..d.phase_state_offsets[q + 1] as usize];
+            ped.blocking_links(c).iter().all(|&l| {
+                !matches!(
+                    states.get(d.link_tls_index[l as usize] as usize),
+                    Some(b'G' | b'g' | b'y' | b'Y')
+                )
+            })
+        };
+        ped.at_signal(t as u32).any(|c| {
+            let c = c as usize;
+            let crossing = ped.busy_until[c] > self.time
+                && self.time < ped.walk_since[c] + MIN_WALK + ped.crossing_time(c);
+            (crossing || called && ped.waiting[c] > 0)
+                && walks(c, phase)
+                && !except.is_some_and(|q| walks(c, q))
+        })
     }
 
     // ---- planning -------------------------------------------------------------------------
@@ -1361,6 +1401,13 @@ impl Engine {
         let mut cur = lane;
         let mut dist = d_.lane_length[lane as usize] - veh.pos;
         let mut first_link = true;
+        if let Some(ped) = &self.pedestrians {
+            for (at, c) in ped.on_lane(lane) {
+                if at > veh.pos + 0.5 {
+                    acc = acc.min(self.pedestrian_acc(ped, c, at - veh.pos, speed, vmax, p));
+                }
+            }
+        }
         for _ in 0..16 {
             if dist > horizon {
                 break;
@@ -1445,6 +1492,13 @@ impl Engine {
                 let gap = dist + frac * d_.lane_length[next as usize];
                 acc = acc.min(stop_at(speed, vmax, gap + 0.5, p, self.weather));
                 stop_ahead = None;
+            }
+            if let Some(ped) = &self.pedestrians
+                && !net.lane_internal[next as usize]
+            {
+                for (at, c) in ped.on_lane(next) {
+                    acc = acc.min(self.pedestrian_acc(ped, c, dist + at, speed, vmax, p));
+                }
             }
             if let (false, Some(&r)) = (have_leader, self.lane_vehs[next as usize].first()) {
                 let rv = &self.vehs[r as usize];
@@ -1694,6 +1748,114 @@ impl Engine {
                 self.crossing_since[c] = f64::NAN;
             }
         }
+    }
+
+    /// Bound on a vehicle's acceleration from crossing `c` `gap` m ahead: none while it shows
+    /// green; at yellow, stop if comfortably possible; with pedestrians on it, stop unless
+    /// not even braking hard would stop in time.
+    fn pedestrian_acc(
+        &self,
+        ped: &Pedestrians,
+        c: u32,
+        gap: f32,
+        speed: f32,
+        vmax: f32,
+        p: &VType,
+    ) -> f32 {
+        let state = ped.state(c as usize, self.time);
+        let brake = speed * speed / (2.0 * (gap - 1.0).max(0.05));
+        match state {
+            b'y' if brake <= p.decel => stop_at(speed, vmax, gap - 1.0, p, self.weather),
+            b'r' if brake <= p.emergency_decel => stop_at(speed, vmax, gap - 1.0, p, self.weather),
+            _ => f32::INFINITY,
+        }
+    }
+
+    /// Pedestrians arrive at each crossing at random, at its pedestrians a day spread over the
+    /// hours, and start across: on a zebra when every driver coming can stop in comfort; at a
+    /// signalled junction while the traffic across their crossing has red and their walk
+    /// lasts; at a crossing with signals of its own once its lights have turned red for
+    /// drivers, which they do when pedestrians wait, at most once a minute.
+    fn update_pedestrians(&mut self) {
+        let Some(mut ped) = self.pedestrians.take() else {
+            return;
+        };
+        let now = self.time;
+        let hour = ((now / 3600.0).floor() as i64).rem_euclid(24) as usize;
+        let per_step = ped.data.hourly[hour] * ped.scale * DT / 3600.0;
+        for c in 0..ped.data.count() {
+            if self.rng.f32() < ped.data.daily[c] * per_step {
+                ped.waiting[c] += 1;
+            }
+            if ped.own_signal(c) {
+                let since = ped.stop_since[c];
+                if since.is_nan() {
+                    if ped.waiting[c] > 0 && now - ped.walk_since[c] >= OWN_SIGNAL_GAP {
+                        ped.stop_since[c] = now;
+                    }
+                } else if now - since > OWN_SIGNAL_YELLOW {
+                    let walking = ped.busy_until[c] > now && now - ped.walk_since[c] < MIN_WALK;
+                    let started = ped.walk_since[c] >= since;
+                    if ped.waiting[c] > 0 && (walking || !started) && self.crossing_clear(&ped, c) {
+                        ped.start(c, now);
+                    } else if started && ped.busy_until[c] <= now {
+                        // Everyone across: green for drivers again.
+                        ped.stop_since[c] = f64::NAN;
+                    }
+                }
+                continue;
+            }
+            if ped.waiting[c] == 0 {
+                continue;
+            }
+            let go = if ped.data.kind[c] == pedestrians::kind::ZEBRA {
+                self.crossing_clear(&ped, c) && self.drivers_can_stop(&ped, c)
+            } else {
+                let walking = ped.busy_until[c] > now && now - ped.walk_since[c] < MIN_WALK;
+                (walking || ped.busy_until[c] <= now)
+                    && ped
+                        .blocking_links(c)
+                        .iter()
+                        .all(|&l| matches!(self.link_state(l), b'r' | b'u'))
+                    && self.crossing_clear(&ped, c)
+            };
+            if go {
+                ped.start(c, now);
+            }
+        }
+        self.pedestrians = Some(ped);
+    }
+
+    /// No vehicle driving over crossing `c` (pedestrians walk between vehicles standing in a
+    /// queue across it).
+    fn crossing_clear(&self, ped: &Pedestrians, c: usize) -> bool {
+        ped.data.lanes_of(c).all(|i| {
+            let (lane, at) = (ped.data.lanes[i], ped.data.pos[i]);
+            if (lane as usize) >= self.lane_vehs.len() {
+                return true;
+            }
+            !self.lane_vehs[lane as usize].iter().any(|&u| {
+                let uv = &self.vehs[u as usize];
+                uv.speed > 1.0 && uv.pos >= at - 0.5 && uv.pos - uv.params().length <= at + 1.0
+            })
+        })
+    }
+
+    /// Every driver coming to crossing `c` can stop before it in comfort.
+    fn drivers_can_stop(&self, ped: &Pedestrians, c: usize) -> bool {
+        ped.data.lanes_of(c).all(|i| {
+            let (lane, at) = (ped.data.lanes[i], ped.data.pos[i]);
+            if (lane as usize) >= self.lane_vehs.len() {
+                return true;
+            }
+            let list = &self.lane_vehs[lane as usize];
+            let k = list.partition_point(|&u| self.vehs[u as usize].pos < at - 0.5);
+            k == 0 || {
+                let uv = &self.vehs[list[k - 1] as usize];
+                let gap = at - 1.0 - uv.pos;
+                uv.speed * uv.speed / (2.0 * uv.params().decel) < gap - uv.speed * 0.5
+            }
+        })
     }
 
     /// The level crossings ahead of train `veh` it gets to within `CROSSING_LEAD`.
@@ -3125,6 +3287,15 @@ impl Engine {
             let lv = &self.vehs[l as usize];
             if lv.pos - lv.params().length - veh.pos < 15.0 {
                 return Holdup::Queued;
+            }
+        }
+        if let Some(ped) = &self.pedestrians {
+            let ahead = ped.on_lane(lane).find(|&(at, _)| at > veh.pos + 0.5);
+            if let Some((at, c)) = ahead
+                && at - veh.pos < 15.0
+                && ped.state(c as usize, self.time) != b'G'
+            {
+                return Holdup::Pedestrians;
             }
         }
         if veh.route_idx as usize + 1 >= veh.route.len() {

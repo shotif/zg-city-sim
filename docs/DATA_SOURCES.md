@@ -270,6 +270,8 @@ The city street network has no stations; the toll-free Zagreb bypass (A3 Jankomi
   - About 1,300 traffic-signal nodes.
   - 133 km of tram track.
   - 122k buildings, of which only ~1 % have a height.
+- **Pedestrian crossings (M8c):** 9,773 `highway=crossing` nodes in the extract (October 2026): about 1,800 `crossing=marked`, 1,600 zebras, 1,500 with traffic signals, 1,100 uncontrolled, 600 unmarked and 1,300 with no kind. 8,095 lie on a drivable road the network has (unmarked ones left out: drivers need not give way there): 6,514 zebra or marked, 1,238 at a signalled junction and 343 with signals of their own.
+- **Pedestrian counts:** none open were found for Zagreb. Pedestrians a day per crossing are estimated from the homes and jobs within 400 m (0.3 uses a day per person beside a crossing, fewer further off) and the tram and bus stops within 150 m (6 pedestrians per bus or tram stopping): 494 a day at the median crossing, 2,000-7,000 at the busiest (by big stops and along Ilica), 4.4 million crossings in all. The hourly shares are estimated too, busiest from the morning commute through the afternoon.
 
 ## 8. Live feeds
 

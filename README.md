@@ -3,7 +3,7 @@
 A realistic traffic and city-building simulator of Zagreb, Croatia, running entirely in the browser.
 
 - Whole City of Zagreb in 3D, built from open data (terrain, land cover, roads, the City's official 3D buildings).
-- Live traffic simulation: cars and trucks from where people live and work, commuters and through traffic from beyond the map, drivers who go another way when the roads ahead jam, ZET trams and buses and HŽ trains on their timetable, level crossings that close for trains, drawn as low-poly cars of five shapes, lorries, ZET buses and trams and HŽ's suburban trains, with brake lights and indicators.
+- Live traffic simulation: cars and trucks from where people live and work, commuters and through traffic from beyond the map, drivers who go another way when the roads ahead jam, ZET trams and buses and HŽ trains on their timetable, level crossings that close for trains, pedestrians who cross at zebras and with the lights (drivers give way to them), drawn as low-poly cars of five shapes, lorries, ZET buses and trams and HŽ's suburban trains, with brake lights and indicators.
 - Analysis: a traffic map of measured speeds, news reports of jams at 39 places, the City's live road closures, and a [validation report](docs/VALIDATION.md) against traffic counts.
 - Build: draw new roads and bridges, make junctions roundabouts, set traffic lights phase by phase, close roads and lanes, change speed limits, make bus lanes and ban turns, and traffic re-plans its routes within a minute. Edits are kept in the browser and can be shared as a link or a file. Before and after runs the day again with the edits next to today's roads and compares delay, speeds, travel times between districts and traffic per road.
 - Zones: paint housing, shops, offices and industry onto the free lots along Zagreb's streets, or zone them as the City's plan has it, with the planned land use drawn on the map. Zagreb-style buildings grow there as the simulated day goes on: houses, blocks, towers, shops, offices and halls. Their residents and jobs join the traffic. Demand for homes, shops and workplaces sets how fast each zone grows, and land value, from homes and jobs within reach on the simulated traffic, green land and traffic noise, where it grows first and how tall; it can be drawn as a map.
@@ -36,6 +36,7 @@ Requirements: Node.js 22+, Python 3.12+, Rust (stable) with the WebAssembly targ
 #    demand (residents and jobs per street from buildings, census and land use; traffic
 #    crossing the map's edge from Hrvatske ceste counts),
 #    transit (ZET's weekday tram and bus timetable and HŽ's trains, stops placed on the network),
+#    pedestrians (crossings on the roads, with pedestrians a day estimated from what is near),
 #    news (news reports of traffic trouble, placed on the network),
 #    zoning (lots along streets for zoning, and the City's planned land use),
 #    projects (planned roads, each built into a network of its own with the above on it)

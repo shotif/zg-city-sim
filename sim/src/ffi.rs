@@ -12,6 +12,7 @@ use crate::demand::{Demand, Gateway};
 use crate::edits::Edit;
 use crate::engine::{DT, Engine, LanePiece, RENDER_STRIDE, Trip, stat};
 use crate::network::{Network, NetworkData};
+use crate::pedestrians::{CrossingData, Pedestrians};
 use crate::transit::{Transit, TransitData};
 use crate::weather::Weather;
 
@@ -26,8 +27,12 @@ struct State {
     gateway_daily: Vec<f32>,
     gateway_through: Vec<f32>,
     transit: TransitData,
+    crossings: CrossingData,
+    crossing_hourly: Vec<f32>,
     engine: Option<Engine>,
     stats: [f64; stat::LEN],
+    /// Pedestrians at each crossing, for drawing (`Pedestrians::write_state`).
+    crossing_state: Vec<u8>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -70,10 +75,11 @@ fn alloc<T: Copy + Default>(v: &mut Vec<T>, count: usize) -> *mut u8 {
     v.as_mut_ptr() as *mut u8
 }
 
-/// Allocate one of the demand (per-edge home and work weights, gateways) or timetable
-/// arrays.
+/// Allocate one of the demand (per-edge home and work weights, gateways), timetable or
+/// pedestrian crossing arrays.
 fn alloc_extra_array(s: &mut State, name: &str, count: usize, elem_size: usize) -> Option<*mut u8> {
     let t = &mut s.transit;
+    let c = &mut s.crossings;
     let (ptr, size) = match name {
         "demandEdge" => (alloc(&mut s.demand_edges, count), 4),
         "demandHome" => (alloc(&mut s.demand_home, count), 4),
@@ -88,6 +94,14 @@ fn alloc_extra_array(s: &mut State, name: &str, count: usize, elem_size: usize) 
         "transitStopEdge" => (alloc(&mut t.stop_edge, count), 4),
         "transitStopFrac" => (alloc(&mut t.stop_frac, count), 4),
         "transitStopTime" => (alloc(&mut t.stop_time, count), 4),
+        "crossingLaneOffsets" => (alloc(&mut c.lane_offsets, count), 4),
+        "crossingLanes" => (alloc(&mut c.lanes, count), 4),
+        "crossingPos" => (alloc(&mut c.pos, count), 4),
+        "crossingKind" => (alloc(&mut c.kind, count), 1),
+        "crossingLength" => (alloc(&mut c.length, count), 4),
+        "crossingJunction" => (alloc(&mut c.junction, count), 4),
+        "crossingDaily" => (alloc(&mut c.daily, count), 4),
+        "crossingHourly" => (alloc(&mut s.crossing_hourly, count), 4),
         _ => return None,
     };
     (size == elem_size).then_some(ptr)
@@ -173,10 +187,18 @@ pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
         }
         let transit = std::mem::take(&mut s.transit);
         let has_transit = transit.trips() > 0 && transit.consistent(net.edge_count());
+        let mut crossings = std::mem::take(&mut s.crossings);
+        let has_crossings = crossings.count() > 0
+            && s.crossing_hourly.len() == 24
+            && crossings.consistent(net.lane_count());
         let mut engine = Engine::new(net, seed as u64);
         engine.demand = Some(demand);
         if has_transit {
             engine.transit = Some(Transit::new(transit));
+        }
+        if has_crossings {
+            crossings.hourly.copy_from_slice(&s.crossing_hourly);
+            engine.pedestrians = Some(Pedestrians::new(crossings, &engine.net));
         }
         s.engine = Some(engine);
         0
@@ -343,6 +365,30 @@ pub extern "C" fn zg_signal_ptr(which: u32) -> *const u8 {
             _ => std::ptr::null(),
         }
     })
+}
+
+/// Fill the crossings' state for drawing (two bytes per crossing, see
+/// `Pedestrians::write_state`) and return its length in bytes (0 without pedestrians);
+/// `zg_crossings_ptr` points to it.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_crossings_update() -> u32 {
+    with_state(|s| {
+        let mut out = std::mem::take(&mut s.crossing_state);
+        out.clear();
+        if let Some(e) = s.engine.as_ref()
+            && let Some(ped) = e.pedestrians.as_ref()
+        {
+            ped.write_state(e.time, &mut out);
+        }
+        let len = out.len() as u32;
+        s.crossing_state = out;
+        len
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_crossings_ptr() -> *const u8 {
+    with_state(|s| s.crossing_state.as_ptr())
 }
 
 /// Number of elements of the signal array `which` (see `zg_signal_ptr`).

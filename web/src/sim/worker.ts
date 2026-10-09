@@ -160,9 +160,19 @@ function tick(): void {
     msPerStep = 0.7 * msPerStep + 0.3 * (ms / steps);
     if (!warming) owed -= steps * sim.dt;
     const frame = render ? sim.render() : new Uint32Array(0);
+    const crossings = render ? sim.crossings() : new Uint8Array(0);
     post(
-      { type: 'frame', time, render: frame, stats: sim.stats(), rate, stepMs: msPerStep, warming },
-      [frame.buffer],
+      {
+        type: 'frame',
+        time,
+        render: frame,
+        crossings,
+        stats: sim.stats(),
+        rate,
+        stepMs: msPerStep,
+        warming,
+      },
+      [frame.buffer, crossings.buffer],
     );
     if (time - lastEdgeSpeeds >= EDGE_SPEED_INTERVAL) {
       lastEdgeSpeeds = time;

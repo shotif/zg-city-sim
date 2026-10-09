@@ -23,8 +23,10 @@ const HOLDUP_NAMES: [&str; Holdup::COUNT] = [
     "other",
     "slow road",
     "standing mid-road",
+    "pedestrians",
 ];
 use zg_sim::network::{Network, NetworkData};
+use zg_sim::pedestrians::{CrossingData, Pedestrians};
 use zg_sim::transit::{Transit, TransitData};
 
 /// A packed file's arrays (pipeline/packed.py): name -> (type, byte offset, length).
@@ -138,6 +140,59 @@ pub fn load_transit(dir: &str) -> Option<TransitData> {
             .map(f32::from_le_bytes)
             .collect(),
     })
+}
+
+/// Pedestrian crossings from `dir/crossings.*` (M8c).
+pub fn load_pedestrians(dir: &str) -> Option<CrossingData> {
+    let (arrays, blob) = read_packed(dir, "crossings")?;
+    let bytes = |name: &str, size: usize| -> Vec<u8> {
+        let (_, offset, length) = &arrays[name];
+        blob[*offset..*offset + length * size].to_vec()
+    };
+    let words = |name: &str| -> Vec<[u8; 4]> { bytes(name, 4).as_chunks::<4>().0.to_vec() };
+    let u32s = |name: &str| words(name).into_iter().map(u32::from_le_bytes).collect();
+    let f32s = |name: &str| words(name).into_iter().map(f32::from_le_bytes).collect();
+    let index = std::fs::read_to_string(format!("{dir}/crossings.json")).ok()?;
+    let list = &index[index.find("\"hourly\"")?..];
+    let list = &list[list.find('[')? + 1..list.find(']')?];
+    let mut hourly = [0.0f32; 24];
+    for (h, v) in list.split(',').enumerate().take(24) {
+        hourly[h] = v.trim().parse().ok()?;
+    }
+    Some(CrossingData {
+        lane_offsets: u32s("crossingLaneOffsets"),
+        lanes: u32s("crossingLanes"),
+        pos: f32s("crossingPos"),
+        kind: bytes("crossingKind", 1),
+        length: f32s("crossingLength"),
+        junction: u32s("crossingJunction"),
+        daily: f32s("crossingDaily"),
+        hourly,
+    })
+}
+
+/// Pedestrians at the crossings in `dir` for `engine`, unless NO_PEDESTRIANS is set;
+/// PEDESTRIAN_SCALE=0.5 lets half of them arrive.
+pub fn attach_pedestrians(engine: &mut Engine, dir: &str) {
+    if std::env::var("NO_PEDESTRIANS").is_ok() {
+        println!("pedestrians: none (NO_PEDESTRIANS)");
+        return;
+    }
+    match load_pedestrians(dir) {
+        Some(data) if data.consistent(engine.net.lane_count()) => {
+            println!("pedestrians: {} crossings", data.count());
+            let mut ped = Pedestrians::new(data, &engine.net);
+            if let Some(scale) = std::env::var("PEDESTRIAN_SCALE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
+                ped.scale = scale;
+            }
+            engine.pedestrians = Some(ped);
+        }
+        Some(_) => println!("pedestrians: crossings do not match the network"),
+        None => println!("pedestrians: none (no pedestrians/crossings.bin)"),
+    }
 }
 
 /// Building-based demand from `dir/demand.*`: edges, residents and jobs per edge.
@@ -293,6 +348,7 @@ fn main() {
         Some(_) => println!("transit: timetable does not match the network"),
         None => println!("transit: none (no transit/transit.bin)"),
     }
+    attach_pedestrians(&mut engine, &format!("{dir}/../pedestrians"));
     println!(
         "engine with routing landmarks ready in {:.0} ms",
         t0.elapsed().as_secs_f64() * 1e3
