@@ -25,9 +25,11 @@ const HOLDUP_NAMES: [&str; Holdup::COUNT] = [
     "standing mid-road",
     "pedestrians",
 ];
+use zg_sim::edits::Edit;
 use zg_sim::network::{Network, NetworkData};
 use zg_sim::pedestrians::{CrossingData, Pedestrians};
 use zg_sim::transit::{Transit, TransitData};
+use zg_sim::vtype;
 
 /// A packed file's arrays (pipeline/packed.py): name -> (type, byte offset, length).
 type Packed = (HashMap<String, (String, usize, usize)>, Vec<u8>);
@@ -409,6 +411,32 @@ fn main() {
     engine.demand = Some(demand);
     engine.demand_scale = demand_scale(&format!("{dir}/../demand"));
     println!("demand scale: {}", engine.demand_scale);
+    // FREQUENCY=2: every tram and bus line run that many times as often (M9b).
+    if let Some(factor) = std::env::var("FREQUENCY")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+    {
+        let routes: std::collections::BTreeSet<u16> = engine
+            .transit
+            .as_ref()
+            .map(|tr| {
+                let d = &tr.data;
+                (0..d.trips())
+                    .filter(|&t| matches!(d.trip_type[t], vtype::TRAM | vtype::BUS))
+                    .map(|t| d.trip_route[t])
+                    .collect()
+            })
+            .unwrap_or_default();
+        let edits: Vec<Edit> = routes
+            .iter()
+            .map(|&route| Edit::Frequency {
+                route: route as u32,
+                factor,
+            })
+            .collect();
+        let applied = engine.set_edits(&edits);
+        println!("frequency: {applied} tram and bus lines {factor} times as often");
+    }
     engine.set_time(start * 3600.0);
     engine.track_delay = true;
     engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();

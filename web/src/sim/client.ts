@@ -35,7 +35,8 @@ export class SimClient {
   /** Edits in force: the latest id the worker has applied, and how many fit. */
   editsApplied?: { id: number; applied: number };
   onFrame?: () => void;
-  onEdited?: (applied: number, signals: SignalPrograms) => void;
+  /** Edits applied: how many fit, the signal programs and the trips that run. */
+  onEdited?: (applied: number, signals: SignalPrograms, service: Uint32Array) => void;
   /** The latest network sent runs (`error`: it could not be swapped in). */
   onNetwork?: (signals: SignalPrograms, error?: string) => void;
   /** Id of the latest network the worker has swapped in (0: as loaded). */
@@ -67,7 +68,8 @@ export class SimClient {
       case 'edited':
         this.signals = message.signals;
         this.editsApplied = { id: message.id, applied: message.applied };
-        if (message.id === this.editsId) this.onEdited?.(message.applied, message.signals);
+        if (message.id === this.editsId)
+          this.onEdited?.(message.applied, message.signals, message.service);
         break;
       case 'networked':
         this.signals = message.signals;

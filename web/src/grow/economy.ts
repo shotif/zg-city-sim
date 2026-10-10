@@ -41,9 +41,18 @@
  * simulated network, service roads and motorways left out; regular upkeep is left out
  * too), 0.5 % a year of a bridge's cost and €3,000 a year for a set of lights (both
  * estimated).
+ *
+ * Public transport run more or less often (M9b) costs or saves what ZET spends per
+ * vehicle-km: €7.00 a tram-km and €4.90 a bus-km. ZET's operating costs in 2024 were
+ * €209.6 million (depreciation included) for 10.57 million tram-km and 27.72 million
+ * bus-km; they are shared by the hours each ran (trams averaged 12.49 km/h, buses 17.96),
+ * as drivers' pay is most of them (an estimate: ZET does not split its costs by mode). A
+ * weekday's timetable is about 1/244 of a year's tram-km and 1/308 of its bus-km (ZET's
+ * 2024 km over the weekday timetable's). Fares from riders gained or lost are left out.
  */
 import type { Point } from '../edit/builder';
 import type { Edit } from '../edit/edits';
+import type { Mode } from '../world/transitLines';
 import { ARCHETYPES, type Grown, NET_AREA, heights, occupants } from './growth';
 
 export const BASE_INCOME = 63_900_000;
@@ -72,6 +81,9 @@ export const SIGNS = { close: 2_000, closeLane: 2_000, speed: 1_000, busLane: 5_
 export const UPKEEP_LANE_KM = 4_200;
 export const BRIDGE_UPKEEP = 0.005;
 export const LIGHTS_UPKEEP = 3_000;
+/** ZET's cost per vehicle-km (€), and weekdays' service a year comes to. */
+export const VEHICLE_KM: Record<Mode, number> = { tram: 7.0, bus: 4.9, train: 0 };
+export const SERVICE_DAYS: Record<Mode, number> = { tram: 244, bus: 308, train: 0 };
 /** Seconds of simulated time a budget year takes. */
 export const YEAR = 86_400;
 
@@ -115,12 +127,33 @@ const length = (points: Point[]) =>
 /** Whether the junction near a point has traffic lights on the network loaded. */
 export type HasLights = (x: number, z: number) => boolean;
 
-/** What an edit costs to build (€), and its upkeep a year. */
-export function editCost(
+/** A line's vehicle-km a weekday, as timetabled (undefined: not known). */
+export type LineKm = (line: string, mode: Mode) => number | undefined;
+
+/** What an edit costs (€): to build, its upkeep a year, and what it adds to public
+ * transport's running costs a year (less where it runs less). */
+export interface EditCost {
+  build: number;
+  upkeep: number;
+  service: number;
+}
+
+/** What an edit costs to build (€), its upkeep a year and its service a year. */
+export function editCost(edit: Edit, hasLights: HasLights = () => true, lineKm?: LineKm): EditCost {
+  return { service: 0, ...buildAndUpkeep(edit, hasLights, lineKm) };
+}
+
+function buildAndUpkeep(
   edit: Edit,
-  hasLights: HasLights = () => true,
-): { build: number; upkeep: number } {
+  hasLights: HasLights,
+  lineKm?: LineKm,
+): { build: number; upkeep: number; service?: number } {
   switch (edit.kind) {
+    case 'frequency': {
+      const km = lineKm?.(edit.line, edit.mode) ?? 0;
+      const service = (edit.factor - 1) * km * SERVICE_DAYS[edit.mode] * VEHICLE_KM[edit.mode];
+      return { build: 0, upkeep: 0, service };
+    }
     case 'road': {
       const km = length(edit.points) / 1000;
       const lanes = edit.lanes * (edit.oneway ? 1 : 2);
@@ -145,18 +178,20 @@ export function editCost(
   }
 }
 
-/** What a list of edits cost to build, and their upkeep a year. */
+/** What a list of edits cost to build, their upkeep and their service a year. */
 export function editsCost(
   edits: readonly Edit[],
   hasLights?: HasLights,
-): { build: number; upkeep: number } {
-  let [build, upkeep] = [0, 0];
+  lineKm?: LineKm,
+): EditCost {
+  const sum: EditCost = { build: 0, upkeep: 0, service: 0 };
   for (const e of edits) {
-    const c = editCost(e, hasLights);
-    build += c.build;
-    upkeep += c.upkeep;
+    const c = editCost(e, hasLights, lineKm);
+    sum.build += c.build;
+    sum.upkeep += c.upkeep;
+    sum.service += c.service;
   }
-  return { build, upkeep };
+  return sum;
 }
 
 /** Money coming in and going out a year, by item. */
@@ -165,6 +200,8 @@ export interface Yearly {
   tax: number;
   fee: number;
   upkeep: number;
+  /** Public transport run more (or less, negative) than timetabled. */
+  service: number;
 }
 
 export interface SavedBudget {
@@ -191,7 +228,7 @@ export class Budget {
   /** Cost of the edits in force, as paid. */
   spent: number;
   readonly history: [number, number][];
-  yearly: Yearly = { base: BASE_INCOME, tax: 0, fee: 0, upkeep: 0 };
+  yearly: Yearly = { base: BASE_INCOME, tax: 0, fee: 0, upkeep: 0, service: 0 };
   /** Communal contributions paid since the page was opened. */
   contributions = 0;
   private last?: number;
@@ -240,7 +277,7 @@ export class Budget {
     const dt = Math.min(now - this.last, YEAR);
     this.last = now;
     const y = this.yearly;
-    this.balance += ((y.base + y.tax + y.fee - y.upkeep) * dt) / YEAR;
+    this.balance += ((y.base + y.tax + y.fee - y.upkeep - y.service) * dt) / YEAR;
     this.sample(now);
   }
 

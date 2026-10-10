@@ -1,5 +1,6 @@
 //! Network edits applied to the running simulation: closed roads and lanes, speed limits,
-//! lanes reserved for some vehicle classes (bus lanes), banned turns and signal timings.
+//! lanes reserved for some vehicle classes (bus lanes), banned turns and signal timings,
+//! and how often a public transport line runs (M9b).
 //!
 //! Edits always apply to the network as loaded: `Engine::set_edits` restores the loaded lane
 //! speeds, permissions and signal timings, applies the whole list, and rebuilds what depends
@@ -31,6 +32,9 @@ pub enum Edit {
     BanTurn { from: u32, to: u32 },
     /// Green time (s) of one phase of a signal program.
     Green { tls: u32, phase: u16, seconds: f32 },
+    /// A line (the timetable's route index) run `factor` times as often as timetabled
+    /// (`transit::FREQUENCY_RANGE`; 0 is no service).
+    Frequency { route: u32, factor: f32 },
 }
 
 /// Edit kinds in the four-word records the app sends (`Edit::decode`).
@@ -41,6 +45,7 @@ pub mod kind {
     pub const LANE_CLASSES: u32 = 4;
     pub const BAN_TURN: u32 = 5;
     pub const GREEN: u32 = 6;
+    pub const FREQUENCY: u32 = 7;
 }
 
 impl Edit {
@@ -75,6 +80,10 @@ impl Edit {
                         phase: r[2].min(u16::MAX as u32) as u16,
                         seconds: value,
                     },
+                    kind::FREQUENCY => Edit::Frequency {
+                        route: r[1],
+                        factor: value,
+                    },
                     _ => return None,
                 })
             })
@@ -103,6 +112,7 @@ impl Edit {
                 phase,
                 seconds,
             } => [kind::GREEN, tls, phase as u32, seconds.to_bits()],
+            Edit::Frequency { route, factor } => [kind::FREQUENCY, route, 0, factor.to_bits()],
         }
     }
 }
@@ -141,6 +151,7 @@ impl Loaded {
 /// Apply one edit to the lane and signal arrays (the caller rebuilds links and routing).
 /// False if it does not fit the network: an unknown or junction-internal road, a lane or
 /// phase the road or program does not have, a value out of range, or a turn no link makes.
+/// Frequency edits change the timetable, not the network (`Engine::set_edits`).
 pub fn apply(net: &mut Network, edit: &Edit) -> bool {
     let n_edges = net.edge_count() as u32;
     let road = |e: u32| e < n_edges && !net.is_internal_edge(e);
@@ -218,6 +229,7 @@ pub fn apply(net: &mut Network, edit: &Edit) -> bool {
             d.phase_min_dur[p] = d.phase_min_dur[p].min(seconds);
             d.phase_max_dur[p] = d.phase_max_dur[p].max(seconds);
         }
+        Edit::Frequency { .. } => return false,
     }
     true
 }

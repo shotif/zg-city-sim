@@ -1,5 +1,6 @@
 /**
- * The edit model: changes to the road network the player makes (M4a), kept as a list.
+ * The edit model: changes to the road network the player makes (M4a), and to how often
+ * public transport lines run (M9b), kept as a list.
  *
  * Edits name roads by a point on them and their heading, not by edge id: CI rebuilds the
  * network from newer OpenStreetMap data on every deploy, and ids change with it. A saved or
@@ -14,6 +15,7 @@ import {
   type SignalEdit,
   type WayRef,
 } from './builder';
+import { FREQUENCIES, MODE_NAME, type Mode, frequencyLabel } from '../world/transitLines';
 import type { RoadIndex } from './roadIndex';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
@@ -58,11 +60,24 @@ export type Edit =
   | { kind: 'ban'; from: RoadRef; to: RoadRef }
   /** Green time of one phase of a junction's signal program. */
   | { kind: 'green'; junction: JunctionRef; phase: number; seconds: number }
+  /** A public transport line, by its name and mode, run `factor` times as often as
+   * timetabled (0: not at all). */
+  | FrequencyEdit
   /** A new road, a junction made a roundabout, a junction's traffic lights as the player
    * sets them (edit/builder.ts): built into the network before the other edits apply. */
   | RoadEdit
   | RoundaboutEdit
   | SignalEdit;
+
+export interface FrequencyEdit {
+  kind: 'frequency';
+  line: string;
+  mode: Mode;
+  factor: number;
+}
+
+/** The timetable's route of a line by name and mode (none if it does not run it). */
+export type LineIndex = (line: string, mode: Mode) => number | undefined;
 
 /** Edits built into the network (`buildNetwork`), not applied by the engine. */
 export function isNetworkEdit(edit: Edit): edit is NetworkEdit {
@@ -70,7 +85,15 @@ export function isNetworkEdit(edit: Edit): edit is NetworkEdit {
 }
 
 /** Record kinds the engine reads (sim/src/edits.rs `kind`). */
-const KIND = { close: 1, closeLane: 2, speed: 3, laneClasses: 4, ban: 5, green: 6 } as const;
+const KIND = {
+  close: 1,
+  closeLane: 2,
+  speed: 3,
+  laneClasses: 4,
+  ban: 5,
+  green: 6,
+  frequency: 7,
+} as const;
 
 /** An edit matched to the network it is loaded on. */
 export interface ResolvedEdit {
@@ -90,25 +113,36 @@ function floatBits(value: number): number {
   return u32[0];
 }
 
-/** Match edits to the network: those whose roads or junction it has, and the rest. New
- * roads and junctions are left out: they are built into the network (`buildNetwork`). */
+/** Match edits to the network: those whose roads or junction it has (or lines the
+ * timetable runs, by `lines`), and the rest. New roads and junctions are left out: they
+ * are built into the network (`buildNetwork`). */
 export function resolveEdits(
   index: RoadIndex,
   edits: readonly Edit[],
+  lines?: LineIndex,
 ): { resolved: ResolvedEdit[]; missing: Edit[] } {
   const resolved: ResolvedEdit[] = [];
   const missing: Edit[] = [];
   for (const edit of edits) {
     if (isNetworkEdit(edit)) continue;
-    const r = resolveEdit(index, edit);
+    const r = resolveEdit(index, edit, lines);
     if (r) resolved.push(r);
     else missing.push(edit);
   }
   return { resolved, missing };
 }
 
-function resolveEdit(index: RoadIndex, edit: Exclude<Edit, NetworkEdit>): ResolvedEdit | undefined {
+function resolveEdit(
+  index: RoadIndex,
+  edit: Exclude<Edit, NetworkEdit>,
+  lines?: LineIndex,
+): ResolvedEdit | undefined {
   switch (edit.kind) {
+    case 'frequency': {
+      const route = lines?.(edit.line, edit.mode);
+      if (route === undefined) return undefined;
+      return { edit, edges: [], record: [KIND.frequency, route, 0, floatBits(edit.factor)] };
+    }
     case 'close':
     case 'closeLane':
     case 'speed':
@@ -181,6 +215,8 @@ export function sameTarget(a: Edit, b: Edit): boolean {
       return sameRoad(a.from, (b as typeof a).from) && sameRoad(a.to, (b as typeof a).to);
     case 'green':
       return near(a.junction, (b as typeof a).junction) && a.phase === (b as typeof a).phase;
+    case 'frequency':
+      return a.line === (b as typeof a).line && a.mode === (b as typeof a).mode;
     case 'road': {
       const q = (b as typeof a).points;
       return a.points.length === q.length && a.points.every((p, i) => near(p, q[i]));
@@ -214,6 +250,8 @@ export function describeEdit(edit: Edit): string {
       return `No turn from ${roadName(edit.from)} onto ${roadName(edit.to)}`;
     case 'green':
       return `${edit.junction.name ?? 'Signals'}: phase ${edit.phase + 1} green ${edit.seconds} s`;
+    case 'frequency':
+      return `${MODE_NAME[edit.mode]} ${edit.line}: ${frequencyLabel(edit.factor).toLowerCase()}`;
     case 'road': {
       let metres = 0;
       for (let i = 1; i < edit.points.length; i++) {
@@ -278,6 +316,8 @@ function compact(edit: Edit): Edit {
       };
     case 'road':
       return { ...edit, points: edit.points.map((p) => ({ x: round(p.x), z: round(p.z) })) };
+    case 'frequency':
+      return edit;
     default:
       return { ...edit, road: road(edit.road) };
   }
@@ -298,6 +338,7 @@ const KINDS = new Set([
   'road',
   'roundabout',
   'signal',
+  'frequency',
 ]);
 
 /** Edits from a saved list; throws if it is not one. Unknown kinds are dropped. */
@@ -349,6 +390,12 @@ export function parseEdits(text: string): Edit[] {
         );
       case 'roundabout':
         return isJunction(e.junction) && (e.lanes === 1 || e.lanes === 2);
+      case 'frequency':
+        return (
+          typeof e.line === 'string' &&
+          (e.mode === 'tram' || e.mode === 'bus') &&
+          FREQUENCIES.some((f) => f.factor === e.factor)
+        );
       case 'signal':
         return (
           isJunction(e.junction) &&

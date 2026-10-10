@@ -188,6 +188,20 @@ impl Engine {
             veh.cur_link = remap(veh.cur_link);
             veh.stop_done = remap(veh.stop_done);
             veh.coop = NONE;
+            // The lanes it came from (its body is drawn along them): where their ends went,
+            // up to the first that is gone.
+            let mut hist = [NONE; 3];
+            for (k, &h) in veh.hist.iter().enumerate() {
+                if h == NONE || h as usize >= old.lane_length.len() {
+                    break;
+                }
+                let (to, _) = lanes.place(h, old.lane_length[h as usize]);
+                if to == NONE {
+                    break;
+                }
+                hist[k] = to;
+            }
+            veh.hist = hist;
             // Routes follow their roads' pieces; a route over a road taken away re-plans.
             let mut route: Vec<u32> = Vec::with_capacity(veh.route.len() + 2);
             let mut index = Vec::with_capacity(veh.route.len());

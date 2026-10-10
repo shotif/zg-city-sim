@@ -11,7 +11,9 @@ import {
   NEW_LIGHTS,
   RETIMING,
   ROUNDABOUT,
+  SERVICE_DAYS,
   UPKEEP_LANE_KM,
+  VEHICLE_KM,
   buildingIncome,
   cityZone,
   contribution,
@@ -72,7 +74,11 @@ const road = (over: Partial<RoadEdit> = {}): RoadEdit => ({
 describe('what building costs', () => {
   it('prices roads by lane-km, bridges by deck and motorways dearer', () => {
     // 1 km, a lane each way.
-    expect(editCost(road())).toEqual({ build: 2 * LANE_KM.other, upkeep: 2 * UPKEEP_LANE_KM });
+    expect(editCost(road())).toEqual({
+      build: 2 * LANE_KM.other,
+      upkeep: 2 * UPKEEP_LANE_KM,
+      service: 0,
+    });
     expect(editCost(road({ oneway: true, lanes: 2 })).build).toBeCloseTo(2 * LANE_KM.other);
     expect(editCost(road({ type: 'motorway', lanes: 2 })).build).toBeCloseTo(4 * LANE_KM.motorway);
     // A bridge: 1 km of deck 3.5 m a lane and 4 m of pavements, 0.5 % a year to keep.
@@ -95,6 +101,32 @@ describe('what building costs', () => {
     expect(editCost(lights, () => true).build).toBe(RETIMING);
     const total = editsCost([road(), { kind: 'roundabout', junction, lanes: 1 }], () => true);
     expect(total.build).toBeCloseTo(2 * LANE_KM.other + ROUNDABOUT[0]);
+  });
+
+  it('charges public transport run more often per vehicle-km a year, and saves on less', () => {
+    // Tram 6 runs 2,000 km a weekday: twice as often is 2,000 km more a weekday.
+    const km = (line: string) => (line === '6' ? 2000 : undefined);
+    const twice = editCost(
+      { kind: 'frequency', line: '6', mode: 'tram', factor: 2 },
+      undefined,
+      km,
+    );
+    expect(twice).toEqual({
+      build: 0,
+      upkeep: 0,
+      service: 2000 * SERVICE_DAYS.tram * VEHICLE_KM.tram,
+    });
+    expect(twice.service).toBeCloseTo(3.4e6, -5);
+    const half = editCost(
+      { kind: 'frequency', line: '6', mode: 'tram', factor: 0.5 },
+      undefined,
+      km,
+    );
+    expect(half.service).toBeCloseTo(-twice.service / 2);
+    // A line the timetable does not run costs nothing.
+    expect(
+      editCost({ kind: 'frequency', line: '99', mode: 'bus', factor: 2 }, undefined, km).service,
+    ).toBe(0);
   });
 });
 
@@ -147,7 +179,7 @@ describe('the balance', () => {
   it('flows a year a simulated day, pays for building and refuses what it cannot', () => {
     const budget = new Budget();
     expect(budget.balance).toBe(BASE_INCOME);
-    budget.yearly = { base: BASE_INCOME, tax: 1e6, fee: 2e5, upkeep: 2e5 };
+    budget.yearly = { base: BASE_INCOME, tax: 1e6, fee: 2e5, upkeep: 2e5, service: 0 };
     budget.tick(6 * 3600);
     budget.tick(18 * 3600);
     // Half a day: half a year's income less upkeep.

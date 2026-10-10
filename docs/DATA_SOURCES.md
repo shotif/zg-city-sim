@@ -140,6 +140,7 @@ Two layers carry a **restrictive** DGU clause (use only for approved purposes): 
   - Some shapes wander: tram line 3's (`3_3`) is 61.7 km long for a route of about 10 km, running back and forth past its stops, so the shape's direction at a stop can be the wrong way. Tram stops therefore go on any tram track within 30 m, and each run of stops takes the tracks with the quickest way between them (as HŽ's stations do). Bus stops go on a lane running the way the shape does where it passes them, taken in the order the stops are served (a route running out and back along one street passes each stop on both sides).
 
 - **In the app (M9a):** the transit step names each stop visit's stop (`transitStopRef`) and writes `transit/lines.json`: the stops called at with their names and positions, each line's stop patterns and each trip's headsign. ZET's route colours are all white in the feed, so lines are coloured by mode.
+- **Trip lengths (M9b):** `lines.json` also gives each trip's whole length (`tripMetres`): along its route's shape for ZET's trips, straight from station to station inside the map for HŽ's (an underestimate). On 2026-09-30 the weekday timetable runs 43,276 tram-km and 90,122 bus-km (`transit.json`: `tramKm`, `busKm`).
 
 ### GTFS-RT
 
@@ -314,8 +315,9 @@ Figures the game's money is built from (`web/src/grow/economy.ts`), checked on 2
 | Jarunski most | €140 million estimated, without VAT, for a bridge 625 m long and 40 m wide: two lanes each way, tram tracks, cycle paths and pavements | [tportal, 5 May 2026](https://www.tportal.hr/vijesti/clanak/tomasevic-predstavlja-veliki-projekt-na-zapadu-zagreba-otkriva-detalje-izgradnje-jarunskog-mosta-20260505) |
 | A roundabout | Pavlovac, Rijeka: €947,490.59 contracted in January 2025 | [Novi list, 31 January 2025](https://www.novilist.hr/?p=1386545) |
 | New traffic signals | €198,900 in Zagreb's 2023 programme of works | the City's 2023 programme of works for transport and communal services |
+| ZET's operating costs and vehicle-km, 2024 (M9b) | €209.6 million of operating costs (staff €117.1 million, depreciation €26.1 million, energy €25.1 million); 10,566,926 tram-km at a mean 12.49 km/h and 27,724,224 bus-km at 17.96 km/h; 179.1 million passengers | [ZET, Poslovno izvješće 2024.](https://www.zet.hr/UserDocsImages/Dokumenti%20i%20obrasci%20za%20preuzimanje/Poslovna%20izvje%C5%A1%C4%87a%20ZET/Poslovno%20izvjesce-2024.godina.pdf) |
 
-Not found, and estimated instead: the communal fee's zone coefficients and the coefficient for production premises, the cost of a roundabout with two lanes, of new signal timings, signs and markings, and the upkeep of bridges and lights. The new signals' figure is the whole line in the 2023 programme, which may cover more than one junction.
+Not found, and estimated instead: the communal fee's zone coefficients and the coefficient for production premises, the cost of a roundabout with two lanes, of new signal timings, signs and markings, and the upkeep of bridges and lights. ZET does not split its costs between trams and buses: the game shares them by the hours each ran (km over mean speed), as drivers' pay is most of them, which gives €7.00 a tram-km and €4.90 a bus-km. A year's service is taken as the weekday timetable's km times 244 for trams and 308 for buses (ZET's 2024 km over the weekday timetable's). The new signals' figure is the whole line in the 2023 programme, which may cover more than one junction.
 
 ## Gaps and data requests
 

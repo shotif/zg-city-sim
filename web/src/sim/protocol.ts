@@ -72,8 +72,15 @@ export interface FrameMessage {
 export type FromWorker =
   /** The engine is built: in how long (ms), its signal programs and its step (s). */
   | { type: 'ready'; buildMs: number; signals: SignalPrograms; dt: number }
-  /** Edits `id` are in force: how many fit the network, and the signal programs now. */
-  | { type: 'edited'; id: number; applied: number; signals: SignalPrograms }
+  /** Edits `id` are in force: how many fit the network, the signal programs now and the
+   * trips that run (`Timetable.setService`). */
+  | {
+      type: 'edited';
+      id: number;
+      applied: number;
+      signals: SignalPrograms;
+      service: Uint32Array;
+    }
   /** Network `id` runs (or could not be swapped in: `error`), and its signal programs. */
   | { type: 'networked'; id: number; signals: SignalPrograms; error?: string }
   | FrameMessage

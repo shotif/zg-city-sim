@@ -1460,6 +1460,10 @@ fn edits_survive_encoding_for_the_app() {
             phase: 2,
             seconds: 31.5,
         },
+        Edit::Frequency {
+            route: 12,
+            factor: 1.5,
+        },
     ];
     let words: Vec<u32> = all.iter().flat_map(|e| e.encode()).collect();
     assert_eq!(Edit::decode(&words), all);
@@ -1878,6 +1882,54 @@ fn splitting_a_road_keeps_the_vehicles_on_it() {
 }
 
 #[test]
+fn a_car_just_off_a_road_taken_away_is_drawn_along_the_lanes_left() {
+    let (with_road, [_, _, exit, across]) = detour(true);
+    let (without, _) = detour(false);
+    let mut engine = Engine::new(Network::build(with_road).unwrap(), 6);
+    let lane_across = engine.net.edge_lanes(across).start;
+    let length = engine.net.d.lane_length[lane_across as usize];
+    let car = engine.insert_at(
+        vtype::CAR,
+        vec![across, exit],
+        lane_across,
+        length - 2.0,
+        10.0,
+    );
+    // Onto the road out: the lanes behind it are the direct road's, about to go.
+    let mut steps = 0;
+    while engine.net.d.lane_edge[engine.vehs[car as usize].lane as usize] != exit {
+        engine.step();
+        steps += 1;
+        assert!(steps < 100, "the car never left the direct road");
+    }
+    assert!(engine.vehs[car as usize].hist.contains(&lane_across));
+    let gone: Vec<LanePiece> = (lane_across..engine.net.lane_count() as u32)
+        .map(|old| LanePiece {
+            old,
+            from: 0.0,
+            lane: NONE,
+            shift: 0.0,
+        })
+        .collect();
+    engine
+        .replace_network(without, &gone)
+        .expect("a consistent network");
+    let n = engine.net.lane_count() as u32;
+    let veh = &engine.vehs[car as usize];
+    assert!(veh.alive());
+    assert!(
+        veh.hist.iter().all(|&h| h == NONE || h < n),
+        "{:?}",
+        veh.hist
+    );
+    // Drawing it follows only lanes the network has.
+    for _ in 0..20 {
+        engine.write_render();
+        engine.step();
+    }
+}
+
+#[test]
 fn taking_a_road_away_again_merges_the_halves_and_drops_its_traffic() {
     // The detour network with the direct road, and the split straight road: back to the
     // networks without them.
@@ -2194,6 +2246,156 @@ fn a_bus_line_shows_its_path_and_how_late_its_buses_run() {
         }
     });
     assert!(late_seen > 5.0, "the bus ran {late_seen} s late");
+}
+
+/// A bus line on a 400 m road both ways: `per_way` trips each way every 600 s from 06:00,
+/// and one trip of another line.
+fn bus_line(per_way: usize) -> (Engine, u32, u32) {
+    use crate::transit::{Transit, TransitData};
+    let mut b = Builder::default();
+    let (j0, j1) = (b.junction(0.0, 0.0), b.junction(400.0, 0.0));
+    let east = b.road(j0, j1, 1, 13.9);
+    let west = b.road(j1, j0, 1, 13.9);
+    let mut d = TransitData {
+        trip_stops: vec![0],
+        ..TransitData::default()
+    };
+    let mut add = |route: u16, edge: u32, start: f32| {
+        d.trip_type.push(vtype::BUS);
+        d.trip_route.push(route);
+        d.stop_edge.extend([edge, edge]);
+        d.stop_frac.extend([0.2, 0.8]);
+        d.stop_time.extend([start, start + 60.0]);
+        d.trip_stops.push(d.stop_edge.len() as u32);
+    };
+    for k in 0..per_way {
+        add(0, east, 21_600.0 + 600.0 * k as f32);
+        add(0, west, 21_900.0 + 600.0 * k as f32);
+    }
+    add(1, east, 21_700.0);
+    let mut engine = Engine::new(b.build(), 3);
+    engine.transit = Some(Transit::new(d));
+    (engine, east, west)
+}
+
+/// The first departures of the trips that run, by road.
+fn departures(engine: &Engine, edge: u32) -> Vec<f32> {
+    let tr = engine.transit.as_ref().unwrap();
+    tr.order
+        .iter()
+        .filter(|&&t| tr.data.stop_edge[tr.data.trip_stops[t as usize] as usize] == edge)
+        .map(|&t| tr.start_time(t as usize) as f32)
+        .collect()
+}
+
+#[test]
+fn a_line_run_twice_as_often_gets_trips_between_its_own() {
+    let (mut engine, east, west) = bus_line(4);
+    engine.set_time(21_000.0);
+    let twice = Edit::Frequency {
+        route: 0,
+        factor: 2.0,
+    };
+    assert_eq!(engine.set_edits(&[twice]), 1);
+    // Four trips each way become seven: a copy halfway between each two of the
+    // timetable's, none past its last trip; the other line's trip runs as before.
+    let east_times = departures(&engine, east);
+    assert_eq!(east_times.len(), 4 + 3 + 1);
+    assert!(east_times.contains(&21_900.0) && east_times.contains(&21_700.0));
+    assert_eq!(*east_times.last().unwrap(), 23_400.0);
+    assert_eq!(departures(&engine, west).len(), 7);
+    let tr = engine.transit.as_ref().unwrap();
+    assert_eq!(tr.timetabled, 9);
+    assert_eq!(tr.copy_of.len(), 6);
+    assert_eq!(tr.copy_of[0], (0, 300.0));
+    // Set again, the same copies run: the arrays do not grow.
+    engine.set_edits(&[twice]);
+    assert_eq!(engine.transit.as_ref().unwrap().copy_of.len(), 6);
+    // Taken back, the timetable runs as loaded.
+    engine.set_edits(&[]);
+    assert_eq!(departures(&engine, east).len(), 5);
+    let mut service = Vec::new();
+    engine.transit.as_ref().unwrap().write_service(&mut service);
+    assert_eq!(service[..3], [9, 6, 9]);
+    assert_eq!(service[3..5], [0, 300f32.to_bits()]);
+
+    // The copies drive: buses start every 300 s eastbound from 06:00 to its last trip.
+    engine.set_edits(&[twice]);
+    let mut started = Vec::new();
+    run_until(&mut engine, 2_600.0, |e| {
+        for v in e.vehs.iter().filter(|v| v.alive()) {
+            if let Some(run) = &v.transit
+                && !started.contains(&run.trip)
+            {
+                started.push(run.trip);
+            }
+        }
+    });
+    let tr = engine.transit.as_ref().unwrap();
+    let mut east_started: Vec<f64> = started
+        .iter()
+        .filter(|&&t| tr.data.stop_edge[tr.data.trip_stops[t as usize] as usize] == east)
+        .map(|&t| tr.start_time(t as usize))
+        .collect();
+    east_started.sort_by(f64::total_cmp);
+    assert_eq!(
+        east_started,
+        [
+            21_600.0, 21_700.0, 21_900.0, 22_200.0, 22_500.0, 22_800.0, 23_100.0, 23_400.0
+        ]
+    );
+}
+
+#[test]
+fn a_line_run_less_often_keeps_an_even_spread_and_buses_on_the_road_finish() {
+    let (mut engine, east, west) = bus_line(6);
+    // Half as often from 06:00: every other trip each way.
+    engine.set_time(21_000.0);
+    let half = Edit::Frequency {
+        route: 0,
+        factor: 0.5,
+    };
+    engine.set_edits(&[half]);
+    assert_eq!(
+        departures(&engine, east),
+        [21_700.0, 22_200.0, 23_400.0, 24_600.0]
+    );
+    assert_eq!(departures(&engine, west).len(), 3);
+    // No service, out of range and unknown lines: the last two do not fit.
+    let none = Edit::Frequency {
+        route: 0,
+        factor: 0.0,
+    };
+    let too_many = Edit::Frequency {
+        route: 0,
+        factor: 5.0,
+    };
+    let unknown = Edit::Frequency {
+        route: 9,
+        factor: 2.0,
+    };
+    assert_eq!(engine.set_edits(&[none, too_many, unknown]), 1);
+    assert_eq!(departures(&engine, east), [21_700.0]);
+    assert!(departures(&engine, west).is_empty());
+
+    // A bus on the road when its line is cut finishes its trip; trips already due are not
+    // started again when the timetable is restored.
+    engine.set_edits(&[]);
+    run_until(&mut engine, 630.0, |_| {});
+    let on_road = |engine: &Engine| {
+        engine
+            .vehs
+            .iter()
+            .filter(|v| v.alive() && v.transit.as_ref().is_some_and(|r| r.trip == 0))
+            .count()
+    };
+    assert_eq!(on_road(&engine), 1);
+    engine.set_edits(&[none]);
+    assert_eq!(on_road(&engine), 1);
+    let started = engine.transit.as_ref().unwrap().started;
+    engine.set_edits(&[]);
+    run_until(&mut engine, 10.0, |_| {});
+    assert_eq!(engine.transit.as_ref().unwrap().started, started);
 }
 
 #[test]

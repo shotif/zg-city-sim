@@ -748,6 +748,22 @@ a.news-headline:hover {
   margin: 6px 0 2px;
 }
 
+.transit-service {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.transit-service select {
+  flex: 1;
+  min-width: 0;
+}
+
+.transit-service + .budget-note {
+  margin-top: 4px;
+}
+
 .transit-hours {
   display: block;
   width: 100%;

@@ -105,7 +105,10 @@ function applyWeights(
 
 function applyEdits(sim: TrafficEngine, message: { id: number; words: Uint32Array }): void {
   const applied = sim.setEdits(message.words);
-  post({ type: 'edited', id: message.id, applied, signals: sim.signalPrograms() });
+  const service = sim.transitService();
+  post({ type: 'edited', id: message.id, applied, signals: sim.signalPrograms(), service }, [
+    service.buffer,
+  ]);
 }
 
 function swapNetwork(sim: TrafficEngine, message: Extract<ToWorker, { type: 'network' }>): void {

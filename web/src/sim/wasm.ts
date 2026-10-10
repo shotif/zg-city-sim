@@ -41,6 +41,8 @@ export interface EngineExports {
   zg_transit_path_ptr(): number;
   zg_transit_state(): number;
   zg_transit_state_ptr(): number;
+  zg_transit_service(): number;
+  zg_transit_service_ptr(): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
 }
@@ -304,6 +306,15 @@ export class TrafficEngine {
     return len > 0
       ? new Float32Array(this.memory, ex.zg_transit_state_ptr(), len).slice()
       : new Float32Array(0);
+  }
+
+  /** The trips that run with the frequency edits in force (M9b; `Timetable.setService`). */
+  transitService(): Uint32Array {
+    const ex = this.exports;
+    const len = ex.zg_transit_service();
+    return len > 0
+      ? new Uint32Array(this.memory, ex.zg_transit_service_ptr(), len).slice()
+      : new Uint32Array(0);
   }
 
   stats(): Float64Array {

@@ -8,8 +8,9 @@ import type { RoadNetwork } from './roadNetwork';
 
 const LIFT = 9;
 
-/** Colours of edited roads by kind of edit, and of the road being edited. */
-export const EDIT_COLORS: Record<Edit['kind'] | 'selected', number> = {
+/** Colours of edited roads by kind of edit (frequency edits change no road), and of the
+ * road being edited. */
+export const EDIT_COLORS: Record<Exclude<Edit['kind'], 'frequency'> | 'selected', number> = {
   selected: 0x4da3ff,
   close: 0xe0102f,
   closeLane: 0xf07c22,

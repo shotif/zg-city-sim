@@ -139,3 +139,14 @@ def test_line_patterns_keep_the_main_ways_a_line_runs():
     ]
     # Where a train crosses the map's edge names no stop.
     assert lines[1]["patterns"][0]["stops"] == [5, 6]
+
+
+def test_trip_metres_follow_the_shape_else_the_stops():
+    from pipeline.transit import NO_STOP, trip_metres
+
+    stops = [["A", 0.0, 0.0], ["B", 300.0, 400.0], ["C", 300.0, 1000.0]]
+    # A bus whose shape is 1,250 m long; a train entering the map at B, on to C.
+    bus = (0.0, 3, 0, [(0, 0.0, 0.0, None)] * 2, "C", 1250.4)
+    train = (0.0, 2, 1, [(0, 0.0, 0.0, None)] * 3, "C")
+    refs = np.array([0, 2, NO_STOP, 1, 2], np.uint32)
+    assert trip_metres([bus, train], refs, stops) == [1250, 600]

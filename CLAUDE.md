@@ -36,7 +36,7 @@ Read these before changing anything:
 | `sim/src/router.rs` | ALT A* with weighted heuristic; `reach`, the time-limited search behind land value's accessibility (`Engine::reach`). |
 | `sim/src/demand.rs` | Trip generation: `HOURLY` profile, gravity model, gateways. |
 | `sim/src/weather.rs` | The weather's factors on desired speed, headway and acceleration (M6b). |
-| `sim/src/transit.rs` | Trams, buses and trains on timetable. |
+| `sim/src/transit.rs` | Trams, buses and trains on timetable; lines run more or less often by frequency edits (M9b: trips cancelled, or copies of them appended to the timetable). |
 | `sim/src/pedestrians.rs` | Pedestrians at crossings (M8c): arrivals by the hour, zebras, walking with a junction's signals, crossings with signals of their own. |
 | `pipeline/cycling.py` | Cycle tracks and lanes (M8d): the City's and OSM's, matched to the roads they run along (`edgeCycleway`); bike trip ends by the City's homes and jobs. |
 | `pipeline/data/bike_counts_2014.json` | The City's 2014 bike counts at 7 places, for the validation report (M8d). |
@@ -82,6 +82,7 @@ Environment variables for the native runs:
 - `NO_REROUTE=1` (the `day` and `run` examples) keeps drivers on the route they chose at the start, as before M7g.
 - `NO_PEDESTRIANS=1` (the `day`, `run` and `compare` examples) leaves pedestrians out, as before M8c; `PEDESTRIAN_SCALE=0.5` lets half of the estimated pedestrians arrive.
 - `NO_BIKES=1` (the `day`, `run` and `compare` examples) leaves bikes out, as before M8d; `BIKE_SCALE=0.5` runs half of the estimated bike trips.
+- `FREQUENCY=2` (the `run` example) runs every tram and bus line that many times as often (M9b).
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite
@@ -134,3 +135,4 @@ Environment variables for the native runs:
 | Land value (`REACH_DECAY`, `REACH_MAX`, `ACCESS_POWER`, `GREEN_BONUS`, `NOISE_LOSS`) | `web/src/grow/landValue.ts` | 6 min, 20 min, 0.75, 10 %, 0.6 %/dB above 55 dB(A) |
 | Demand per zone (`BASE_DEMAND`, `SWING`) | `web/src/grow/zoneDemand.ts` | homes 0.4, shops 0.2, work 0.3; 2,000 people |
 | Money (`BASE_INCOME`, `INCOME_TAX`, `LANE_KM`, `BRIDGE_M2`, `UPKEEP_LANE_KM`, …) | `web/src/grow/economy.ts` | a year a simulated day; sources in `docs/DATA_SOURCES.md` section 9 |
+| Lines run more or less often (`FREQUENCY_RANGE`, `MAX_GAP`; `VEHICLE_KM`, `SERVICE_DAYS`) | `sim/src/transit.rs`, `web/src/grow/economy.ts` | 0-3 times as often, trips added only in gaps of up to 2 h; €7.00 a tram-km and €4.90 a bus-km, a weekday's change 244 (trams) or 308 (buses) times a year |

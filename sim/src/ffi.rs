@@ -45,6 +45,8 @@ struct State {
     /// A trip's path and the buses, trams and trains running, for the app's Transit panel.
     transit_path: Vec<u32>,
     transit_state: Vec<f32>,
+    /// The trips that run with the frequency edits in force (`Transit::write_service`).
+    transit_service: Vec<u32>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -482,6 +484,28 @@ pub extern "C" fn zg_transit_state() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_transit_state_ptr() -> *const f32 {
     with_state(|s| s.transit_state.as_ptr())
+}
+
+/// The trips that run, with the copies frequency edits added (`Transit::write_service`);
+/// returns how many words, `zg_transit_service_ptr` points to them (none without a
+/// timetable).
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_transit_service() -> u32 {
+    with_state(|s| {
+        let mut out = std::mem::take(&mut s.transit_service);
+        out.clear();
+        if let Some(tr) = s.engine.as_ref().and_then(|e| e.transit.as_ref()) {
+            tr.write_service(&mut out);
+        }
+        let len = out.len() as u32;
+        s.transit_service = out;
+        len
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_transit_service_ptr() -> *const u32 {
+    with_state(|s| s.transit_service.as_ptr())
 }
 
 #[unsafe(no_mangle)]

@@ -4,6 +4,8 @@ import { CameraRig, type ViewMode } from './camera/CameraRig';
 import { type PackedIndex, type TypedArray, loadPacked } from './data/packed';
 import {
   type Edit,
+  type FrequencyEdit,
+  type LineIndex,
   type ResolvedEdit,
   decodeEditsFromUrl,
   editWords,
@@ -13,6 +15,7 @@ import {
   parseEdits,
   resolveEdits,
   saveEdits,
+  sameTarget,
   serializeEdits,
   withEdit,
 } from './edit/edits';
@@ -38,7 +41,7 @@ import { type DemandArrays, type EdgeDemand, mergeDemand } from './grow/demand';
 import { loadLots } from './grow/lots';
 import { BudgetTool } from './grow/budgetTool';
 import { CitySound } from './ui/sound';
-import { editsCost, euros } from './grow/economy';
+import { type LineKm, editCost, editsCost, euros } from './grow/economy';
 import { type ZoningTool, setUpZoning } from './grow/zoningTool';
 import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
@@ -290,6 +293,7 @@ export interface DebugApi {
   pedestrians?: PedestrianLayer;
   railMarkers?: RailMarkers;
   transit?: TransitPanel;
+  timetable?: Timetable;
   traffic?: TrafficLayer;
   news?: NewsLayer;
   newsPanel?: NewsPanel;
@@ -365,6 +369,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let openTransit: (() => void) | undefined;
   /** Whether the player wants the panel open (it loads its data on first opening). */
   let transitWanted = false;
+  /** ZET's and HŽ's lines as the engine runs them (M9a, M9b), once loaded; the trips the
+   * engine said it runs, and how often lines run where edits change it (by route). */
+  let timetable: Timetable | undefined;
+  let serviceNow: Uint32Array | undefined;
+  let frequenciesNow = new Map<number, number>();
+  /** Change the edits in force (set up with the Build tools). */
+  let changeEdits: (change: (list: Edit[]) => Edit[]) => void = () => {};
   /** Trains, pedestrians and cyclists drawn (M8e). */
   const shown = new Set<Shown>(['trains', 'pedestrians', 'bikes']);
   let closureLayer: ClosureLayer | undefined;
@@ -737,6 +748,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const loaded = { net, index: new RoadIndex(net) };
       /** Whether a junction had traffic lights before any edit (new lights cost more). */
       const hasLights = (x: number, z: number) => loaded.index.findSignal({ x, z }) !== undefined;
+      /** Lines by name and mode, and their vehicle-km a weekday, once the timetable is in. */
+      const lineIndex: LineIndex = (line, mode) => timetable?.routeIndex(line, mode);
+      const lineKm: LineKm = (line, mode) => {
+        const route = lineIndex(line, mode);
+        return route === undefined ? undefined : timetable?.km(route);
+      };
+      const costs = (list: readonly Edit[]) => editsCost(list, hasLights, lineKm);
       let missing = 0;
       /** The network with the roads drawn, and where its lanes lie on the one loaded. */
       let current = {
@@ -796,7 +814,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         const result = buildRoads(network);
         const problem = result.problems.find((p) => p.road === network.indexOf(edit));
         if (problem) return problem.reason;
-        const unpaid = budgetTool.afford(editsCost(list, hasLights).build);
+        const unpaid = budgetTool.afford(costs(list).build);
         if (unpaid) return unpaid;
         apply(list);
         return undefined;
@@ -854,15 +872,21 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const apply = (list: Edit[]) => {
         useRoads(list);
         edits = list;
-        const matched = resolveEdits(current.index, list);
+        const matched = resolveEdits(current.index, list, lineIndex);
         resolved = matched.resolved;
         missing = matched.missing.length;
         debug.edits = resolved;
         panel.setEdits(list, resolved, missing);
         saveEdits(list);
-        budgetTool.setEdits(editsCost(list, hasLights), list.length);
+        budgetTool.setEdits(costs(list), list.length);
         editWordsNow = editWords(resolved);
         sim?.setEdits(editWordsNow);
+        frequenciesNow = new Map(
+          resolved.flatMap((r) =>
+            r.edit.kind === 'frequency' ? [[r.record[1], r.edit.factor] as [number, number]] : [],
+          ),
+        );
+        transitPanel?.setFrequencies(frequenciesNow);
         if (list.length === 0) panel.setStatus('');
         if (!sim) panel.setInForce(0);
         redraw();
@@ -870,12 +894,17 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const panel = new BuildPanel(hud.element, loaded.index, {
         // Building needs money: edits that cost more than the City has are refused.
         onEdits: (list) => {
-          const unpaid = budgetTool.afford(editsCost(list, hasLights).build);
+          const unpaid = budgetTool.afford(costs(list).build);
           if (!unpaid) return apply(list);
           panel.setEdits(edits, resolved, missing);
           panel.setStatus(unpaid);
         },
-        costOf: (edit) => euros(editsCost([edit], hasLights).build),
+        costOf: (edit) => {
+          const cost = costs([edit]);
+          if (edit.kind !== 'frequency') return euros(cost.build);
+          if (!cost.service) return '';
+          return `${euros(Math.abs(cost.service))} a year ${cost.service > 0 ? 'more' : 'less'}`;
+        },
         onNetworkEdit: tryNetworkEdit,
         onSelect: () => redraw(),
         onClose: () => {
@@ -898,6 +927,12 @@ export async function startApp(container: HTMLElement): Promise<void> {
         },
       });
       debug.build = panel;
+      changeEdits = (change) => {
+        const list = change(edits);
+        const unpaid = budgetTool.afford(costs(list).build);
+        if (unpaid) panel.setStatus(unpaid);
+        else apply(list);
+      };
       hud.enableBuild();
       if (project) panel.setScenario(project.name);
       const drawer = new RoadDrawer(panel.drawSlot, {
@@ -1321,15 +1356,25 @@ export async function startApp(container: HTMLElement): Promise<void> {
           });
           if (travelData.arrays.transitStopRef) {
             hud.enableTransit();
+            // The lines load at once: frequency edits need them to reach the engine and the
+            // budget.
+            const timetableLoad = loadLines(transitLayer?.index).then((lines) => {
+              if (!lines) return undefined;
+              const loaded = new Timetable(
+                lines.routes,
+                lines.file,
+                travelData.arrays as unknown as TimetableArrays,
+              );
+              loaded.setService(serviceNow);
+              timetable = loaded;
+              debug.timetable = loaded;
+              if (edits.some((e) => e.kind === 'frequency')) changeEdits((list) => list);
+              return loaded;
+            });
             openTransit = () => {
               openTransit = undefined;
-              void loadLines(transitLayer?.index).then((lines) => {
-                if (!lines) return;
-                const timetable = new Timetable(
-                  lines.routes,
-                  lines.file,
-                  travelData.arrays as unknown as TimetableArrays,
-                );
+              void timetableLoad.then((timetable) => {
+                if (!timetable) return;
                 const markers = new StopMarkers(hud.element, timetable, (s) =>
                   transitPanel?.openStop(s),
                 );
@@ -1350,7 +1395,34 @@ export async function startApp(container: HTMLElement): Promise<void> {
                     });
                   },
                   onStop: (x, z) => rig?.jumpTo(x, z, 900),
+                  onFrequency: (route, factor) => {
+                    const r = timetable.routes[route];
+                    const edit: FrequencyEdit = {
+                      kind: 'frequency',
+                      line: r.name,
+                      mode: r.mode,
+                      factor,
+                    };
+                    changeEdits((list) =>
+                      factor === 1
+                        ? list.filter((e) => !sameTarget(e, edit))
+                        : withEdit(list, edit),
+                    );
+                  },
+                  frequencyNote: (route, factor) => {
+                    const r = timetable.routes[route];
+                    const km = timetable.km(route);
+                    const base = `${Math.round(km).toLocaleString('en-GB')} vehicle-km a weekday as timetabled`;
+                    if (factor === 1) return `${base}.`;
+                    const { service } = editCost(
+                      { kind: 'frequency', line: r.name, mode: r.mode, factor },
+                      undefined,
+                      () => km,
+                    );
+                    return `${base}; this ${service > 0 ? 'costs' : 'saves'} about ${euros(Math.abs(service))} a year.`;
+                  },
                 });
+                transitPanel.setFrequencies(frequenciesNow);
                 transitMarkers = markers;
                 debug.transit = transitPanel;
                 transitPanel.setVisible(transitWanted);
@@ -1373,9 +1445,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
             running.onReady = () => {
               if (running.signals) buildPanel?.setSignals(running.signals);
             };
-            running.onEdited = (applied, signals) => {
+            running.onEdited = (applied, signals, service) => {
               buildPanel?.setSignals(signals);
               buildPanel?.setInForce(applied);
+              // The trips that run with the frequency edits in force.
+              serviceNow = service;
+              timetable?.setService(service);
+              transitPanel?.refresh();
             };
             running.onNetwork = (signals, error) => {
               buildPanel?.setSignals(signals);

@@ -196,6 +196,25 @@ test("shows ZET's lines, their stops and departures", async ({ page }, testInfo)
   await page.waitForTimeout(2000);
   await page.screenshot({ path: testInfo.outputPath('tram-6.png') });
 
+  // Twice as often (M9b): the engine runs trips between the timetable's, the budget pays
+  // for them and the change is kept with the Build edits; back as timetabled, it goes.
+  const tram6 = () =>
+    page.evaluate(() => {
+      const t = window.__ZG__!.timetable!;
+      return t.tripsToday(t.routeIndex('6', 'tram')!);
+    });
+  const timetabled = await tram6();
+  await panel.getByLabel('Service').selectOption({ label: 'Twice as often' });
+  await expect.poll(tram6, { timeout: 30_000 }).toBeGreaterThan(timetabled * 1.8);
+  await expect(panel.locator('.transit-stats')).toHaveText(/\(\d+ timetabled\)/);
+  await expect(panel.locator('.transit-service + .budget-note')).toContainText('costs about');
+  await page.screenshot({ path: testInfo.outputPath('tram-6-twice.png') });
+  expect(await page.evaluate(() => localStorage.getItem('zg-city-sim:edits'))).toContain(
+    '"frequency"',
+  );
+  await panel.getByLabel('Service').selectOption({ label: 'As timetabled' });
+  await expect.poll(tram6, { timeout: 30_000 }).toBe(timetabled);
+
   // A stop's departures, then back to the line and to all lines.
   await panel.locator('.transit-stops .transit-item').nth(5).click();
   await expect(panel.locator('.rail-table tr').first()).toBeVisible();

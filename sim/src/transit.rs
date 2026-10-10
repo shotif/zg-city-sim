@@ -4,8 +4,17 @@
 //! vehicle class from stop to stop, and at each stop waits for passengers and for its
 //! scheduled departure. When the simulation starts mid-day, trips already under way start
 //! from the stop they are scheduled to be at.
+//!
+//! Frequency edits (M9b) run a line more or less often: trips cancelled are not started, and
+//! trips added are copies of the timetabled ones, appended to the arrays, so a trip's index
+//! names the same trip for as long as the engine runs.
 
 use std::collections::HashMap;
+
+/// How many times as often edits may run a line (M9b): from not at all to three times.
+pub const FREQUENCY_RANGE: (f32, f32) = (0.0, 3.0);
+/// Trips are added only between trips this close (s): longer gaps are breaks in service.
+pub const MAX_GAP: f32 = 7_200.0;
 
 /// Timetable arrays (names as in the packed file).
 #[derive(Default, Clone)]
@@ -86,8 +95,20 @@ pub struct PendingRun {
 }
 
 pub struct Transit {
+    /// The timetable, with the copies frequency edits added after its own trips.
     pub data: TransitData,
-    /// Next trip to start; trips are sorted by first departure.
+    /// Trips in the timetable as loaded.
+    pub timetabled: usize,
+    /// For each copy (trip `timetabled + k`): the timetabled trip it copies and how much
+    /// later it runs (s).
+    pub copy_of: Vec<(u32, f32)>,
+    /// Copies made, by route and how many times as often (f32 bits): an edit set again
+    /// runs the same ones.
+    copies: HashMap<(u16, u32), Vec<u32>>,
+    /// Trips that run, by first departure: the timetable's less those cancelled, and the
+    /// copies in force.
+    pub order: Vec<u32>,
+    /// Next trip to start (index into `order`).
     pub next_trip: usize,
     /// Simulation time when the current service day began.
     pub day_start: f64,
@@ -110,8 +131,13 @@ pub struct Transit {
 
 impl Transit {
     pub fn new(data: TransitData) -> Transit {
-        Transit {
+        let timetabled = data.trips();
+        let mut tr = Transit {
             data,
+            timetabled,
+            copy_of: Vec::new(),
+            copies: HashMap::new(),
+            order: Vec::new(),
             next_trip: 0,
             day_start: 0.0,
             legs: HashMap::new(),
@@ -124,7 +150,152 @@ impl Transit {
             departures: [0; 5],
             late_sum: [0.0; 5],
             late_max: [0.0; 5],
+        };
+        tr.order = (0..timetabled as u32).collect();
+        tr.sort_order();
+        tr
+    }
+
+    fn sort_order(&mut self) {
+        let mut order = std::mem::take(&mut self.order);
+        order.sort_by(|&a, &b| {
+            self.start_time(a as usize)
+                .total_cmp(&self.start_time(b as usize))
+                .then(a.cmp(&b))
+        });
+        self.order = order;
+    }
+
+    /// Run each line in `edits` (route, how many times as often) more or less often than
+    /// the timetable does, the rest as timetabled; the last edit of a route counts. Each of
+    /// a line's stop patterns keeps its share: fewer trips keep an even spread of its trips;
+    /// more add copies spread evenly between its trips, f - 1 to each gap between two (of
+    /// at most `MAX_GAP`), so its first and last trips stay as they are. Trips due by `tod` (s since the service day's midnight) are not started
+    /// again; vehicles on the road finish their trips.
+    pub fn set_frequencies(&mut self, edits: &[(u16, f32)], tod: f64) {
+        let mut factor: HashMap<u16, f32> = HashMap::new();
+        for &(route, f) in edits {
+            factor.insert(route, f);
         }
+        let mut runs = vec![true; self.timetabled];
+        let mut added = Vec::new();
+        let mut routes: Vec<_> = factor.into_iter().collect();
+        routes.sort_by_key(|&(r, _)| r);
+        for (route, f) in routes {
+            let patterns = self.patterns(route);
+            if f < 1.0 {
+                for trips in &patterns {
+                    let n = trips.len();
+                    let m = ((n as f32 * f).round() as usize).min(n);
+                    // Keep one trip in each of m equal runs of the n.
+                    for (k, &t) in trips.iter().enumerate() {
+                        runs[t as usize] = (k + 1) * m / n > k * m / n;
+                    }
+                }
+            } else if f > 1.0 {
+                added.extend(self.copies_for(route, f, &patterns));
+            }
+        }
+        self.order = (0..self.timetabled as u32)
+            .filter(|&t| runs[t as usize])
+            .chain(added)
+            .collect();
+        self.sort_order();
+        self.next_trip = self
+            .order
+            .partition_point(|&t| self.start_time(t as usize) <= tod);
+    }
+
+    /// The timetabled trips of `route` by stop pattern (the roads of their stops, in
+    /// order), each by first departure; patterns in the order their first trips come.
+    fn patterns(&self, route: u16) -> Vec<Vec<u32>> {
+        let d = &self.data;
+        let mut index: HashMap<&[u32], usize> = HashMap::new();
+        let mut patterns: Vec<Vec<u32>> = Vec::new();
+        for t in 0..self.timetabled {
+            if d.trip_route[t] != route {
+                continue;
+            }
+            let stops = &d.stop_edge[d.stops(t as u32)];
+            let k = *index.entry(stops).or_insert_with(|| {
+                patterns.push(Vec::new());
+                patterns.len() - 1
+            });
+            patterns[k].push(t as u32);
+        }
+        for trips in &mut patterns {
+            trips.sort_by(|&a, &b| {
+                self.start_time(a as usize)
+                    .total_cmp(&self.start_time(b as usize))
+                    .then(a.cmp(&b))
+            });
+        }
+        patterns
+    }
+
+    /// The copies that run `route` `f` times as often (made once).
+    fn copies_for(&mut self, route: u16, f: f32, patterns: &[Vec<u32>]) -> Vec<u32> {
+        if let Some(made) = self.copies.get(&(route, f.to_bits())) {
+            return made.clone();
+        }
+        let mut made = Vec::new();
+        for trips in patterns {
+            let gaps: Vec<(u32, f32)> = trips
+                .windows(2)
+                .filter_map(|w| {
+                    let gap =
+                        (self.start_time(w[1] as usize) - self.start_time(w[0] as usize)) as f32;
+                    (gap > 0.0 && gap <= MAX_GAP).then_some((w[0], gap))
+                })
+                .collect();
+            // `f` times as many trips between the first and last: f - 1 more in each gap.
+            let g = gaps.len();
+            let extra = (g as f32 * (f - 1.0)).round() as usize;
+            for (k, &(trip, gap)) in gaps.iter().enumerate() {
+                let c = (k + 1) * extra / g - k * extra / g;
+                for j in 0..c {
+                    let shift = gap * (j + 1) as f32 / (c + 1) as f32;
+                    made.push(self.copy_trip(trip, shift));
+                }
+            }
+        }
+        self.copies.insert((route, f.to_bits()), made.clone());
+        made
+    }
+
+    /// Append a copy of `trip` running `shift` seconds later; its index.
+    fn copy_trip(&mut self, trip: u32, shift: f32) -> u32 {
+        let d = &mut self.data;
+        let t = trip as usize;
+        let stops = d.stops(trip);
+        d.trip_type.push(d.trip_type[t]);
+        d.trip_route.push(d.trip_route[t]);
+        d.stop_edge.extend_from_within(stops.clone());
+        d.stop_frac.extend_from_within(stops.clone());
+        let from = d.stop_time.len();
+        d.stop_time.extend_from_within(stops);
+        for time in &mut d.stop_time[from..] {
+            *time += shift;
+        }
+        d.trip_stops.push(d.stop_edge.len() as u32);
+        self.copy_of.push((trip, shift));
+        (d.trips() - 1) as u32
+    }
+
+    /// For the app (M9b): the timetabled trips, the copies (each its trip and shift as f32
+    /// bits), then the trips that run (`order`): `[timetabled, copies, running, (trip,
+    /// shift) per copy, running trips]`.
+    pub fn write_service(&self, out: &mut Vec<u32>) {
+        out.clear();
+        out.extend([
+            self.timetabled as u32,
+            self.copy_of.len() as u32,
+            self.order.len() as u32,
+        ]);
+        for &(trip, shift) in &self.copy_of {
+            out.extend([trip, shift.to_bits()]);
+        }
+        out.extend_from_slice(&self.order);
     }
 
     /// First departure of a trip (s after the service day's midnight).

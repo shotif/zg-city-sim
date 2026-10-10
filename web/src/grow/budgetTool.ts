@@ -38,10 +38,12 @@ export class BudgetTool {
     return this.budget.afford(build - this.budget.spent);
   }
 
-  /** The edits in force (`count` of them) cost `build` to build and `upkeep` a year. */
-  setEdits(cost: { build: number; upkeep: number }, count: number): void {
+  /** The edits in force (`count` of them) cost `build` to build, and `upkeep` and
+   * `service` (public transport run more or less) a year. */
+  setEdits(cost: { build: number; upkeep: number; service?: number }, count: number): void {
     this.budget.setSpent(cost.build);
     this.budget.yearly.upkeep = cost.upkeep;
+    this.budget.yearly.service = cost.service ?? 0;
     this.edits = count;
     saveBudget(this.budget);
     this.show();

@@ -22,7 +22,7 @@ use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::pedestrians::{self, MIN_WALK, OWN_SIGNAL_GAP, OWN_SIGNAL_YELLOW, Pedestrians};
 use crate::rng::Rng;
 use crate::router::{LandmarkBuild, Landmarks, Router};
-use crate::transit::{PendingRun, Transit, TransitRun};
+use crate::transit::{FREQUENCY_RANGE, PendingRun, Transit, TransitRun};
 use crate::vtype::{self, TYPES, VType};
 use crate::weather::Weather;
 
@@ -1014,8 +1014,10 @@ impl Engine {
             let tod = t - tr.day_start;
             tr.next_trip = 0;
             tr.waiting.clear();
-            while tr.next_trip < tr.data.trips() && tr.start_time(tr.next_trip) <= tod {
-                let trip = tr.next_trip;
+            while tr.next_trip < tr.order.len()
+                && tr.start_time(tr.order[tr.next_trip] as usize) <= tod
+            {
+                let trip = tr.order[tr.next_trip] as usize;
                 tr.next_trip += 1;
                 if tr.end_time(trip) <= tod {
                     continue;
@@ -2535,15 +2537,15 @@ impl Engine {
         };
         let horizon = self.time + DT as f64;
         loop {
-            if tr.next_trip >= tr.data.trips() {
+            if tr.next_trip >= tr.order.len() {
                 // A new service day once the last trip has started and midnight passed.
-                if tr.data.trips() == 0 || self.time < tr.day_start + 86_400.0 {
+                if tr.order.is_empty() || self.time < tr.day_start + 86_400.0 {
                     break;
                 }
                 tr.day_start += 86_400.0;
                 tr.next_trip = 0;
             }
-            let trip = tr.next_trip;
+            let trip = tr.order[tr.next_trip] as usize;
             if tr.day_start + tr.start_time(trip) > horizon {
                 break;
             }
@@ -4280,10 +4282,24 @@ impl Engine {
     pub fn set_edits(&mut self, edits: &[Edit]) -> usize {
         self.loaded.restore(&mut self.net);
         let mut applied = Vec::with_capacity(edits.len());
+        let mut frequencies = Vec::new();
         for edit in edits {
-            if edits::apply(&mut self.net, edit) {
+            if let Edit::Frequency { route, factor } = *edit {
+                // Lines the timetable runs, as often as edits may set.
+                let runs = self.transit.as_ref().is_some_and(|tr| {
+                    tr.data.trip_route[..tr.timetabled].contains(&(route as u16))
+                });
+                let (lo, hi) = FREQUENCY_RANGE;
+                if runs && route <= u16::MAX as u32 && (lo..=hi).contains(&factor) {
+                    frequencies.push((route as u16, factor));
+                    applied.push(*edit);
+                }
+            } else if edits::apply(&mut self.net, edit) {
                 applied.push(*edit);
             }
+        }
+        if let Some(tr) = self.transit.as_mut() {
+            tr.set_frequencies(&frequencies, self.time - tr.day_start);
         }
         self.net.refresh_speeds();
         self.net.refresh_links();

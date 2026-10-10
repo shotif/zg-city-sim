@@ -11,8 +11,10 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import itertools
 import json
 import logging
+import math
 import time
 import urllib.request
 import zipfile
@@ -606,6 +608,23 @@ def line_patterns(out_trips: list, refs: np.ndarray) -> list[dict]:
     return lines
 
 
+def trip_metres(out_trips: list, refs: np.ndarray, stop_rows: list[list]) -> list[int]:
+    """How far each trip runs (m), whole, for what its vehicle-km cost (M9b): along its route's
+    shape where the timetable has one (ZET's), else straight from stop to stop (HŽ's trains,
+    within the map; an underestimate)."""
+    out = []
+    k = 0
+    for trip in out_trips:
+        n = len(trip[3])
+        if len(trip) > 5 and trip[5] > 0:
+            out.append(round(trip[5]))
+        else:
+            pts = [stop_rows[r][1:] for r in refs[k : k + n] if r != NO_STOP]
+            out.append(round(sum(math.dist(p, q) for p, q in itertools.pairwise(pts))))
+        k += n
+    return out
+
+
 def build_transit(root: Path = OUTPUT_DIR) -> dict:
     """The timetable placed on the network in `root`, written there."""
     started = time.monotonic()
@@ -755,6 +774,7 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
                 continue
             stops_out.append((hit[0], hit[1], depart, ("zet", stop_id)))
         if len(stops_out) >= 2:
+            shape = shapes.get(trip.get("shape_id", ""))
             out_trips.append(
                 (
                     stops_out[0][2],
@@ -762,6 +782,7 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
                     route_index[trip["route_id"]],
                     stops_out,
                     trip.get("trip_headsign", ""),
+                    shape.length if shape is not None else 0.0,
                 )
             )
     trains, train_routes, train_stats, stations, train_stops = train_trips(
@@ -833,6 +854,11 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
     # Where each trip goes, as its signs say (HŽ's trains: their last station), by trip.
     headsigns = sorted({t[4] for t in out_trips})
     sign_index = {h: i for i, h in enumerate(headsigns)}
+    metres = trip_metres(out_trips, refs, stop_rows)
+    for mode, key in ((TRAM, "tramKm"), (BUS, "busKm")):
+        stats[key] = round(
+            sum(m for t, m in zip(out_trips, metres, strict=True) if t[1] == mode) / 1000
+        )
     (out_dir / "lines.json").write_text(
         json.dumps(
             {
@@ -840,6 +866,7 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
                 "lines": lines,
                 "headsigns": headsigns,
                 "tripHeadsign": [sign_index[t[4]] for t in out_trips],
+                "tripMetres": metres,
             },
             ensure_ascii=False,
             separators=(",", ":"),

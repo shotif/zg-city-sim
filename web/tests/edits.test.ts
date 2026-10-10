@@ -117,6 +117,37 @@ describe('edits', () => {
     );
   });
 
+  it('run public transport lines more or less often', () => {
+    const tram6: Edit = { kind: 'frequency', line: '6', mode: 'tram', factor: 2 };
+    const lines = (line: string, mode: string) =>
+      line === '6' && mode === 'tram' ? 11 : undefined;
+    const { resolved, missing } = resolveEdits(index, [tram6, { ...tram6, line: '99' }], lines);
+    expect(missing).toHaveLength(1);
+    expect(resolved[0].edges).toEqual([]);
+    const words = editWords(resolved);
+    expect(Array.from(words.slice(0, 3))).toEqual([7, 11, 0]);
+    expect(new Float32Array(words.buffer)[3]).toBe(2);
+    // Without the timetable loaded, none match.
+    expect(resolveEdits(index, [tram6]).missing).toEqual([tram6]);
+    expect(describeEdit(tram6)).toBe('Tram 6: twice as often');
+    expect(describeEdit({ ...tram6, mode: 'bus', line: '109', factor: 0 })).toBe(
+      'Bus 109: not running',
+    );
+    // One edit a line: the later replaces the earlier.
+    expect(withEdit([tram6], { ...tram6, factor: 0.5 })).toEqual([{ ...tram6, factor: 0.5 }]);
+    expect(withEdit([tram6], { ...tram6, mode: 'bus' })).toHaveLength(2);
+    // Saved and read back; trains and factors the panel does not offer are not read.
+    expect(parseEdits(serializeEdits([tram6]))).toEqual([tram6]);
+    expect(
+      parseEdits(
+        serializeEdits([
+          { ...tram6, mode: 'train' },
+          { ...tram6, factor: 7 },
+        ]),
+      ),
+    ).toEqual([]);
+  });
+
   it('save, load and share', async () => {
     // Saved lists keep positions to 0.1 m and headings to a degree.
     const text = serializeEdits(edits);

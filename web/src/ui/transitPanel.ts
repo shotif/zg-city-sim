@@ -1,15 +1,18 @@
 /**
  * The Public transport panel (M9a): ZET's tram and bus lines and HŽ's trains, each with its
  * stops, trips by hour and the next departures, the vehicles running now and how late they
- * run in the simulation; the line picked is drawn on the map, its stops marked.
+ * run in the simulation; the line picked is drawn on the map, its stops marked. ZET's lines
+ * can be run more or less often (M9b).
  */
 import {
   type Departure,
+  FREQUENCIES,
   type Line,
   MODE_COLOR,
   MODE_NAME,
   type Mode,
   type Pattern,
+  SET_FREQUENCY,
   type Timetable,
 } from '../world/transitLines';
 import { el } from './buildPanel';
@@ -26,6 +29,10 @@ export interface TransitPanelHost {
   onShow(shown: { trip: number; color: number; stops: number[] } | undefined): void;
   /** Look at a stop. */
   onStop(x: number, z: number): void;
+  /** Run line `route` `factor` times as often as timetabled (1: as timetabled). */
+  onFrequency?(route: number, factor: number): void;
+  /** What running line `route` `factor` times as often comes to, in a sentence. */
+  frequencyNote?(route: number, factor: number): string;
 }
 
 type View =
@@ -47,7 +54,11 @@ export class TransitPanel {
   private running: Float32Array = new Float32Array(0);
   /** Trips of the pattern shown, for its departures and vehicles. */
   private trips = new Set<number>();
-  private lastHtml = '';
+  /** How often lines run, by route, where edits change it. */
+  private frequencies = new Map<number, number>();
+  /** What the line or stop view shows: its controls, and what changes as time goes on. */
+  private lastHead = '';
+  private lastLive = '';
 
   constructor(
     parent: HTMLElement,
@@ -78,6 +89,8 @@ export class TransitPanel {
       const target = event.target as HTMLSelectElement;
       if (target.name === 'transit-pattern' && this.view.kind === 'line') {
         this.openLine(this.view.line, Number(target.value));
+      } else if (target.name === 'transit-frequency' && this.view.kind === 'line') {
+        host.onFrequency?.(this.view.line.route, Number(target.value));
       }
     });
   }
@@ -102,6 +115,21 @@ export class TransitPanel {
     this.time = time;
     if (running) this.running = running;
     if (this.shown) this.render(false);
+  }
+
+  /** How often lines run where edits change it (route to factor). */
+  setFrequencies(frequencies: Map<number, number>): void {
+    this.frequencies = frequencies;
+    if (this.shown) this.render(true);
+  }
+
+  /** The trips that run changed (`Timetable.setService`): count and list them again. */
+  refresh(): void {
+    if (this.view.kind === 'line') {
+      const p = this.view.line.patterns[this.view.pattern];
+      this.trips = new Set(p ? this.timetable.patternTrips(this.view.line.route, p) : []);
+    }
+    if (this.shown) this.render(true);
   }
 
   /** Open a stop's departures (a stop marker tapped). */
@@ -155,16 +183,27 @@ export class TransitPanel {
     }
   }
 
-  /** Write the panel for the view; `force` also rebuilds what keeps focus (the search). */
+  /** Write the panel for the view; `force` also rebuilds what keeps focus (the search, the
+   * line's selects). */
   private render(force: boolean): void {
     if (this.view.kind === 'list') {
       if (force) this.renderList();
       return;
     }
-    const html = this.view.kind === 'line' ? this.lineHtml(this.view) : this.stopHtml(this.view);
-    if (!force && html === this.lastHtml) return;
-    this.lastHtml = html;
-    this.body.innerHTML = html;
+    const { head, live } =
+      this.view.kind === 'line' ? this.lineHtml(this.view) : this.stopHtml(this.view);
+    let headEl = this.body.querySelector<HTMLElement>(':scope > .transit-head');
+    let liveEl = this.body.querySelector<HTMLElement>(':scope > .transit-live');
+    if (!headEl || !liveEl) {
+      this.body.innerHTML = '<div class="transit-head"></div><div class="transit-live"></div>';
+      headEl = this.body.querySelector<HTMLElement>('.transit-head')!;
+      liveEl = this.body.querySelector<HTMLElement>('.transit-live')!;
+      force = true;
+    }
+    if (force || head !== this.lastHead) headEl.innerHTML = head;
+    if (force || live !== this.lastLive) liveEl.innerHTML = live;
+    this.lastHead = head;
+    this.lastLive = live;
   }
 
   private badge(route: number): string {
@@ -192,7 +231,7 @@ export class TransitPanel {
       .slice(0, LIST_LIMIT)
       .map((l) => {
         const r = this.timetable.routes[l.route];
-        return `<li><button type="button" class="transit-item" data-action="line" data-value="${l.route}">${this.badge(l.route)}<span>${escape(r.longName)}</span><small>${l.trips} trips</small></button></li>`;
+        return `<li><button type="button" class="transit-item" data-action="line" data-value="${l.route}">${this.badge(l.route)}<span>${escape(r.longName)}</span><small>${this.timetable.tripsToday(l.route)} trips</small></button></li>`;
       })
       .join('');
     const more =
@@ -214,10 +253,11 @@ export class TransitPanel {
       stopItems + lineItems + (stopItems || lineItems ? '' : '<li>Nothing found.</li>');
     this.body.querySelectorAll('.transit-more').forEach((m) => m.remove());
     if (more) this.body.insertAdjacentHTML('beforeend', `<div class="transit-more">${more}</div>`);
-    this.lastHtml = '';
+    this.lastHead = '';
+    this.lastLive = '';
   }
 
-  private lineHtml(view: { line: Line; pattern: number }): string {
+  private lineHtml(view: { line: Line; pattern: number }): { head: string; live: string } {
     const { line } = view;
     const r = this.timetable.routes[line.route];
     const p: Pattern | undefined = line.patterns[view.pattern];
@@ -252,23 +292,43 @@ export class TransitPanel {
         return `<li><button type="button" class="transit-item" data-action="stop" data-value="${s}"><span class="transit-stop-dot" style="border-color:${hex(MODE_COLOR[r.mode])}"></span><span>${escape(this.timetable.stop(s).name)}</span><small>${next ? formatClock(next.time) : ''}</small></button></li>`;
       })
       .join('');
-    return (
-      `<button type="button" class="hud-button hud-speed transit-back" data-action="back">‹ All lines</button>` +
-      `<h3 class="transit-title">${this.badge(line.route)} ${escape(r.longName)}</h3>` +
-      (line.patterns.length > 1
-        ? `<select class="build-select" name="transit-pattern" aria-label="Direction">${options}</select>`
-        : p
-          ? `<p class="budget-note">To ${escape(p.headsign)}</p>`
-          : '') +
-      `<p class="transit-stats">${line.trips} trips today; ${running} running now${lateText}.</p>` +
-      `<svg class="transit-hours" viewBox="0 0 240 52" role="img" aria-label="Trips by hour">${bars}` +
-      `<text x="0" y="51">00</text><text x="114" y="51">12</text><text x="226" y="51">23</text></svg>` +
-      `<h4 class="build-count">Stops, and the next departure from each</h4>` +
-      `<ol class="transit-list transit-stops">${stops}</ol>`
-    );
+    const factor = this.frequencies.get(line.route) ?? 1;
+    const frequencies = FREQUENCIES.map(
+      (f) =>
+        `<option value="${f.factor}"${f.factor === factor ? ' selected' : ''}>${f.label}</option>`,
+    ).join('');
+    const service =
+      SET_FREQUENCY.has(r.mode) && this.host.onFrequency
+        ? `<label class="transit-service">Service <select class="build-select" name="transit-frequency">${frequencies}</select></label>` +
+          `<p class="budget-note">${escape(this.host.frequencyNote?.(line.route, factor) ?? '')}</p>`
+        : r.mode === 'train'
+          ? '<p class="budget-note">HŽ runs its trains to its own timetable.</p>'
+          : '';
+    const today = this.timetable.tripsToday(line.route);
+    const timetabled = today === line.trips ? '' : ` (${line.trips} timetabled)`;
+    return {
+      head:
+        `<button type="button" class="hud-button hud-speed transit-back" data-action="back">‹ All lines</button>` +
+        `<h3 class="transit-title">${this.badge(line.route)} ${escape(r.longName)}</h3>` +
+        (line.patterns.length > 1
+          ? `<select class="build-select" name="transit-pattern" aria-label="Direction">${options}</select>`
+          : p
+            ? `<p class="budget-note">To ${escape(p.headsign)}</p>`
+            : '') +
+        service,
+      live:
+        `<p class="transit-stats">${today} trips today${timetabled}; ${running} running now${lateText}.</p>` +
+        `<svg class="transit-hours" viewBox="0 0 240 52" role="img" aria-label="Trips by hour">${bars}` +
+        `<text x="0" y="51">00</text><text x="114" y="51">12</text><text x="226" y="51">23</text></svg>` +
+        `<h4 class="build-count">Stops, and the next departure from each</h4>` +
+        `<ol class="transit-list transit-stops">${stops}</ol>`,
+    };
   }
 
-  private stopHtml(view: { stop: number; from?: { line: Line; pattern: number } }): string {
+  private stopHtml(view: { stop: number; from?: { line: Line; pattern: number } }): {
+    head: string;
+    live: string;
+  } {
     const platforms = this.timetable.platforms(view.stop);
     const next: Departure[] = this.timetable.departures(platforms, this.time, STOP_DEPARTURES);
     const rows = next
@@ -278,13 +338,14 @@ export class TransitPanel {
       )
       .join('');
     const back = view.from ? '‹ Back to the line' : '‹ All lines';
-    return (
-      `<button type="button" class="hud-button hud-speed transit-back" data-action="back">${back}</button>` +
-      `<h3 class="transit-title">${escape(this.timetable.stop(view.stop).name)}</h3>` +
-      (rows
+    return {
+      head:
+        `<button type="button" class="hud-button hud-speed transit-back" data-action="back">${back}</button>` +
+        `<h3 class="transit-title">${escape(this.timetable.stop(view.stop).name)}</h3>`,
+      live: rows
         ? `<p class="budget-note">The next departures, as timetabled:</p><table class="rail-table">${rows}</table>`
-        : '<p class="budget-note">No departures from here.</p>')
-    );
+        : '<p class="budget-note">No departures from here.</p>',
+    };
   }
 }
 
