@@ -54,8 +54,11 @@ let reachJob:
     }
   | undefined;
 const REACH_MS = 8;
-/** Time a tick may give the riders' journeys (M9d, M10d), at least one piece of work. */
-const RIDERS_MS = 25;
+/** Time a tick may give the riders' journeys (M9d, M10d), at least one piece of work: more
+ * when it ran no steps (at low speeds, most ticks), so the page stays responsive while the
+ * streets fill and at high speeds. */
+const RIDERS_MS = 8;
+const RIDERS_IDLE_MS = 25;
 /** Volume requests waiting for their simulated time. */
 let volumeAsks: { id: number; at: number }[] = [];
 
@@ -227,7 +230,8 @@ function tick(): void {
   // Public transport's riders and the car journeys they need, a little each tick; not in a
   // simulation only compared with (the player's works them out for both).
   const t1 = performance.now();
-  while (render && sim.workRiders() && performance.now() - t1 < RIDERS_MS);
+  const budget = steps > 0 ? RIDERS_MS : RIDERS_IDLE_MS;
+  while (render && sim.workRiders() && performance.now() - t1 < budget);
   setTimeout(tick, Math.max(0, TICK_MS - (performance.now() - start)));
 }
 

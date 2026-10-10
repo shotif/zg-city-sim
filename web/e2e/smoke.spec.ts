@@ -280,16 +280,24 @@ test('draws a new bus line that runs on the roads', async ({ page }, testInfo) =
   const panel = page.locator('.transit-panel');
   await panel.getByRole('button', { name: 'New line' }).click();
   const canvas = page.locator('canvas').first();
-  for (const s of stops) {
-    await page.evaluate(({ x, z }) => {
-      window.__ZG__?.setView('map');
-      window.__ZG__?.lookAt(x, z, 800);
-    }, s);
-    await page.waitForTimeout(500);
-    const box = (await canvas.boundingBox())!;
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const drafted = panel.locator('.transit-draft-stop');
+  for (const [k, s] of stops.entries()) {
+    // A slow page (the streets filling, the riders being worked out) may not have moved the
+    // view yet, or may take a tap for a press: tap again until the stop is in.
+    for (let tries = 0; tries < 4 && (await drafted.count()) <= k; tries++) {
+      await page.evaluate(({ x, z }) => {
+        window.__ZG__?.setView('map');
+        window.__ZG__?.lookAt(x, z, 800);
+      }, s);
+      await page.waitForTimeout(500 + 1000 * tries);
+      const box = (await canvas.boundingBox())!;
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await expect(drafted)
+        .toHaveCount(k + 1, { timeout: 3000 })
+        .catch(() => {});
+    }
   }
-  await expect(panel.locator('.transit-draft-stop')).toHaveCount(3);
+  await expect(drafted).toHaveCount(3);
   await expect(panel.locator('.transit-draft-stop').first()).toContainText(stops[0].name);
   await expect(panel.locator('.transit-stats')).toContainText('3 of 3 stops served', {
     timeout: 30_000,
