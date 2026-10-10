@@ -70,7 +70,7 @@ cargo run --release --example routes -- ../web/public/data/network --cch  # time
 
 Add `--features profile` to the `run` example to see where each step's time goes.
 
-To check the simulation against traffic counts (a full weekday takes about an hour):
+To check the simulation against traffic counts (a full weekday takes about half an hour):
 
 ```bash
 cargo run --release --example day -- ../web/public/data /tmp/day

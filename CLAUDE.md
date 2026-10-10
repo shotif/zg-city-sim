@@ -67,7 +67,7 @@ npm run wasm && npm run build && npx playwright test --project=desktop   # smoke
 # Native runs on the built data
 gunzip -kf web/public/data/{network/net,demand/demand,transit/transit,pedestrians/crossings,cycling/cycling}.bin.gz
 cd sim && cargo run --release --example run -- ../web/public/data/network 6 270   # 06:00 for 270 min
-cargo run --release --example day -- ../web/public/data /tmp/day                 # a whole weekday, about 1 h
+cargo run --release --example day -- ../web/public/data /tmp/day                 # a whole weekday, about 30 min
 cd .. && python -m pipeline.validate /tmp/day                                     # rewrites docs/VALIDATION.md
 python -m pipeline.peak /tmp/day /tmp/day2                                        # the roads' peak speeds for car journeys (M10d)
 # The engine as WebAssembly in Node (--data: with the demand, timetable, pedestrians and bikes; --hierarchy: routes on it)
@@ -111,7 +111,7 @@ Environment variables for the native runs:
 - **Project comparisons are noisy:** two runs of today's roads with other seeds differ by about 16 % in delay over the morning peak. Compare roads near a project, not the whole network, and use the mean of two runs of today.
 - **Peak speeds:** car journeys for the riders use the roads' speeds in the morning peak from day runs (`pipeline/data/peak_speeds.json`). After a change that moves traffic a lot, refresh them with `python -m pipeline.peak` on the new day runs, rebuild the network and calibrate `ASC` again with the `riders` example.
 - **Ids change with the network:** rebuilding the network with different netconvert options renumbers edges, lanes and links. Validate a day run against the network it ran on: `validate.py` checks the edge count.
-- **Day runs are slow:** a full simulated day takes about an hour on one core. To compare variants, run them in parallel, each built into its own `CARGO_TARGET_DIR`, so rebuilding never touches a running binary.
+- **Day runs are slow:** a full simulated day takes about half an hour on one core (an hour before M11's hierarchy; estimated from the 1.8 times measured in the morning peak), and building the hierarchy takes 3.6 s at the start of every native run. To compare variants, run them in parallel, each built into its own `CARGO_TARGET_DIR`, so rebuilding never touches a running binary.
 - **Travel times and the hierarchy:** searches on the hierarchy use a metric customised for the travel times as they were when the engine last changed them (`update_edge_times`, `set_closed`, `set_edits`, `replace_network`). Code that changes `travel_time` (or the peak or bike times) directly must call `travel_times_changed` (or mark the metric stale), or routes run on the old times.
 - **Routes are validated too:** a faster route search that picks other routes moves the day's counts (a weighted heuristic cost 3 of 13 stations within ±25 %). Check route changes with a day run against two seeds of today's.
 - **Runs vary:** under congestion, results differ from run to run. Compare whole days, and change one thing at a time where you can.

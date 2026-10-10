@@ -66,7 +66,7 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
 - Drivers who have waited 15 s push in where oncoming drivers can still brake, and drivers who could stop let long waiters go first. After a minute, drivers enter a full junction so gridlocks can unwind.
 - Actuated signals from the SUMO programs: a green phase ends after its minimum once nobody is arriving, at most 20 s after its planned length.
 - U-turns: a vehicle class plans one only where it has no other way on (buses still turn at terminals).
-- A* routing with landmark lower bounds (ALT), on travel times the simulation measures every minute. The bound is weighted by 1.2, so routes are at most 20 % slower than the fastest and searches stay short in heavy traffic.
+- Routes for cars, trucks and bikes are searched on a customizable contraction hierarchy (M11), on the travel times the simulation measures every minute. They are exact fastest routes, counting turns and tolls, found in about 60 µs. A* with landmark lower bounds (ALT), weighted by 1.2, is left for buses', trams' and trains' ways between stops, and for the first seconds in the browser while the hierarchy is ordered.
 - Drivers re-plan on the way (M7g): every minute each weighs the rest of its route at the measured travel times, and when it takes a quarter and a minute longer than expected, takes a faster way if it saves a tenth of the time left and at least a minute.
 - Vehicles stuck for 5 minutes are removed, as SUMO teleports them: about 0.7 % of trips in a 07:00–07:30 peak test, mostly queues spilling back.
 - Native speed about 28× real time in the morning peak (14,000 vehicles). The browser runs the WebAssembly build in a worker.
@@ -110,7 +110,7 @@ Known gaps:
 - Hrvatske ceste's counts by vehicle class (CSV files per station) could not be downloaded: their page refuses plain clients. With them, trucks could be calibrated on their own.
 - The app starts at 06:50 and fills the streets for ten minutes, but trips from beyond the map take 20-30 minutes to arrive, so the first half hour has fewer vehicles than a steady 07:00.
 - Count stations are placed from road numbers and section ends, as the published tables have no coordinates; on long sections the point chosen may be off where the traffic changes along it.
-- Routing is a third of the engine's time in the peak; a compact routing graph or contraction hierarchies would help.
+- Since M11, route searches are 5 % of the engine's time in the morning peak, and planning each vehicle's moves (gaps, right of way at junctions) is 58 %: that is where the engine would get faster next.
 - Buses stop in the right lane, not in bays (M10a); one bus terminal (Črnomerec) is unreachable in the converted network, so its stop is skipped (on 485 of 9,691 bus trips a day).
 - Trams run late: over a whole day they leave stops 9-10 min late on average (16-17 min before M10a), at most 2.4 h, buses about 3 min. The worst places are tram crosses whose guessed signal programs give trams phases of their own (Vukovarska at Držićeva) and stops where trams of several lines queue behind one waiting for its departure time. ZET's priority rules are not published.
 - Trams and cars do not share lanes yet: tram tracks are separate edges (joining them into street lanes broke tram connectivity), so cars only meet trams at junctions.
@@ -461,9 +461,19 @@ Known gaps:
     - It takes about 45 ms to customise for one class's travel times, and a search takes 57 µs, 22 times faster than today's.
     - Of the first 60,000 logged searches, 94.6 % find the same route as in the run and 5.3 % a faster one, where the weighted bound let A* stop short: 0.8 % faster on average, by 4 s at the median and 24 s at the 90th percentile. None finds a slower one.
     - A test checks it against exact A* on a grid with tolls, bike-only roads and turns.
-- **M11b, the engine routes on the hierarchy.** Cars and trucks (with and without tolls) and bikes route on it. It is customised whenever the measured times change (once a simulated minute), and after closures and edits. A* stays for transit legs and while a hierarchy is being built. Checked with day runs on two seeds against today's (counts, gridlock and queuing), and by how long a day run takes.
-- **M11c, in the browser.** The hierarchy is built without stalling the page and customised between steps. It is built again for drawn roads (new edges ranked on top), projects and edits. The engine's speed in the morning peak is measured with the WebAssembly in Node.
-- **M11d, searches to many places.** The riders' car journeys (a search from each zone to every other, M10d) and land value's accessibility run on the hierarchy (PHAST: one search up, one sweep down), so riders are ready sooner after load.
+- **M11b, the engine routes on the hierarchy** (done 2026-10-10). Cars and trucks (with and without tolls) and bikes route on it; A* stays for transit legs and while no hierarchy is built (`NO_HIERARCHY=1` in the native runs).
+  - As built: a metric per class and tolls, customised the first time a search needs it after its times changed: once a simulated minute as the measured times change, and after closures and edits. Trucks share the cars' metrics while they may make exactly the same moves, as on Zagreb's roads as mapped, so two metrics are customised a minute (cars with and without tolls).
+  - Day runs on two seeds against today's two (A*, which reproduce M10a's exactly):
+    - 17 and 17 of 47 count stations within ±25 % (13 and 15); state roads 6 and 6 of 23 (4 and 5);
+    - the total at 0.79 and 0.80 of the counts (0.80 and 0.80); station-hours with GEH below 5, 38 % and 40 % (38 % and 39 %);
+    - 7,204 and 6,381 vehicles removed from gridlock (6,816 and 6,538); 106,206 and 98,260 vehicle-hours queued at junctions (101,783 and 97,877), within what two seeds differ by;
+    - trams 558 and 439 s late on average (559 and 570), buses 188 and 190 s (187 and 193).
+  - Speed, natively from 06:00 to 08:30: the engine took 562 s instead of 1,027 s, 1.8 times faster; route searches 31 s instead of 449 s (18 s searching, 13 s customising, 302 customisations). A whole day ran in 5,660 s instead of 10,050 s with four runs sharing the machine's four cores.
+- **M11c, in the browser** (done 2026-10-10). The simulation's worker sends the routing graph (117,000 edges, 280,000 pairs and their positions) to a worker of its own, which orders it in its own WebAssembly in about 7 s; routes use A* until the order is back, and `?perf` says which routes run on. Roads drawn, before or after the order is back, keep it and rank their new edges on top, so the hierarchy is contracted again in about 0.1 s; projects order their own network.
+  - As measured with the WebAssembly in Node, from 06:00 to 08:30 with the app's data: 14.4 times real time instead of 8.3 (626 s instead of 1,088 s; two runs sharing the machine with two day runs). The module's memory grows by about 50 MiB (210 to 263 MiB in Node, with the ordering in the same module; less in the app, where another worker orders).
+- **M11d, searches to many places** (done 2026-10-10). The riders' car journeys (from each of 1,661 zones to every other, M10d) and land value's accessibility search to every edge at once on the hierarchy (PHAST: up the elimination tree from the origin, then one sweep down over all ranks), on a metric for the peak times that keeps no path data. The riders come out the same (436,326 trips by public transport a weekday, the same boardings), with the car journeys in 3.7 s instead of 16.3 s natively.
+
+**Status (M11, done 2026-10-10).** Cars, trucks and bikes find their routes on a customizable contraction hierarchy: exact fastest routes in about 60 µs instead of about 1.2 ms, on the travel times measured each minute. The engine runs the morning peak 1.8 times faster natively and 1.7 times faster as WebAssembly, and a day run takes about half the time. Routes are the same as before for 95 % of searches and faster for the rest, and the day's counts hold (17 of 47 stations within ±25 % instead of 13-15). In the browser the hierarchy is ordered in a worker of its own within seconds of load, and roads drawn join it at once. Open: planning the vehicles' moves is now most of the engine's time; the hierarchy adds about 50 MiB to the engine's memory.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
@@ -585,7 +595,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M8 Pedestrians, cyclists and trains** | HŽ trains on their timetable and the level crossings they close, pedestrians at crossings and signals, cyclists on cycle lanes and roads (done 2026-10-10) |
 | **M9 Public transport tools** | ZET's and HŽ's lines on the map with their stops and departures, frequencies, new bus and tram lines, riders and the car trips they move, before and after (done 2026-10-10) |
 | **M10 Public transport, deeper** | Trams and buses through junctions and stops as they go, signal priority, riders shared between parallel lines, car times for the split from the simulated roads, boardings compared with ZET's (done 2026-10-10) |
-| **M11 Faster routing** | Route searches on customizable contraction hierarchies: exact fastest routes for cars, trucks and bikes in tens of microseconds, in the engine and the browser |
+| **M11 Faster routing** | Route searches on customizable contraction hierarchies: exact fastest routes for cars, trucks and bikes in tens of microseconds, in the engine and the browser; the engine 1.8 times faster in the peak (done 2026-10-10) |
 
 ## Risks and open questions
 
