@@ -225,6 +225,21 @@ test("shows ZET's lines, their stops and departures", async ({ page }, testInfo)
   );
   await panel.locator('.transit-item', { hasText: 'Sopot' }).first().click();
 
+  // Signal priority along it (M10b): at every signal its way crosses, kept with the edits.
+  const along = panel.locator('.budget-note', { hasText: 'Its way crosses' });
+  await expect(along).toContainText(' 0 giving trams and buses priority; at the rest it costs', {
+    timeout: 30_000,
+  });
+  await panel.getByRole('button', { name: 'Priority at all its signals' }).click();
+  await expect(along).toHaveText(
+    /^Its way crosses (\d+) signals, \1 giving trams and buses priority\.$/,
+  );
+  expect(await page.evaluate(() => localStorage.getItem('zg-city-sim:edits'))).toContain(
+    '"priority"',
+  );
+  await panel.getByRole('button', { name: 'Take its signal priority away' }).click();
+  await expect(along).toContainText(' 0 giving trams and buses priority');
+
   // A stop's departures, then back to the line and to all lines.
   await panel.locator('.transit-stops .transit-item').nth(5).click();
   await expect(panel.locator('.rail-table tr').first()).toBeVisible();
@@ -486,8 +501,9 @@ test("compares edited roads with today's", async ({ page }, testInfo) => {
     null,
     { timeout: 150_000 },
   );
-  // Six measures of the roads, and public transport's riders (M9e).
-  await expect(page.locator('.build-table tbody tr')).toHaveCount(8, { timeout: 120_000 });
+  // Six measures of the roads, how late trams and buses run (M10b), and public transport's
+  // riders (M9e).
+  await expect(page.locator('.build-table tbody tr')).toHaveCount(9, { timeout: 120_000 });
   await expect(page.locator('.build-table tbody')).toContainText('Trips by public transport');
   await expect(page.locator('.build-travel-summary').first()).toContainText('on average over', {
     timeout: 120_000,

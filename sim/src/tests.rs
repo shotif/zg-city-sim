@@ -1473,6 +1473,7 @@ fn edits_survive_encoding_for_the_app() {
             stops: vec![(4, 0.25), (9, 0.5), (2, 0.75)],
         }),
         Edit::CloseRoad { edge: 8 },
+        Edit::Priority { tls: 3 },
     ];
     let words: Vec<u32> = all.iter().flat_map(|e| e.encode()).collect();
     assert_eq!(Edit::decode(&words), all);
@@ -2276,6 +2277,70 @@ fn a_bus_at_its_stop_before_a_signal_neither_calls_nor_holds_the_green() {
     );
     let through_at = through_at.expect("the bus never crossed");
     assert!(through_at < 75.0, "the bus crossed at {through_at} s");
+}
+
+/// When a bus from the south crosses the actuated crossroads, with traffic streaming from
+/// the west, with or without signal priority (M10b), and whether it stopped on the way.
+fn bus_through_crossroads(priority: bool) -> (f64, bool) {
+    use crate::transit::{Transit, TransitData};
+    let mut d = signalled_crossroads_data(&[
+        (30.0, "GGGGrr"),
+        (3.0, "yyyyrr"),
+        (30.0, "rrrrGG"),
+        (3.0, "rrrryy"),
+    ]);
+    for p in [0, 2] {
+        d.phase_min_dur[p] = 5.0;
+        d.phase_max_dur[p] = 50.0;
+    }
+    let mut engine = Engine::new(Network::build(d).unwrap(), 1);
+    // Roads in the order the crossroads builds them.
+    let (eb_in, eb_out, nb_in, nb_out) = (0, 1, 4, 5);
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::BUS],
+        trip_route: vec![0],
+        trip_stops: vec![0, 2],
+        stop_edge: vec![nb_in, nb_out],
+        stop_frac: vec![0.1, 0.5],
+        stop_time: vec![5.0, 90.0],
+    }));
+    if priority {
+        assert_eq!(engine.set_edits(&[Edit::Priority { tls: 0 }]), 1);
+    }
+    engine.set_time(0.0);
+    for k in 0..60 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 2.0,
+            from: eb_in,
+            to: eb_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    let mut through_at = None;
+    let mut stopped = false;
+    run_until(&mut engine, 90.0, |e| {
+        if let Some(bus) = e.vehs.iter().find(|v| v.alive() && v.vtype == vtype::BUS) {
+            if through_at.is_none() && bus.route_idx >= 1 {
+                through_at = Some(e.time);
+            }
+            stopped |= bus.route_idx == 0 && bus.pos > 40.0 && bus.speed < 0.5;
+        }
+    });
+    (through_at.expect("the bus never crossed"), stopped)
+}
+
+#[test]
+fn signal_priority_gets_a_bus_its_green_sooner() {
+    // Without priority the bus waits for the east-west green to run to its longest.
+    let (without, stopped) = bus_through_crossroads(false);
+    assert!(stopped && without > 45.0, "without priority: {without} s");
+    // With it, the east-west green ends as soon as it may and the bus drives through.
+    let (with, stopped) = bus_through_crossroads(true);
+    assert!(
+        !stopped && with < 35.0,
+        "with priority: {with} s, stopped {stopped}"
+    );
 }
 
 #[test]

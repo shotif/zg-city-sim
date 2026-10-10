@@ -1,6 +1,7 @@
 //! Network edits applied to the running simulation: closed roads and lanes, speed limits,
 //! lanes reserved for some vehicle classes (bus lanes), banned turns and signal timings,
-//! how often a public transport line runs (M9b) and new lines (M9c).
+//! how often a public transport line runs (M9b), new lines (M9c) and signal priority for
+//! trams and buses (M10b).
 //!
 //! Edits always apply to the network as loaded: `Engine::set_edits` restores the loaded lane
 //! speeds, permissions and signal timings, applies the whole list, and rebuilds what depends
@@ -35,6 +36,9 @@ pub enum Edit {
     /// A line (the timetable's route index) run `factor` times as often as timetabled
     /// (`transit::FREQUENCY_RANGE`; 0 is no service).
     Frequency { route: u32, factor: f32 },
+    /// Signal program `tls` gives trams and buses priority (M10b): one nearing it keeps its
+    /// green running, or gets it sooner with the other greens cut short.
+    Priority { tls: u32 },
     /// A new line, one way (M9c): vehicles of type `vtype` (bus or tram) from stop to stop
     /// (road, and how far along its lanes as a fraction), leaving the first every `headway`
     /// seconds from `first` to `last` (s after midnight). Its route index comes after the
@@ -67,6 +71,7 @@ pub mod kind {
     pub const LINE: u32 = 8;
     pub const LINE_HOURS: u32 = 9;
     pub const LINE_STOP: u32 = 10;
+    pub const PRIORITY: u32 = 11;
 }
 
 impl Edit {
@@ -138,6 +143,7 @@ impl Edit {
                 route: r[1],
                 factor: value,
             },
+            kind::PRIORITY => Edit::Priority { tls: r[1] },
             _ => return None,
         })
     }
@@ -165,6 +171,7 @@ impl Edit {
                 seconds,
             } => [kind::GREEN, tls, phase as u32, seconds.to_bits()],
             Edit::Frequency { route, factor } => [kind::FREQUENCY, route, 0, factor.to_bits()],
+            Edit::Priority { tls } => [kind::PRIORITY, tls, 0, 0],
             Edit::Line(ref line) => {
                 let mut out = vec![
                     kind::LINE,
@@ -298,7 +305,7 @@ pub fn apply(net: &mut Network, edit: &Edit) -> bool {
             d.phase_min_dur[p] = d.phase_min_dur[p].min(seconds);
             d.phase_max_dur[p] = d.phase_max_dur[p].max(seconds);
         }
-        Edit::Frequency { .. } | Edit::Line(_) => return false,
+        Edit::Frequency { .. } | Edit::Line(_) | Edit::Priority { .. } => return false,
     }
     true
 }

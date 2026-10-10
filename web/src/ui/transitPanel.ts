@@ -69,6 +69,11 @@ export interface TransitPanelHost {
   lineName?(mode: LineMode): string;
   /** What a draft costs a year, in a sentence. */
   draftNote?(draft: LineDraft, plan: DraftPlan): string;
+  /** The signals along the line shown, in a sentence, and whether all give trams and buses
+   * priority (undefined: none, or not known yet; M10b). */
+  priorityAlong?(): { text: string; all: boolean } | undefined;
+  /** Give priority at every signal along the line shown, or take it away. */
+  onPriority?(on: boolean): void;
 }
 
 type View =
@@ -313,6 +318,8 @@ export class TransitPanel {
       this.host.onDraft?.(undefined);
       this.host.onAddLine?.(draft);
       this.render(true);
+    } else if (action === 'priority') {
+      this.host.onPriority?.(n === 1);
     } else if (action === 'remove-line') {
       this.view = { kind: 'list' };
       this.host.onShow(undefined);
@@ -465,6 +472,11 @@ export class TransitPanel {
         : r.mode === 'train'
           ? '<p class="budget-note">HŽ runs its trains to its own timetable.</p>'
           : '';
+    const along = r.mode === 'train' ? undefined : this.host.priorityAlong?.();
+    const priority = along
+      ? `<p class="budget-note">${escape(along.text)}</p>` +
+        `<button type="button" class="hud-button" data-action="priority" data-value="${along.all ? 0 : 1}">${along.all ? 'Take its signal priority away' : 'Priority at all its signals'}</button>`
+      : '';
     const today = this.timetable.tripsToday(line.route);
     const timetabled = today === line.trips ? '' : ` (${line.trips} timetabled)`;
     return {
@@ -476,7 +488,8 @@ export class TransitPanel {
           : p
             ? `<p class="budget-note">To ${escape(p.headsign)}</p>`
             : '') +
-        service,
+        service +
+        priority,
       live:
         `<p class="transit-stats">${today} trips today${timetabled}; ${running} running now${lateText}.</p>` +
         this.boardingsHtml(line.route) +

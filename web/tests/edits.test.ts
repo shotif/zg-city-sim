@@ -15,6 +15,7 @@ import {
   withEdit,
 } from '../src/edit/edits';
 import { RoadIndex, headingOf } from '../src/edit/roadIndex';
+import { editCost } from '../src/grow/economy';
 import { junction } from './fixtures';
 
 describe('RoadIndex', () => {
@@ -115,6 +116,21 @@ describe('edits', () => {
     expect(describeEdit({ ...(edits[7] as Extract<Edit, { kind: 'signal' }>), phases: [] })).toBe(
       'No traffic lights at Ilica / Savska cesta',
     );
+  });
+
+  it('give trams and buses priority at the signals of a junction', () => {
+    const priority: Edit = {
+      kind: 'priority',
+      junction: { x: 100.2, z: 0, name: 'Signals on Ilica' },
+    };
+    const { resolved } = resolveEdits(index, [priority]);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].tls).toBe(0);
+    expect(Array.from(editWords(resolved))).toEqual([11, 0, 0, 0]);
+    expect(describeEdit(priority)).toBe('Signals on Ilica: priority for trams and buses');
+    // Once at a junction, whatever its green times.
+    expect(withEdit([priority, edits[4]], { ...priority })).toEqual([edits[4], priority]);
+    expect(editCost(priority)).toEqual({ build: 15_000, upkeep: 600, service: 0 });
   });
 
   const transit = (route: (line: string, mode: string) => number | undefined) => ({

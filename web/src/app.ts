@@ -5,6 +5,7 @@ import { type PackedIndex, type TypedArray, loadPacked } from './data/packed';
 import {
   type Edit,
   type FrequencyEdit,
+  type JunctionRef,
   type LineEdit,
   type ResolvedEdit,
   type TransitMatch,
@@ -57,7 +58,14 @@ import { type DemandArrays, type EdgeDemand, mergeDemand } from './grow/demand';
 import { loadLots } from './grow/lots';
 import { BudgetTool } from './grow/budgetTool';
 import { CitySound } from './ui/sound';
-import { type LineKm, editCost, editsCost, euros, faresFrom } from './grow/economy';
+import {
+  type LineKm,
+  PRIORITY_JUNCTION,
+  editCost,
+  editsCost,
+  euros,
+  faresFrom,
+} from './grow/economy';
 import { type ZoningTool, setUpZoning } from './grow/zoningTool';
 import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
@@ -1494,17 +1502,66 @@ export async function startApp(container: HTMLElement): Promise<void> {
                   return routeLayer;
                 };
                 let planned = 0;
+                // The signals along the line shown, for priority (M10b).
+                let shownSignals: JunctionRef[] = [];
+                const signalsAlong = (path: readonly number[]): JunctionRef[] => {
+                  const index = networkNow?.index;
+                  if (!index) return [];
+                  const seen = new Set<number>();
+                  const refs: JunctionRef[] = [];
+                  // Not the junction past the end of the last road, which it does not cross.
+                  for (const edge of path.slice(0, -1)) {
+                    const tls = index.signalAt(edge);
+                    if (tls === undefined || seen.has(tls)) continue;
+                    seen.add(tls);
+                    const name = index.ref(edge).name;
+                    const ref = index.junctionRef(tls, name ? `Signals on ${name}` : undefined);
+                    if (ref) refs.push(ref);
+                  }
+                  return refs;
+                };
+                const priorityAt = (junction: JunctionRef): Edit => ({
+                  kind: 'priority',
+                  junction,
+                });
                 transitPanel = new TransitPanel(hud.element, timetable, {
                   onClose: () => hud.setTransit(false, hudCallbacks),
                   onShow: (line) => {
                     const layer = newRouteLayer();
                     markers.set(line?.stops ?? [], line?.color ?? 0);
+                    shownSignals = [];
                     invalidateView();
                     if (!line || !sim) return;
                     void sim.transit(line.trip).then(({ path }) => {
                       layer.show([{ edges: Array.from(path), color: line.color, width: 6 }]);
+                      shownSignals = signalsAlong(Array.from(path));
+                      transitPanel?.refresh();
                       invalidateView();
                     });
+                  },
+                  priorityAlong: () => {
+                    const n = shownSignals.length;
+                    if (n === 0) return undefined;
+                    const given = shownSignals.filter((j) =>
+                      edits.some((e) => sameTarget(e, priorityAt(j))),
+                    ).length;
+                    const rest = n - given;
+                    const cost = rest
+                      ? `; at the rest it costs about ${euros(rest * PRIORITY_JUNCTION)}`
+                      : '';
+                    return {
+                      text: `Its way crosses ${n} signal${n === 1 ? '' : 's'}, ${given} giving trams and buses priority${cost}.`,
+                      all: rest === 0,
+                    };
+                  },
+                  onPriority: (on) => {
+                    const wanted = shownSignals.map(priorityAt);
+                    changeEdits((list) =>
+                      wanted.reduce(
+                        (out, e) => (on ? withEdit(out, e) : out.filter((x) => !sameTarget(x, e))),
+                        list,
+                      ),
+                    );
                   },
                   // A new line as it is drawn (M9c): its stops marked, its way planned.
                   onDraft: (draft) => {

@@ -81,6 +81,8 @@ export const STAT = {
   trains: 20,
   /** Cyclists riding. */
   bikes: 21,
+  /** How late the trams and buses running are on average (s; M10b). */
+  transitLate: 22,
 } as const;
 
 /** Words per vehicle slot in the render buffer and what they hold (engine::write_render). */

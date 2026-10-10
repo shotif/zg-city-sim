@@ -592,6 +592,21 @@ export class BuildPanel {
           this.add({ kind: 'green', junction, phase, seconds: clamped });
         });
       }
+      // Signal priority (M10b), wherever the lights are, set by the player or not.
+      if (junction) {
+        const priority: Edit = { kind: 'priority', junction };
+        const wrap = el('label', 'build-check', el('div', 'build-row', this.signal));
+        const box = el('input', '', wrap);
+        box.type = 'checkbox';
+        box.checked = this.edits.some((e) => sameTarget(e, priority));
+        wrap.append(' Priority for trams and buses');
+        wrap.title =
+          'Trams and buses nearing these lights keep their green, or get it sooner with the other greens cut short';
+        box.addEventListener('change', () => {
+          if (box.checked) this.add(priority);
+          else this.remove(priority);
+        });
+      }
     }
 
     // The junction ahead: a roundabout, traffic lights.

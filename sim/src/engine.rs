@@ -92,6 +92,11 @@ const CALL_LANE: f32 = 20.0;
 const TRAM_LENGTH: f32 = vtype::TYPES[vtype::TRAM as usize].length;
 /// Longest an actuated green phase runs past its planned duration (s).
 const MAX_EXTENSION: f32 = 20.0;
+/// Signal priority (M10b): a tram or bus asks for green this long (s) before it reaches the
+/// line, where a detector would see it (an estimate); its green runs on at most this much
+/// longer than it otherwise could (s); greens it conflicts with are cut to `MIN_GREEN`.
+const PRIORITY_AHEAD: f32 = 20.0;
+const PRIORITY_EXTENSION: f32 = 15.0;
 /// MOBIL lane changes: weight of the new follower's disadvantage and the gain needed.
 const POLITENESS: f32 = 0.3;
 const CHANGE_THRESHOLD: f32 = 0.3;
@@ -164,7 +169,9 @@ pub mod stat {
     pub const TRAINS: usize = 20;
     /// Cyclists riding (M8d).
     pub const BIKES: usize = 21;
-    pub const LEN: usize = 22;
+    /// How late the trams and buses running are on average (s; M10b).
+    pub const TRANSIT_LATE: usize = 22;
+    pub const LEN: usize = 23;
 }
 
 /// Trip flags.
@@ -357,6 +364,8 @@ pub struct Stats {
     pub trains: u32,
     pub bikes: u32,
     pub buses: u32,
+    /// How late the trams and buses running left their last stops, in all (s).
+    pub transit_late: f64,
     /// Running vehicles coming from or going beyond the map.
     pub outside: u32,
     /// Vehicles removed (stuck) per edge.
@@ -486,6 +495,10 @@ pub struct Engine {
     /// Current phase (index into the network's phase arrays) of each traffic light.
     pub tls_phase: Vec<u32>,
     tls_elapsed: Vec<f32>,
+    /// Signal programs that give trams and buses priority (M10b; empty with none), and the
+    /// link each is asked for this step (`NONE` if none).
+    priority: Vec<bool>,
+    priority_request: Vec<u32>,
     tls_link_offsets: Vec<u32>,
     tls_links: Vec<u32>,
     /// Current travel time estimate of each edge (s), used for routing.
@@ -990,6 +1003,8 @@ impl Engine {
             active_lanes: Vec::new(),
             tls_phase: vec![0; n_tls],
             tls_elapsed: vec![0.0; n_tls],
+            priority: Vec::new(),
+            priority_request: Vec::new(),
             tls_link_offsets,
             tls_links,
             vehs: Vec::new(),
@@ -1201,6 +1216,7 @@ impl Engine {
     }
 
     fn update_signals(&mut self) {
+        self.request_priority();
         for t in 0..self.tls_phase.len() {
             let (a, b) = self.phase_range(t);
             if b <= a {
@@ -1214,7 +1230,23 @@ impl Engine {
             // minutes); Zagreb's signals run 60-120 s cycles, so extensions stay near plan.
             let min = d.phase_min_dur[p];
             let max = d.phase_max_dur[p].min(d.phase_duration[p].max(min) + MAX_EXTENSION);
-            let advance = if d.phase_max_dur[p] > min + 0.5 {
+            let actuated = d.phase_max_dur[p] > min + 0.5;
+            let asked = self.priority_request.get(t).copied().unwrap_or(NONE);
+            let advance = if asked != NONE {
+                // A tram or bus is coming (M10b): its green runs on until it is through, a
+                // green it cannot use ends as soon as it may, a yellow runs as planned.
+                let states = &d.phase_states
+                    [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize];
+                let index = d.link_tls_index[asked as usize] as usize;
+                let longest = if actuated { max } else { d.phase_duration[p] };
+                if matches!(states.get(index), Some(b'G' | b'g')) {
+                    elapsed >= longest + PRIORITY_EXTENSION
+                } else if states.iter().any(|c| matches!(c, b'y' | b'Y' | b'u')) {
+                    elapsed >= d.phase_duration[p]
+                } else {
+                    elapsed >= MIN_GREEN.min(d.phase_duration[p])
+                }
+            } else if actuated {
                 (elapsed >= max || (elapsed >= min && !self.phase_has_demand(t, p, false)))
                     // A green stays while nobody waits for another (`skip_idle_phases`).
                     && (!self.skip_phases || self.net.tls_fixed(t) || self.other_called(t, p))
@@ -1223,10 +1255,84 @@ impl Engine {
             };
             if advance {
                 let next = if p + 1 >= b { a } else { p + 1 };
-                self.tls_phase[t] = self.skip_idle_phases(t, p, next) as u32;
+                self.tls_phase[t] = if asked != NONE {
+                    self.phase_for(t, next, asked)
+                } else {
+                    self.skip_idle_phases(t, p, next)
+                } as u32;
                 self.tls_elapsed[t] = 0.0;
             }
         }
+    }
+
+    /// For each signal program giving priority (M10b), the link the first tram or bus to
+    /// reach it within `PRIORITY_AHEAD` seconds goes through: one on the lane in, not
+    /// standing at a stop before the line nor held up as long.
+    fn request_priority(&mut self) {
+        let mut asked = std::mem::take(&mut self.priority_request);
+        asked.clear();
+        if !self.priority.is_empty() {
+            asked.resize(self.priority.len(), NONE);
+            let mut eta = vec![f32::INFINITY; self.priority.len()];
+            let d = &self.net.d;
+            for veh in &self.vehs {
+                if !veh.alive()
+                    || veh.transit.is_none()
+                    || !matches!(veh.vtype, vtype::BUS | vtype::TRAM)
+                    || veh.next_link == NONE
+                    || self.net.lane_internal[veh.lane as usize]
+                {
+                    continue;
+                }
+                let t = d.link_tls[veh.next_link as usize];
+                if t == NONE || !self.priority.get(t as usize).copied().unwrap_or(false) {
+                    continue;
+                }
+                let arrive = (d.lane_length[veh.lane as usize] - veh.pos) / veh.speed.max(5.0);
+                // One held up for long is stuck behind something the signal cannot clear: it
+                // would hold its green, or come back to it, for nothing.
+                if arrive <= PRIORITY_AHEAD
+                    && arrive < eta[t as usize]
+                    && veh.wait < PRIORITY_AHEAD
+                    && !self.stopping_before(veh)
+                {
+                    eta[t as usize] = arrive;
+                    asked[t as usize] = veh.next_link;
+                }
+            }
+        }
+        self.priority_request = asked;
+    }
+
+    /// The phase a signal program asked for `link` goes to from phase `next`: a yellow
+    /// first, then the first green phase that lets the link go, past the others and their
+    /// yellows (as `skip_idle_phases` skips phases nobody waits for).
+    fn phase_for(&self, t: usize, next: usize, link: u32) -> usize {
+        let (a, b) = self.phase_range(t);
+        let d = &self.net.d;
+        let states = |p: usize| {
+            &d.phase_states
+                [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize]
+        };
+        let changing = |p: usize| states(p).iter().any(|c| matches!(c, b'y' | b'Y' | b'u'));
+        if changing(next) {
+            return next;
+        }
+        let index = d.link_tls_index[link as usize] as usize;
+        let mut p = next;
+        for _ in 0..b - a {
+            if matches!(states(p).get(index), Some(b'G' | b'g')) {
+                return p;
+            }
+            p = if p + 1 >= b { a } else { p + 1 };
+            while changing(p) && p != next {
+                p = if p + 1 >= b { a } else { p + 1 };
+            }
+            if p == next {
+                break;
+            }
+        }
+        next
     }
 
     /// The phase an actuated signal goes to from phase `left` instead of `next`: a green
@@ -4351,6 +4457,7 @@ impl Engine {
         let mut stopped = 0u32;
         let (mut trams, mut buses, mut trains, mut outside) = (0u32, 0u32, 0u32, 0u32);
         let mut bikes = 0u32;
+        let mut late = 0f64;
         let (mut driving, mut delay, mut metres) = (0f64, 0f64, 0f64);
         let mut stuck = std::mem::take(&mut self.scratch);
         stuck.clear();
@@ -4376,6 +4483,11 @@ impl Engine {
                     vtype::BUS => buses += 1,
                     vtype::TRAIN => trains += 1,
                     _ => {}
+                }
+                if matches!(veh.vtype, vtype::TRAM | vtype::BUS)
+                    && let Some(run) = &veh.transit
+                {
+                    late += run.late.max(0.0) as f64;
                 }
                 if veh.trip_flags != 0 {
                     outside += 1;
@@ -4457,6 +4569,7 @@ impl Engine {
         s.trains = trains;
         s.bikes = bikes;
         s.buses = buses;
+        s.transit_late = late;
         s.outside = outside;
         s.mean_speed = if running > 0 {
             (sum / running as f64) as f32
@@ -4546,6 +4659,8 @@ impl Engine {
         let mut applied = Vec::with_capacity(edits.len());
         let mut frequencies = Vec::new();
         let mut lines = Vec::new();
+        let n_tls = self.tls_phase.len();
+        let mut priority = vec![false; n_tls];
         for edit in edits {
             if let Edit::Frequency { route, factor } = *edit {
                 // Lines the timetable runs, as often as edits may set.
@@ -4559,10 +4674,20 @@ impl Engine {
                 }
             } else if let Edit::Line(line) = edit {
                 lines.push(line);
+            } else if let Edit::Priority { tls } = *edit {
+                if (tls as usize) < n_tls {
+                    priority[tls as usize] = true;
+                    applied.push(edit.clone());
+                }
             } else if edits::apply(&mut self.net, edit) {
                 applied.push(edit.clone());
             }
         }
+        self.priority = if priority.contains(&true) {
+            priority
+        } else {
+            Vec::new()
+        };
         self.net.refresh_speeds();
         self.net.refresh_links();
         for e in 0..self.free_time.len() {
@@ -4888,6 +5013,7 @@ impl Engine {
         out[stat::VEHICLE_KM] = s.vehicle_metres / 1000.0;
         out[stat::TRAINS] = s.trains as f64;
         out[stat::BIKES] = s.bikes as f64;
+        out[stat::TRANSIT_LATE] = s.transit_late / (s.trams + s.buses).max(1) as f64;
         out
     }
 

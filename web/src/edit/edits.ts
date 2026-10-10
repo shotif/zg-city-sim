@@ -61,6 +61,8 @@ export type Edit =
   | { kind: 'ban'; from: RoadRef; to: RoadRef }
   /** Green time of one phase of a junction's signal program. */
   | { kind: 'green'; junction: JunctionRef; phase: number; seconds: number }
+  /** A junction's traffic lights give trams and buses priority (M10b). */
+  | { kind: 'priority'; junction: JunctionRef }
   /** A public transport line, by its name and mode, run `factor` times as often as
    * timetabled (0: not at all). */
   | FrequencyEdit
@@ -120,6 +122,7 @@ const KIND = {
   ban: 5,
   green: 6,
   frequency: 7,
+  priority: 11,
 } as const;
 /** Headways (s) and hours a new line may have (sim/src/transit.rs `LINE_HEADWAY`). */
 export const LINE_HEADWAY = [120, 7200] as const;
@@ -129,7 +132,7 @@ export interface ResolvedEdit {
   edit: Edit;
   /** Edges it changes (for drawing): the road, or both roads of a turn. */
   edges: number[];
-  /** Signal program, for green-time edits. */
+  /** Signal program, for green-time and priority edits. */
   tls?: number;
   /** The engine's records, four words each (a new line's several: one way, then back). */
   record: number[];
@@ -222,6 +225,11 @@ function resolveEdit(
         record: [KIND.green, tls, edit.phase, floatBits(edit.seconds)],
       };
     }
+    case 'priority': {
+      const tls = index.findSignal(edit.junction);
+      if (tls === undefined) return undefined;
+      return { edit, edges: index.signalEdges(tls), tls, record: [KIND.priority, tls, 0, 0] };
+    }
   }
 }
 
@@ -262,6 +270,8 @@ export function sameTarget(a: Edit, b: Edit): boolean {
       return sameRoad(a.from, (b as typeof a).from) && sameRoad(a.to, (b as typeof a).to);
     case 'green':
       return near(a.junction, (b as typeof a).junction) && a.phase === (b as typeof a).phase;
+    case 'priority':
+      return near(a.junction, (b as typeof a).junction);
     case 'frequency':
       return a.line === (b as typeof a).line && a.mode === (b as typeof a).mode;
     case 'line':
@@ -299,6 +309,8 @@ export function describeEdit(edit: Edit): string {
       return `No turn from ${roadName(edit.from)} onto ${roadName(edit.to)}`;
     case 'green':
       return `${edit.junction.name ?? 'Signals'}: phase ${edit.phase + 1} green ${edit.seconds} s`;
+    case 'priority':
+      return `${edit.junction.name ?? 'Signals'}: priority for trams and buses`;
     case 'frequency':
       return `${MODE_NAME[edit.mode]} ${edit.line}: ${frequencyLabel(edit.factor).toLowerCase()}`;
     case 'line': {
@@ -365,6 +377,7 @@ function compact(edit: Edit): Edit {
         movements: edit.movements.map((m) => ({ from: road(m.from), to: road(m.to) })),
       };
     case 'green':
+    case 'priority':
       return {
         ...edit,
         junction: { ...edit.junction, x: round(edit.junction.x), z: round(edit.junction.z) },
@@ -395,6 +408,7 @@ const KINDS = new Set([
   'busLane',
   'ban',
   'green',
+  'priority',
   'road',
   'roundabout',
   'signal',
@@ -431,6 +445,8 @@ export function parseEdits(text: string): Edit[] {
           Number.isInteger(e.phase) &&
           Number.isFinite(e.seconds)
         );
+      case 'priority':
+        return isJunction(e.junction);
       case 'speed':
         return isRoad(e.road) && Number.isFinite(e.kmh);
       case 'closeLane':

@@ -95,6 +95,14 @@ export function compareStats(today: Float64Array, edited: Float64Array): Compare
       moreIsBetter: false,
       digits: 1,
     },
+    {
+      label: 'Trams and buses late (those running)',
+      today: today[STAT.transitLate] / 60,
+      edited: edited[STAT.transitLate] / 60,
+      unit: 'min',
+      moreIsBetter: false,
+      digits: 1,
+    },
   ];
 }
 

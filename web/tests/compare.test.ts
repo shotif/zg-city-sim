@@ -15,8 +15,8 @@ import { STAT } from '../src/sim/wasm';
 
 describe('compareStats', () => {
   it('reads both simulations alike', () => {
-    const today = new Float64Array(20);
-    const edited = new Float64Array(20);
+    const today = new Float64Array(23);
+    const edited = new Float64Array(23);
     today[STAT.delayHours] = 1200;
     edited[STAT.delayHours] = 900;
     today[STAT.meanSpeed] = 10;
@@ -29,6 +29,10 @@ describe('compareStats', () => {
     const speed = rows.find((r) => r.label === 'Mean speed')!;
     expect([speed.today, speed.edited]).toEqual([36, 43.2]);
     expect(rows.find((r) => r.label === 'Mean trip')!.edited).toBe(18);
+    today[STAT.transitLate] = 300;
+    edited[STAT.transitLate] = 90;
+    const late = compareStats(today, edited).find((r) => r.label.startsWith('Trams and buses'))!;
+    expect([late.today, late.edited, late.unit]).toEqual([5, 1.5, 'min']);
     expect(change(1200, 900)).toBe(-0.25);
     expect(change(0, 0)).toBe(0);
   });

@@ -14,6 +14,8 @@
 //! end) and `<out_dir>/day.json` (traffic statistics per hour, with the vehicle-hours
 //! queued at junctions by holdup).
 //!
+//! `FREQUENCY=2` runs every tram and bus line twice as often, `PRIORITY=all` gives trams and
+//! buses signal priority (see `run.rs`).
 //! `SEED=2` runs the same day with another seed; `NO_PHASE_SKIP=1` runs actuated signals
 //! through every phase of their cycle; `NO_REROUTE=1` keeps drivers on the route they chose
 //! at the start, however the roads ahead jam.
@@ -76,13 +78,23 @@ fn main() {
     // as often, and the car trips that moves.
     let districts = run::load_districts(&format!("{root}/demand"));
     engine.start_riders((!districts.is_empty()).then_some(&districts[..]));
+    // PRIORITY=all (or routes): signal priority for trams and buses (M10b).
+    let mut edits = Vec::new();
     if let Some(factor) = std::env::var("FREQUENCY")
         .ok()
         .and_then(|v| v.parse::<f32>().ok())
     {
-        let edits = run::frequency_edits(&engine, factor);
+        edits.extend(run::frequency_edits(&engine, factor));
+        println!("frequency: {} lines {factor} times as often", edits.len());
+    }
+    if let Ok(which) = std::env::var("PRIORITY") {
+        let priority = run::priority_edits(&mut engine, &which);
+        println!("priority for trams and buses at {} signals", priority.len());
+        edits.extend(priority);
+    }
+    if !edits.is_empty() {
         let applied = engine.set_edits(&edits);
-        println!("frequency: {applied} tram and bus lines {factor} times as often");
+        println!("edits: {applied} of {} applied", edits.len());
     }
     engine.set_time((START_HOUR * 3600) as f64);
     // Where junctions lose time (M7a).

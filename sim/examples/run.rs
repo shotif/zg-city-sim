@@ -296,8 +296,14 @@ fn load_demand(dir: &str) -> Option<DemandData> {
 
 /// Edits running every tram and bus line `factor` times as often (M9b).
 pub fn frequency_edits(engine: &Engine, factor: f32) -> Vec<Edit> {
-    // FREQUENCY_MODES=tram (or bus) changes only that mode's lines.
+    // FREQUENCY_MODES=tram (or bus) changes only that mode's lines; FREQUENCY_ROUTES=5,6
+    // only those routes (the timetable's indices: tram 6 is 5).
     let modes = std::env::var("FREQUENCY_MODES").unwrap_or_default();
+    let only: Vec<u16> = std::env::var("FREQUENCY_ROUTES")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|r| r.trim().parse().ok())
+        .collect();
     let changed = |vt: u8| match modes.as_str() {
         "tram" => vt == vtype::TRAM,
         "bus" => vt == vtype::BUS,
@@ -309,7 +315,9 @@ pub fn frequency_edits(engine: &Engine, factor: f32) -> Vec<Edit> {
         .map(|tr| {
             let d = &tr.data;
             (0..tr.timetabled)
-                .filter(|&t| changed(d.trip_type[t]))
+                .filter(|&t| {
+                    changed(d.trip_type[t]) && (only.is_empty() || only.contains(&d.trip_route[t]))
+                })
                 .map(|t| d.trip_route[t])
                 .collect()
         })
@@ -321,6 +329,57 @@ pub fn frequency_edits(engine: &Engine, factor: f32) -> Vec<Edit> {
             factor,
         })
         .collect()
+}
+
+/// Signal priority for trams and buses (M10b): `which` is `all` (every signal a tram or bus
+/// crosses) or routes (the timetable's indices, comma-separated: tram 6 is 5).
+pub fn priority_edits(engine: &mut Engine, which: &str) -> Vec<Edit> {
+    let only: Vec<u16> = which
+        .split(',')
+        .filter_map(|r| r.trim().parse().ok())
+        .collect();
+    let d = &engine.net.d;
+    let mut junction_tls = vec![u32::MAX; d.junction_link_count.len()];
+    for l in 0..d.link_tls.len() {
+        if d.link_tls[l] != u32::MAX {
+            junction_tls[d.link_junction[l] as usize] = d.link_tls[l];
+        }
+    }
+    // One trip of each route and its ends (its directions and variants).
+    let mut trips = Vec::new();
+    if let Some(tr) = &engine.transit {
+        let td = &tr.data;
+        let mut seen = std::collections::HashSet::new();
+        for t in 0..tr.timetabled {
+            let route = td.trip_route[t];
+            let stops = td.stops(t as u32);
+            if !matches!(td.trip_type[t], vtype::TRAM | vtype::BUS)
+                || which != "all" && !only.contains(&route)
+                || stops.is_empty()
+            {
+                continue;
+            }
+            let key = (
+                route,
+                td.stop_edge[stops.start],
+                td.stop_edge[stops.end - 1],
+            );
+            if seen.insert(key) {
+                trips.push(t as u32);
+            }
+        }
+    }
+    let mut tls = std::collections::BTreeSet::new();
+    for trip in trips {
+        let path = engine.transit_path(trip);
+        for &e in &path[..path.len().saturating_sub(1)] {
+            let t = junction_tls[engine.net.d.edge_to[e as usize] as usize];
+            if t != u32::MAX {
+                tls.insert(t);
+            }
+        }
+    }
+    tls.into_iter().map(|tls| Edit::Priority { tls }).collect()
 }
 
 /// The City's district of each demand edge (M9d; empty if the data has none).
@@ -455,13 +514,23 @@ fn main() {
     // times as often (M9b).
     let districts = load_districts(&format!("{dir}/../demand"));
     engine.start_riders((!districts.is_empty()).then_some(&districts[..]));
+    // PRIORITY=all (or routes): signal priority for trams and buses (M10b).
+    let mut edits = Vec::new();
     if let Some(factor) = std::env::var("FREQUENCY")
         .ok()
         .and_then(|v| v.parse::<f32>().ok())
     {
-        let edits = frequency_edits(&engine, factor);
+        edits.extend(frequency_edits(&engine, factor));
+        println!("frequency: {} lines {factor} times as often", edits.len());
+    }
+    if let Ok(which) = std::env::var("PRIORITY") {
+        let priority = priority_edits(&mut engine, &which);
+        println!("priority for trams and buses at {} signals", priority.len());
+        edits.extend(priority);
+    }
+    if !edits.is_empty() {
         let applied = engine.set_edits(&edits);
-        println!("frequency: {applied} tram and bus lines {factor} times as often");
+        println!("edits: {applied} of {} applied", edits.len());
     }
     engine.set_time(start * 3600.0);
     engine.track_delay = true;

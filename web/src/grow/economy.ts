@@ -91,6 +91,10 @@ export const SIGNS = { close: 2_000, closeLane: 2_000, speed: 1_000, busLane: 5_
 export const UPKEEP_LANE_KM = 4_200;
 export const BRIDGE_UPKEEP = 0.005;
 export const LIGHTS_UPKEEP = 3_000;
+/** Signal priority for trams and buses at a junction (M10b): detection and controller work,
+ * and its upkeep a year (estimates from US figures, section 9 of docs/DATA_SOURCES.md). */
+export const PRIORITY_JUNCTION = 15_000;
+export const PRIORITY_UPKEEP = 600;
 /** ZET's cost per vehicle-km (€), and weekdays' service a year comes to. */
 export const VEHICLE_KM: Record<Mode, number> = { tram: 7.0, bus: 4.9, train: 0 };
 export const SERVICE_DAYS: Record<Mode, number> = { tram: 244, bus: 308, train: 0 };
@@ -202,6 +206,8 @@ function buildAndUpkeep(
     }
     case 'green':
       return { build: RETIMING, upkeep: 0 };
+    case 'priority':
+      return { build: PRIORITY_JUNCTION, upkeep: PRIORITY_UPKEEP };
     default:
       return { build: SIGNS[edit.kind], upkeep: 0 };
   }
