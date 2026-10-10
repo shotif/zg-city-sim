@@ -382,6 +382,8 @@ Known gaps:
   - Bikes no longer add to the traffic's sound.
 - Data that would help: HŽ Infrastruktura's level crossing list with their warning times, and the City's bike counter data in full (published only as summaries).
 
+**Status (M8, done 2026-10-10).** HŽ's trains run to their timetable (291 a day in the map) and close 49 level crossings about 3,200 times a day; pedestrians cross at 8,095 crossings (estimated, about 4.4 million crossings a day); about 42,000 bike trips a day ride the City's streets and cycle tracks. In the app, stations and level crossings show on the traffic map with their trains and closures, and trains, pedestrians and cyclists can be left out of the view. Over a whole day at 70 %, the road counts hold through all five steps (12-15 of 47 stations within ±25 %, the total at 0.79-0.80). Pedestrians made gridlock about 27 % worse (8,300-8,800 vehicles removed a day, 6,700-6,800 before M8c); cyclists added none. Open: whether 70 % is still the right share of the demand now that pedestrians take junction capacity; the bikes match the City's 2014 counts in all but not place by place.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.
@@ -499,7 +501,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M5 Grow** | Zoning, growable Zagreb-style buildings, demand, land value, economy |
 | **M6 Polish and live** | Day/night, weather, vehicle models, sound, performance; live weather (live ZET vehicles skipped) |
 | **M7 Full demand** | Junctions that carry what Zagreb's do (left turns inside junctions, roundabouts, trams, lane choice), then all of the estimated demand, validated against the counts (closed at 70 %) |
-| **M8 Pedestrians, cyclists and trains** | HŽ trains on their timetable and the level crossings they close, pedestrians at crossings and signals, cyclists on cycle lanes and roads |
+| **M8 Pedestrians, cyclists and trains** | HŽ trains on their timetable and the level crossings they close, pedestrians at crossings and signals, cyclists on cycle lanes and roads (done 2026-10-10) |
 
 ## Risks and open questions
 
