@@ -47,6 +47,7 @@ export interface EngineExports {
   zg_line_plan_ptr(): number;
   zg_riders(): number;
   zg_riders_ptr(): number;
+  zg_work_riders(): number;
   zg_pt_journeys(points: number, count: number): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
@@ -335,6 +336,12 @@ export class TrafficEngine {
   }
 
   /** Public transport's riders (M9d; `readRiders`). */
+  /** Work on the riders a little (M10d: car journeys from one zone, then public
+   * transport's); whether there is more to do. */
+  workRiders(): boolean {
+    return this.exports.zg_work_riders() !== 0;
+  }
+
   riders(): Float32Array {
     const ex = this.exports;
     const len = ex.zg_riders();

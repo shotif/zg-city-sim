@@ -247,6 +247,8 @@ pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
         // Public transport's riders, worked out as the simulation runs (M9d).
         let district = std::mem::take(&mut s.demand_district);
         engine.start_riders((!district.is_empty()).then_some(&district[..]));
+        // The worker works on the riders between steps (`zg_work_riders`).
+        engine.riders_in_step = false;
         s.engine = Some(engine);
         0
     })
@@ -593,6 +595,13 @@ pub extern "C" fn zg_riders() -> u32 {
         }
         s.riders.len() as u32
     })
+}
+
+/// Work on the riders a little (car journeys from one zone, M10d, then public transport's
+/// from a few); 1 while there is more to do.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_work_riders() -> u32 {
+    with_state(|s| s.engine.as_mut().is_some_and(|e| e.work_riders_with(1)) as u32)
 }
 
 #[unsafe(no_mangle)]

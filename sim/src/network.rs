@@ -87,6 +87,9 @@ pub struct NetworkData {
     /// Per signal program, 1 where the player set it (Build panel): the engine runs it as
     /// given, without merging or re-timing its phases. Empty for a network as loaded.
     pub tls_fixed: Vec<u8>,
+    /// Per edge, the share of its speed limit (%) traffic moves at in the morning peak as a
+    /// day run had it (M10d, `pipeline/peak.py`); 255 or missing where not known.
+    pub edge_peak: Vec<u8>,
     /// Where turns wait inside their junction (SUMO's internal junctions, M7b): the
     /// junction lane that waits, sorted, and per wait (offsets) the lanes it gives way to
     /// there: the junction lanes of the movements it crosses, and the lanes they come from.
@@ -162,6 +165,7 @@ named_arrays! {
     "phaseStateOffsets" => phase_state_offsets: u32,
     "phaseStates" => phase_states: u8,
     "tlsFixed" => tls_fixed: u8,
+    "edgePeak" => edge_peak: u8,
     "waitLane" => wait_lane: u32,
     "waitFoeOffsets" => wait_foe_offsets: u32,
     "waitFoes" => wait_foes: u32,

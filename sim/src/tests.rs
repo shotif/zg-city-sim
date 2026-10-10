@@ -2770,9 +2770,14 @@ fn a_new_bus_line_runs_from_stop_to_stop_every_headway() {
 /// Two zones 3 km apart on a road east, both with homes and jobs (at the roads' starts),
 /// and a bus between them every 10 min through the morning peak.
 fn two_zones() -> (Engine, u32, u32) {
-    use crate::transit::{Transit, TransitData};
     let (b, e0, e1) = straight_road(3000.0, 1);
-    let mut engine = Engine::new(b.build(), 4);
+    two_zones_on(b.build(), e0, e1)
+}
+
+/// `two_zones` on network `net` with its two roads.
+fn two_zones_on(net: Network, e0: u32, e1: u32) -> (Engine, u32, u32) {
+    use crate::transit::{Transit, TransitData};
+    let mut engine = Engine::new(net, 4);
     let mut d = TransitData {
         trip_stops: vec![0],
         ..TransitData::default()
@@ -2925,6 +2930,60 @@ fn riders_share_parallel_lines_by_how_often_they_run() {
     );
     assert!(s.trips_now > s.trips_today);
     assert!(now[1] < 1.8 * b[1], "{now:?} after {b:?}");
+}
+
+#[test]
+fn car_journeys_follow_the_roads_at_their_peak_speeds_and_edits_move_trips() {
+    use crate::riders::CAR_TERMINAL;
+    let (b, e0, e1) = straight_road(3000.0, 1);
+    let mut data = b.data();
+    // Traffic on the second road moved at half its limit in the morning peak.
+    data.edge_peak = vec![255, 50];
+    let (mut engine, _, _) = two_zones_on(Network::build(data).unwrap(), e0, e1);
+    engine.set_time(0.0);
+    engine.start_riders(None);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    assert!(riders.summary.ready && !riders.busy());
+    let (east, west) = if riders.zones.centre[0].0 < riders.zones.centre[1].0 {
+        (0, 1)
+    } else {
+        (1, 0)
+    };
+    // From the first road's busiest street to the second's: the second at half speed.
+    let net = &engine.net;
+    let slow = net.edge_length[e1 as usize] / net.edge_speed[e1 as usize] / 0.5;
+    let car = riders.car_today(east, west);
+    assert!(
+        (car - (slow + CAR_TERMINAL)).abs() < 1.0,
+        "{car} s against {slow} s"
+    );
+    // No road back: the distance estimate.
+    assert!((riders.car_today(west, east) - riders.zones.distance_time(west, east)).abs() < 1.0);
+    let today = riders.summary.trips_today;
+
+    // A lower speed limit on the second road: the car takes longer, and car trips move to
+    // the bus.
+    engine.set_edits(&[Edit::SpeedLimit {
+        edge: e1,
+        speed: 20.0 / 3.6,
+    }]);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    assert!(!riders.busy());
+    let factor = riders.factor.clone().expect("car trips moved");
+    assert!(factor[east * 2 + west] < 1.0, "{factor:?}");
+    assert!(riders.summary.trips_now > today && riders.summary.car_moved > 0.0);
+
+    // Taken back: as today.
+    engine.set_edits(&[]);
+    let riders = engine.riders.as_ref().unwrap();
+    assert!(riders.factor.is_none());
+    assert_eq!(riders.summary.trips_now, today);
 }
 
 #[test]

@@ -20,7 +20,7 @@ use crate::edits::{self, Edit, Loaded};
 use crate::idm;
 use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::pedestrians::{self, MIN_WALK, OWN_SIGNAL_GAP, OWN_SIGNAL_YELLOW, Pedestrians};
-use crate::riders::{Graph, Riders};
+use crate::riders::{CAR_ORIGINS_PER_STEP, Graph, NO_ZONE, Riders};
 use crate::rng::Rng;
 use crate::router::{LandmarkBuild, Landmarks, Router};
 use crate::transit::{
@@ -96,6 +96,11 @@ const MAX_EXTENSION: f32 = 20.0;
 /// line, where a detector would see it (an estimate); its green runs on at most this much
 /// longer than it otherwise could (s); greens it conflicts with are cut to `MIN_GREEN`.
 const PRIORITY_AHEAD: f32 = 20.0;
+/// Car journeys between zones (M10d): how far a search goes (s), and the share of its limit
+/// traffic is taken to move at where a day run did not see it slow (it keeps road pieces
+/// below 90 %; roads drawn have none).
+const CAR_REACH: f32 = 3.0 * 3600.0;
+const PEAK_UNKNOWN: f32 = 0.95;
 const PRIORITY_EXTENSION: f32 = 15.0;
 /// MOBIL lane changes: weight of the new follower's disadvantage and the gain needed.
 const POLITENESS: f32 = 0.3;
@@ -504,6 +509,9 @@ pub struct Engine {
     /// Current travel time estimate of each edge (s), used for routing.
     pub travel_time: Vec<f32>,
     free_time: Vec<f32>,
+    /// Each edge's time in the morning peak as a day run had it (s; M10d), for car journeys
+    /// between zones (`Riders`).
+    peak_time: Vec<f32>,
     edge_speed_sum: Vec<f32>,
     edge_speed_n: Vec<u16>,
     /// Mean speed / speed limit per edge over the last interval (0-254; 255 = no vehicles).
@@ -532,6 +540,9 @@ pub struct Engine {
     pub skip_phases: bool,
     /// Drivers look for another way when the roads ahead jam (`reroute_en_route`).
     pub reroute: bool,
+    /// Each step works on the riders (`work_riders`); the app does it between steps instead,
+    /// a little at a time (`work_riders_with`), so slow runs still get them soon.
+    pub riders_in_step: bool,
     router: Router,
     pending: BinaryHeap<Pending>,
     waiting: VecDeque<Waiting>,
@@ -544,6 +555,10 @@ pub struct Engine {
     riders_applied: u32,
     /// The public transport edits the riders were last worked out for.
     riders_key: Vec<u32>,
+    /// The roads riders' car journeys were last worked out on, and today's (M10d): the edges'
+    /// count and the edits changing the roads.
+    riders_roads: Vec<u32>,
+    riders_roads_today: Vec<u32>,
     /// Scale applied to generated demand (1 = full).
     pub demand_scale: f32,
     /// How the weather changes driving (M6b).
@@ -979,8 +994,10 @@ impl Engine {
             delay_root: Vec::new(),
             track_delay: false,
             skip_phases: true,
+            riders_in_step: true,
             reroute: true,
             travel_time: free_time.clone(),
+            peak_time: Vec::new(),
             free_time,
             edge_speed_sum: vec![0.0; n_edges],
             edge_speed_n: vec![0; n_edges],
@@ -1018,6 +1035,8 @@ impl Engine {
             riders: None,
             riders_applied: 0,
             riders_key: Vec::new(),
+            riders_roads: Vec::new(),
+            riders_roads_today: Vec::new(),
             demand_scale: 1.0,
             weather: Weather::CLEAR,
             stats: Stats::default(),
@@ -1032,6 +1051,7 @@ impl Engine {
             net,
         };
         engine.reset_signals();
+        engine.refresh_peak_time();
         engine
     }
 
@@ -1111,7 +1131,9 @@ impl Engine {
         self.lane_changes();
         lap(self, 3);
         self.start_transit();
-        self.advance_riders();
+        if self.riders_in_step {
+            self.work_riders();
+        }
         self.insert_vehicles();
         self.replan_some();
         self.reroute_en_route();
@@ -2699,17 +2721,82 @@ impl Engine {
             .unwrap_or(0);
         self.riders = Some(Riders::new(demand, district, graph, routes));
         self.riders_key.clear();
+        self.riders_roads = self.road_key(&self.edits);
+        self.riders_roads_today = self.road_key(&[]);
     }
 
-    fn advance_riders(&mut self) {
-        let Some(riders) = self.riders.as_mut() else {
-            return;
+    /// Work on the riders: car journeys from a few zones (M10d), then public transport's.
+    pub fn work_riders(&mut self) {
+        self.work_riders_with(CAR_ORIGINS_PER_STEP);
+    }
+
+    /// `work_riders` with car journeys from at most `car_origins` zones; whether there is
+    /// more to do.
+    pub fn work_riders_with(&mut self, car_origins: usize) -> bool {
+        let Some(mut riders) = self.riders.take() else {
+            return false;
         };
+        for _ in 0..car_origins {
+            let Some((_, from)) = riders.car_origin() else {
+                break;
+            };
+            let mut times = vec![f32::INFINITY; riders.zones.len()];
+            if (from as usize) < self.net.edge_count() {
+                self.router.reach(
+                    &self.net,
+                    &self.peak_time,
+                    from,
+                    CAR_REACH,
+                    vclass::PASSENGER,
+                    |e, t| {
+                        let z = riders.zone_of_edge(e);
+                        if z != NO_ZONE {
+                            times[z as usize] = times[z as usize].min(t);
+                        }
+                    },
+                );
+            }
+            riders.set_car_row(&times);
+        }
         riders.advance();
-        if riders.version != self.riders_applied {
-            self.riders_applied = riders.version;
+        let changed = riders.version != self.riders_applied;
+        let busy = riders.busy();
+        self.riders_applied = riders.version;
+        self.riders = Some(riders);
+        if changed {
             self.refresh_shift();
         }
+        busy
+    }
+
+    /// The roads as riders' car journeys see them: the edges' count (roads drawn) and the
+    /// edits in force (`edits`) that change roads.
+    fn road_key(&self, edits: &[Edit]) -> Vec<u32> {
+        let mut key = vec![self.net.edge_count() as u32];
+        for edit in edits {
+            if !matches!(
+                edit,
+                Edit::Frequency { .. } | Edit::Line(_) | Edit::Priority { .. }
+            ) {
+                key.extend(edit.encode());
+            }
+        }
+        key
+    }
+
+    /// Each edge's time in the morning peak: its free-flow time over the share of the limit
+    /// traffic moved at (`Network::edge_peak`; `PEAK_UNKNOWN` where not known).
+    fn refresh_peak_time(&mut self) {
+        let d = &self.net.d;
+        self.peak_time = (0..self.free_time.len())
+            .map(|e| {
+                let share = match d.edge_peak.get(e) {
+                    Some(&p) if (1..=100).contains(&p) => p as f32 / 100.0,
+                    _ => PEAK_UNKNOWN,
+                };
+                self.free_time[e] / share
+            })
+            .collect();
     }
 
     /// Give the demand the car trips moved now (after the riders or the demand change).
@@ -2719,18 +2806,28 @@ impl Engine {
         }
     }
 
-    /// The timetable runs as edited: work the riders out again where public transport's
-    /// edits (`key`: their records) changed.
-    fn riders_for_service(&mut self, key: Vec<u32>) {
-        if self.riders.is_none() || key == self.riders_key {
+    /// The timetable runs as edited and the roads as edited: work the riders out again where
+    /// public transport's edits (`key`: their records) or the roads changed.
+    fn riders_for_edits(&mut self, key: Vec<u32>, edits: &[Edit]) {
+        let roads = self.road_key(edits);
+        if self.riders.is_none() || key == self.riders_key && roads == self.riders_roads {
             return;
         }
         self.riders_key = key;
+        self.riders_roads = roads;
+        let roads_changed = self.riders_roads != self.riders_roads_today;
         let Some(tr) = self.transit.as_ref() else {
             return;
         };
-        let graph = (!self.riders_key.is_empty())
-            .then(|| Graph::new(&self.net, &tr.data, tr.order.iter().copied()));
+        // With the roads changed, public transport's journeys are worked out again too, as
+        // its riders depend on the car's.
+        let graph = if !self.riders_key.is_empty() {
+            Some(Graph::new(&self.net, &tr.data, tr.order.iter().copied()))
+        } else if roads_changed {
+            Some(Graph::new(&self.net, &tr.data, 0..tr.timetabled as u32))
+        } else {
+            None
+        };
         let routes = tr
             .data
             .trip_route
@@ -2739,9 +2836,9 @@ impl Engine {
             .max()
             .unwrap_or(0);
         if let Some(riders) = self.riders.as_mut() {
-            riders.set_network(graph, routes);
+            riders.set_now(graph, roads_changed, routes);
         }
-        self.advance_riders();
+        self.work_riders();
     }
 
     // ---- scheduled trams and buses --------------------------------------------------------------
@@ -4700,6 +4797,7 @@ impl Engine {
         for &e in &self.closed {
             self.travel_time[e as usize] = CLOSED_TIME;
         }
+        self.refresh_peak_time();
         // The timetable with the frequencies and new lines in force, on the network now.
         if let Some(mut tr) = self.transit.take() {
             let mut made = Vec::with_capacity(lines.len());
@@ -4718,7 +4816,7 @@ impl Engine {
                 .filter(|e| matches!(e, Edit::Frequency { .. } | Edit::Line(_)))
                 .flat_map(|e| e.encode())
                 .collect();
-            self.riders_for_service(key);
+            self.riders_for_edits(key, &applied);
         }
         let valid = self
             .router

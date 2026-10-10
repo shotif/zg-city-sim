@@ -1828,6 +1828,14 @@ function finish(
     Uint8Array,
     ne.map((e) => e.laneCount),
   );
+  // Morning peak speeds (M10d): none known for roads drawn.
+  if (a.edgePeak) {
+    out.edgePeak = grow(
+      a.edgePeak as Uint8Array,
+      Uint8Array,
+      ne.map(() => 255),
+    );
+  }
 
   // Lanes and their shapes.
   out.laneEdge = grow(

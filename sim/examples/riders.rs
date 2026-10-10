@@ -36,7 +36,7 @@ fn main() {
     engine.demand = Some(demand);
     let t0 = Instant::now();
     engine.start_riders((!districts.is_empty()).then_some(&districts[..]));
-    let riders = engine.riders.as_mut().expect("riders");
+    let riders = engine.riders.as_ref().expect("riders");
     println!(
         "{} zones, {} with a district; expected car trips drawn in {:.1} s",
         riders.zones.len(),
@@ -44,13 +44,14 @@ fn main() {
         t0.elapsed().as_secs_f64()
     );
     let t1 = Instant::now();
-    while riders.busy() {
-        riders.advance();
+    while engine.riders.as_ref().is_some_and(|r| r.busy()) {
+        engine.work_riders();
     }
     println!(
-        "journeys from every zone in {:.1} s",
+        "car and public transport journeys from every zone in {:.1} s",
         t1.elapsed().as_secs_f64()
     );
+    let riders = engine.riders.as_ref().expect("riders");
     let city = |d: u8| d < 17;
     for (name, within) in [("City", &city as &dyn Fn(u8) -> bool), ("all", &|_| true)] {
         let [with, without, car, pt] = riders.reach_today(within).unwrap();
@@ -99,6 +100,37 @@ fn main() {
         by_mode(&summary.boardings_today, vtype::TRAIN),
     );
 
+    // SLOW_EDGES=1,2 SLOW_KMH=30: those roads' speed limit lowered (M10d: car journeys from
+    // the roads, and the car trips the change moves to public transport).
+    if let (Ok(edges), Some(kmh)) = (
+        std::env::var("SLOW_EDGES"),
+        std::env::var("SLOW_KMH")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok()),
+    ) {
+        let edits: Vec<zg_sim::edits::Edit> = edges
+            .split(',')
+            .filter_map(|e| e.trim().parse().ok())
+            .map(|edge| zg_sim::edits::Edit::SpeedLimit {
+                edge,
+                speed: kmh / 3.6,
+            })
+            .collect();
+        let t2 = Instant::now();
+        let applied = engine.set_edits(&edits);
+        while engine.riders.as_ref().is_some_and(|r| r.busy()) {
+            engine.work_riders();
+        }
+        let s = &engine.riders.as_ref().unwrap().summary;
+        println!(
+            "{applied} roads at {kmh} km/h ({:.1} s): {:.0} trips by public transport ({:+.1} %), {:.0} car trips moved",
+            t2.elapsed().as_secs_f64(),
+            s.trips_now,
+            100.0 * (s.trips_now / s.trips_today - 1.0),
+            s.car_moved,
+        );
+        engine.set_edits(&[]);
+    }
     if let Some(factor) = std::env::var("FREQUENCY")
         .ok()
         .and_then(|v| v.parse::<f32>().ok())
@@ -106,13 +138,13 @@ fn main() {
         let edits = run::frequency_edits(&engine, factor);
         let t2 = Instant::now();
         engine.set_edits(&edits);
-        let riders = engine.riders.as_mut().unwrap();
-        while riders.busy() {
-            riders.advance();
+        while engine.riders.as_ref().is_some_and(|r| r.busy()) {
+            engine.work_riders();
         }
-        let s = &riders.summary;
+        let s = &engine.riders.as_ref().unwrap().summary;
         println!(
-            "every tram and bus line {factor} times as often ({:.1} s): {:.0} trips by public transport ({:+.1} %), {:.0} car trips moved; boardings: tram {:.0}, bus {:.0}",
+            "{} lines {factor} times as often ({:.1} s): {:.0} trips by public transport ({:+.1} %), {:.0} car trips moved; boardings: tram {:.0}, bus {:.0}",
+            edits.len(),
             t2.elapsed().as_secs_f64(),
             s.trips_now,
             100.0 * (s.trips_now / s.trips_today - 1.0),

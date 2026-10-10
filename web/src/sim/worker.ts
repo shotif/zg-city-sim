@@ -54,6 +54,8 @@ let reachJob:
     }
   | undefined;
 const REACH_MS = 8;
+/** Time a tick may give the riders' journeys (M9d, M10d), at least one piece of work. */
+const RIDERS_MS = 25;
 /** Volume requests waiting for their simulated time. */
 let volumeAsks: { id: number; at: number }[] = [];
 
@@ -222,6 +224,10 @@ function tick(): void {
       ]);
     }
   }
+  // Public transport's riders and the car journeys they need, a little each tick; not in a
+  // simulation only compared with (the player's works them out for both).
+  const t1 = performance.now();
+  while (render && sim.workRiders() && performance.now() - t1 < RIDERS_MS);
   setTimeout(tick, Math.max(0, TICK_MS - (performance.now() - start)));
 }
 

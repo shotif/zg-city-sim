@@ -503,7 +503,9 @@ test("compares edited roads with today's", async ({ page }, testInfo) => {
   );
   // Six measures of the roads, how late trams and buses run (M10b), and public transport's
   // riders (M9e).
-  await expect(page.locator('.build-table tbody tr')).toHaveCount(9, { timeout: 120_000 });
+  // The riders' rows come once the player's simulation has worked out car journeys today and
+  // with the edit (M10d), about a minute each in headless Chromium.
+  await expect(page.locator('.build-table tbody tr')).toHaveCount(9, { timeout: 300_000 });
   await expect(page.locator('.build-table tbody')).toContainText('Trips by public transport');
   await expect(page.locator('.build-travel-summary').first()).toContainText('on average over', {
     timeout: 120_000,

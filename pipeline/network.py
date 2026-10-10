@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 from .osm import ATTRIBUTION as OSM_ATTRIBUTION
 from .osm import fetch_osm
 from .packed import write_packed
+from .peak import peak_shares
 from .simnet import VCLASS_BITS, pack_network, parse_net
 
 log = logging.getLogger(__name__)
@@ -462,6 +463,8 @@ def export_network(net_file: Path, out_dir: Path) -> dict:
     """Pack the SUMO network for the app (roads) and the traffic engine."""
     net = parse_net(net_file)
     arrays, tables = pack_network(net)
+    # The roads' speeds in the morning peak, from day runs (M10d: car journey times).
+    arrays["edgePeak"] = peak_shares(arrays, tables["flags"]["internal"])
     for stale in ("roads.bin.gz", "roads.json"):
         (out_dir / stale).unlink(missing_ok=True)
     packed = write_packed(out_dir / "net.bin.gz", arrays)
