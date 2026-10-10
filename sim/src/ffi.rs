@@ -40,6 +40,8 @@ struct State {
     stats: [f64; stat::LEN],
     /// Pedestrians at each crossing, for drawing (`Pedestrians::write_state`).
     crossing_state: Vec<u8>,
+    /// The level crossings' state, for the app (`Engine::write_level_crossings`).
+    level_crossing_state: Vec<f32>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -419,6 +421,28 @@ pub extern "C" fn zg_crossings_update() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_crossings_ptr() -> *const u8 {
     with_state(|s| s.crossing_state.as_ptr())
+}
+
+/// Fill the level crossings' state (four numbers per crossing, see
+/// `Engine::write_level_crossings`) and return how many numbers; `zg_level_crossings_ptr`
+/// points to them.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_level_crossings_update() -> u32 {
+    with_state(|s| {
+        let mut out = std::mem::take(&mut s.level_crossing_state);
+        out.clear();
+        if let Some(e) = s.engine.as_ref() {
+            e.write_level_crossings(&mut out);
+        }
+        let len = out.len() as u32;
+        s.level_crossing_state = out;
+        len
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_level_crossings_ptr() -> *const f32 {
+    with_state(|s| s.level_crossing_state.as_ptr())
 }
 
 /// Number of elements of the signal array `which` (see `zg_signal_ptr`).

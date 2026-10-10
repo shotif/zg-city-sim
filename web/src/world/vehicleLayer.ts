@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 
-import { INFO, RENDER } from '../sim/wasm';
+import { INFO, RENDER, VEHICLE_TYPES } from '../sim/wasm';
 import { GLOW_ORDER, SOLID_ORDER, glowMaterial, nightUniform } from './nightLights';
 import type { HeightFn } from './roadGeometry';
 import { vehicleColor } from './vehicleGeometry';
@@ -100,6 +100,7 @@ const BLINK = 1.5;
 const EARSHOT = 250;
 
 const keyOf = (type: number, model: number) => type * 16 + model;
+const BIKE = VEHICLE_TYPES.indexOf('bike');
 
 /**
  * Draws the simulation's vehicles as instanced low-poly models (M6c): a few car shapes,
@@ -116,6 +117,8 @@ export class VehicleLayer {
   private readonly beamMaterial = glowMaterial(0xfff2cc, 0.25);
   private readonly pose = new Float64Array(4);
   private readonly color = new THREE.Color();
+  /** Vehicle types (wasm.ts `VEHICLE_TYPES`) not drawn: trains or bikes switched off. */
+  readonly hidden = new Set<number>();
   /** Vehicles drawn in the last update. */
   drawn = 0;
   /** Within earshot of the point looked at (250 m) at the last update: vehicles, trams
@@ -207,6 +210,7 @@ export class VehicleLayer {
       const o = slot * RENDER.stride;
       if (cur[o + RENDER.serial] === 0) continue;
       const info = cur[o + RENDER.info];
+      if (this.hidden.has(info & 0xff)) continue;
       const key = keyFor(info);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
@@ -231,11 +235,13 @@ export class VehicleLayer {
       if (dx * dx + dz * dz > r2) continue;
       const info = cur[slot * RENDER.stride + RENDER.info];
       const type = info & 0xff;
-      if (dx * dx + dz * dz < EARSHOT * EARSHOT) {
+      // Bikes make no sound worth hearing over the traffic.
+      if (dx * dx + dz * dz < EARSHOT * EARSHOT && type !== BIKE) {
         near.vehicles++;
         if (type === 3) near.trams++;
         near.speed += asFloat(cur[slot * RENDER.stride + RENDER.speed]);
       }
+      if (this.hidden.has(type)) continue;
       const key = keyFor(info);
       const set = sets.get(key);
       if (!set) continue;

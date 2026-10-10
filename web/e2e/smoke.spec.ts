@@ -130,6 +130,35 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
   expect(perf?.drawCalls).toBeGreaterThan(0);
   expect(perf?.sim?.stepMs).toBeGreaterThan(0);
 
+  // With the traffic map, HŽ's stations and the level crossings (M8e); a station's panel
+  // lists its next trains.
+  await page.getByRole('button', { name: 'Traffic map' }).click();
+  await expect(page.locator('.rail-station')).toHaveCount(46);
+  await expect.poll(() => page.locator('.rail-crossing').count()).toBeGreaterThan(50);
+  await page
+    .locator('.rail-station[aria-label="Zagreb Glavni kolodvor station"]')
+    .dispatchEvent('click');
+  await expect(page.locator('.rail-info')).toContainText('Zagreb Glavni kolodvor');
+  await expect(page.locator('.rail-info tr')).toHaveCount(6);
+  await page.getByRole('button', { name: 'Traffic map' }).click();
+  await expect(page.locator('.rail-info')).toBeHidden();
+  // Trains, pedestrians and cyclists can be left out of the view.
+  for (const name of ['Trains', 'Pedestrians', 'Cyclists']) {
+    await page.getByRole('button', { name, exact: true }).click();
+  }
+  // Applied on the next frames drawn.
+  await expect
+    .poll(() =>
+      page.evaluate(() => [
+        [...(window.__ZG__?.vehicles?.hidden ?? [])].sort(),
+        window.__ZG__?.pedestrians?.object.visible,
+      ]),
+    )
+    .toEqual([[4, 5], false]);
+  for (const name of ['Trains', 'Pedestrians', 'Cyclists']) {
+    await page.getByRole('button', { name, exact: true }).click();
+  }
+
   // Speed up, then pause: the clock follows.
   await page.getByRole('button', { name: '16×' }).click();
   await page.waitForTimeout(2000);

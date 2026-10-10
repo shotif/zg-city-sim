@@ -397,14 +397,16 @@ def train_trips(
     lanes: tuple,
     tree: shapely.STRtree,
     route_base: int,
-) -> tuple[list, list[dict], dict]:
+) -> tuple[list, list[dict], dict, list[dict]]:
     """HŽ's trains running on `date` that call at a station inside the map, each from where
     it enters the map (or its first station) to where it leaves (or its last). Stations go on
     a track running the way the train does, judged from the stations before and after; a
     train coming from beyond the map starts on a track crossing the map's edge near the line
     to its last station outside, at the time it would pass there (by distance between the
     stations), and one going beyond it ends on a track leaving the map. Of the tracks that
-    could serve, each trip takes those with the quickest way between them."""
+    could serve, each trip takes those with the quickest way between them. Also the stations
+    served, each with its calls: [arrival, departure (s), train number, from, to], where `from`
+    is empty at the train's first station and `to` at its last."""
     with zipfile.ZipFile(path) as feed:
         routes = {r["route_id"]: r for r in read_table(feed, "routes.txt")}
         names = feed.namelist()
@@ -473,6 +475,7 @@ def train_trips(
     out = []
     entering = leaving = unreached = 0
     served: set[str] = set()
+    calls: dict[str, list[tuple[int, int, str, str, str]]] = {}
     tight: list[float] = []
     for trip in trips:
         seq = sorted(times.get(trip["trip_id"], []))
@@ -495,6 +498,7 @@ def train_trips(
         exit_ = nearest_ends(sinks, pts[last], pts[last + 1], 1.0) if last < len(seq) - 1 else []
         picked = quickest_tracks(graph, [entry] + [options[i] for i in inside] + [exit_])
         stops_out: list[tuple[int, float, float]] = []
+        trip_calls = []
         if picked[0] is not None:
             end = source_point[picked[0][0]]
             d0 = np.hypot(*(end - pts[first - 1]))
@@ -508,6 +512,18 @@ def train_trips(
                 continue
             edge, frac = hit
             served.add(seq[i][1])
+            trip_calls.append(
+                (
+                    seq[i][1],
+                    (
+                        seq[i][2],
+                        seq[i][3],
+                        trip["trip_short_name"],
+                        stops[seq[0][1]]["stop_name"] if i > 0 else "",
+                        stops[seq[-1][1]]["stop_name"] if i < len(seq) - 1 else "",
+                    ),
+                )
+            )
             if stops_out and stops_out[-1][0] == edge and abs(stops_out[-1][1] - frac) < 0.02:
                 continue
             stops_out.append((edge, frac, seq[i][3]))
@@ -518,6 +534,17 @@ def train_trips(
             tight.append(graph.between(a[0], a[1], b[0], b[1]) - (b[2] - a[2]))
         if len(stops_out) >= 2:
             out.append((stops_out[0][2], TRAIN, route_index[trip["route_id"]], stops_out))
+            for stop_id, call in trip_calls:
+                calls.setdefault(stop_id, []).append(call)
+    stations = [
+        {
+            "name": stops[s]["stop_name"],
+            "x": round(float(xy[s][0]), 1),
+            "z": round(float(xy[s][1]), 1),
+            "calls": [list(c) for c in sorted(calls[s], key=lambda c: (c[1], c[2]))],
+        }
+        for s in sorted(calls, key=lambda s: stops[s]["stop_name"])
+    ]
     table = [
         {
             "name": routes[r]["route_short_name"],
@@ -539,7 +566,7 @@ def train_trips(
         "legsTooShortBy": round(float(max(tight, default=0.0)), 1),
         "trackEnds": [len(sources), len(sinks)],
     }
-    return out, table, stats
+    return out, table, stats, stations
 
 
 def build_transit(root: Path = OUTPUT_DIR) -> dict:
@@ -692,7 +719,7 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
             stops_out.append((hit[0], hit[1], depart))
         if len(stops_out) >= 2:
             out_trips.append((stops_out[0][2], mode, route_index[trip["route_id"]], stops_out))
-    trains, train_routes, train_stats = train_trips(
+    trains, train_routes, train_stats, stations = train_trips(
         fetch_hz_gtfs(), date, scene, net, n_index, lanes[TRAIN], trees[TRAIN], len(route_ids)
     )
     out_trips.extend(trains)
@@ -732,8 +759,15 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
         + sum(1 for v in tram_choices.values() if not v),
         "stopVisitsDropped": dropped_stops,
     }
+    # HŽ's stations in the map and their trains, for the app's station panel (M8e).
+    (out_dir / "stations.json").write_text(
+        json.dumps({"stations": stations}, ensure_ascii=False, separators=(",", ":"))
+    )
     (out_dir / "transit.json").write_text(
-        json.dumps({**packed, "routes": route_table, **stats}, ensure_ascii=False)
+        json.dumps(
+            {**packed, "routes": route_table, "stations": "stations.json", **stats},
+            ensure_ascii=False,
+        )
     )
     log.info("transit: %s (%.0fs)", stats, time.monotonic() - started)
     return {

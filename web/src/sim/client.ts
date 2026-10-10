@@ -17,6 +17,8 @@ export class SimClient {
   stats?: Float64Array;
   /** Pedestrians at each crossing as of the current frame (wasm.ts `crossings`). */
   crossings?: Uint8Array;
+  /** The level crossings' state as of the current frame (wasm.ts `levelCrossings`). */
+  levelCrossings?: Float32Array;
   /** Simulated seconds per real second the worker achieves. */
   rate = 0;
   /** Engine time per step lately (ms), and the step (s). */
@@ -77,6 +79,7 @@ export class SimClient {
         this.cur = { time: message.time, render: message.render, received: performance.now() };
         this.stats = message.stats;
         if (message.crossings?.length) this.crossings = message.crossings;
+        if (message.levelCrossings) this.levelCrossings = message.levelCrossings;
         this.recordMinute(message.time, message.stats);
         this.rate = message.rate;
         this.stepMs = message.stepMs;

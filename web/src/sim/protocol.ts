@@ -57,6 +57,8 @@ export interface FrameMessage {
   render: Uint32Array;
   /** Pedestrians at each crossing (wasm.ts `crossings`), when drawn. */
   crossings?: Uint8Array;
+  /** The level crossings' state (wasm.ts `levelCrossings`). */
+  levelCrossings?: Float32Array;
   stats: Float64Array;
   /** Simulated seconds per real second over the last few seconds. */
   rate: number;

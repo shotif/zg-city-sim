@@ -2645,6 +2645,15 @@ fn a_level_crossing_closes_for_a_train_and_opens_after_it() {
         "closed from {closed} s to {opened} s"
     );
     assert_eq!(engine.crossing_closures, vec![1]);
+    // What the app is told: the crossing's junction, open, closed once, for as long.
+    let mut out = Vec::new();
+    engine.write_level_crossings(&mut out);
+    assert_eq!(&out[..3], &[c as f32, 0.0, 1.0]);
+    assert!(
+        (out[3] - (opened - closed) as f32).abs() < 1.0,
+        "closed {} s",
+        out[3]
+    );
     assert!(
         cars_waited > 20.0,
         "cars waited {cars_waited} s at the barriers"

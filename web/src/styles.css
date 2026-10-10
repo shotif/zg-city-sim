@@ -62,6 +62,7 @@ canvas {
   position: absolute;
   top: max(12px, env(safe-area-inset-top));
   left: var(--gutter);
+  max-width: calc(100% - 2 * var(--gutter));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -425,6 +426,105 @@ canvas {
 
 .closure-info[hidden] {
   display: none;
+}
+
+/* HŽ's stations and the level crossings on the traffic map (M8e). */
+.rail-station,
+.rail-crossing {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.rail-station {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  border-radius: 4px;
+  background: #1f4e9c;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+/* A diamond (the button stays square, as its transform places it): white while open, amber
+   while the lights flash, red with the barriers down. */
+.rail-crossing {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  background: none;
+}
+
+.rail-crossing::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 2px solid #14181d;
+  background: #f2f2f2;
+  transform: rotate(45deg);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.rail-crossing[data-state='lights']::before {
+  background: #f5b400;
+}
+
+.rail-crossing[data-state='down']::before {
+  border-color: #fff;
+  background: #e0102f;
+}
+
+.rail-station[hidden],
+.rail-crossing[hidden],
+.rail-info[hidden] {
+  display: none;
+}
+
+.rail-info {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 56px);
+  transform: translateX(-50%);
+  width: min(360px, calc(100% - 2 * var(--gutter)));
+  padding: 8px 12px 10px;
+  font-size: 13px;
+}
+
+.rail-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rail-info p {
+  margin: 6px 0 0;
+}
+
+.rail-state[data-state='lights'] {
+  color: #f5b400;
+}
+
+.rail-state[data-state='down'] {
+  color: #ff5a6e;
+}
+
+.rail-table {
+  width: 100%;
+  margin-top: 4px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-table td {
+  padding: 2px 6px 2px 0;
+  vertical-align: top;
+}
+
+.rail-table td:nth-child(2) {
+  color: var(--text-dim);
 }
 
 .news-markers {

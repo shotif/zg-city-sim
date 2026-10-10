@@ -1846,6 +1846,29 @@ impl Engine {
         }
     }
 
+    /// For the app, four numbers per level crossing: its junction; 0 while open, 1 while the
+    /// lights flash, 2 while the barriers are down; the times it has closed; and the seconds
+    /// it has been closed, the closure going on included.
+    pub fn write_level_crossings(&self, out: &mut Vec<f32>) {
+        out.clear();
+        for (c, &j) in self.net.crossings.iter().enumerate() {
+            let since = self.crossing_since.get(c).copied().unwrap_or(f64::NAN);
+            let (state, ongoing) = if since.is_nan() {
+                (0.0, 0.0)
+            } else if self.time - since < CROSSING_WARN {
+                (1.0, self.time - since)
+            } else {
+                (2.0, self.time - since)
+            };
+            out.extend([
+                j as f32,
+                state,
+                self.crossing_closures.get(c).copied().unwrap_or(0) as f32,
+                (self.crossing_seconds.get(c).copied().unwrap_or(0.0) + ongoing) as f32,
+            ]);
+        }
+    }
+
     /// Bound on a vehicle's acceleration from crossing `c` `gap` m ahead: none while it shows
     /// green; at yellow, stop if comfortably possible; with pedestrians on it, stop unless
     /// not even braking hard would stop in time.

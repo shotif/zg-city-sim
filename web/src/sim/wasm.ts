@@ -35,6 +35,8 @@ export interface EngineExports {
   zg_stats_len(): number;
   zg_crossings_update(): number;
   zg_crossings_ptr(): number;
+  zg_level_crossings_update(): number;
+  zg_level_crossings_ptr(): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
 }
@@ -270,6 +272,16 @@ export class TrafficEngine {
     return len > 0
       ? new Uint8Array(this.memory, ex.zg_crossings_ptr(), len).slice()
       : new Uint8Array(0);
+  }
+
+  /** The level crossings (M8b), four numbers each: the junction; 0 open, 1 lights flashing,
+   * 2 barriers down; the times closed; the seconds closed (the closure going on included). */
+  levelCrossings(): Float32Array {
+    const ex = this.exports;
+    const len = ex.zg_level_crossings_update();
+    return len > 0
+      ? new Float32Array(this.memory, ex.zg_level_crossings_ptr(), len).slice()
+      : new Float32Array(0);
   }
 
   stats(): Float64Array {

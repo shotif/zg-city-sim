@@ -42,12 +42,14 @@ import { editsCost, euros } from './grow/economy';
 import { type ZoningTool, setUpZoning } from './grow/zoningTool';
 import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
-import { STAT } from './sim/wasm';
+import { STAT, VEHICLE_TYPES } from './sim/wasm';
 import { BuildPanel } from './ui/buildPanel';
 import { ClosureMarkers } from './ui/closureMarkers';
-import { Hud, type HudCallbacks } from './ui/hud';
+import { Hud, type HudCallbacks, type Shown } from './ui/hud';
 import { NewsPanel } from './ui/newsPanel';
+import { RailMarkers, type Station } from './ui/railMarkers';
 import { ProjectsSection } from './ui/projectsSection';
+import { junctionName } from './edit/signals';
 import { RoadDrawer } from './ui/roadDrawer';
 import { BuildingLayer, buildingCentres, loadBuildings } from './world/buildingLayer';
 import {
@@ -165,6 +167,24 @@ async function loadCycling(
   }
 }
 
+/** HŽ's stations in the map with their trains (M8e), named in the transit index. */
+async function loadStations(indexPath: string | undefined): Promise<Station[]> {
+  if (!indexPath) return [];
+  try {
+    const response = await fetch(DATA_URL + indexPath);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const index = (await response.json()) as { stations?: string };
+    if (!index.stations) return [];
+    const folder = indexPath.slice(0, indexPath.lastIndexOf('/') + 1);
+    const stations = await fetch(DATA_URL + folder + index.stations);
+    if (!stations.ok) throw new Error(`HTTP ${stations.status}`);
+    return ((await stations.json()) as { stations: Station[] }).stations;
+  } catch (error) {
+    console.warn("HŽ's stations could not be loaded", error);
+    return [];
+  }
+}
+
 /** What the simulation needs besides the network: where people live and work, timetables. */
 interface TravelData {
   arrays: Record<string, TypedArray>;
@@ -245,6 +265,7 @@ export interface DebugApi {
   sim?: SimClient;
   vehicles?: VehicleLayer;
   pedestrians?: PedestrianLayer;
+  railMarkers?: RailMarkers;
   traffic?: TrafficLayer;
   news?: NewsLayer;
   newsPanel?: NewsPanel;
@@ -312,6 +333,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let traffic: TrafficLayer | undefined;
   let newsPanel: NewsPanel | undefined;
   let closureMarkers: ClosureMarkers | undefined;
+  /** HŽ's stations and the level crossings, on the traffic map (M8e). */
+  let railMarkers: RailMarkers | undefined;
+  /** Trains, pedestrians and cyclists drawn (M8e). */
+  const shown = new Set<Shown>(['trains', 'pedestrians', 'bikes']);
   let closureLayer: ClosureLayer | undefined;
   let closedEdges: Uint32Array | undefined;
   let buildPanel: BuildPanel | undefined;
@@ -401,6 +426,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
     },
     onTrafficMap: (enabled) => {
       if (traffic) traffic.enabled = enabled;
+      railMarkers?.setVisible(enabled && shown.has('trains'));
+      invalidateView();
+    },
+    onShow: (kind, on) => {
+      if (on) shown.add(kind);
+      else shown.delete(kind);
+      railMarkers?.setVisible(!!traffic?.enabled && shown.has('trains'));
       invalidateView();
     },
     onNews: (enabled) => {
@@ -1116,6 +1148,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         dailyTrips: demand && demandLayer ? demandLayer.dailyCarTrips : DAILY_TRIPS,
         demandScale: demandLayer?.demandScale ?? 1,
       }));
+      const stations = loadStations(transitLayer?.index);
       loadRoadNetwork(networkLayer.index)
         .then(async (net) => {
           roads = new RoadLayer(net, surface);
@@ -1214,7 +1247,23 @@ export async function startApp(container: HTMLElement): Promise<void> {
             );
             scene.add(pedestrians.object);
             debug.pedestrians = pedestrians;
+            hud.enableShown('pedestrians');
           }
+          if (travelData.arrays.transitTripType?.some((t) => t === VEHICLE_TYPES.indexOf('train')))
+            hud.enableShown('trains');
+          if (travelData.arrays.bikeEdge) hud.enableShown('bikes');
+          void stations.then((list) => {
+            railMarkers = new RailMarkers(hud.element, list, (j) => {
+              const now = networkNow?.net ?? net;
+              return {
+                x: now.junctionPos[2 * j],
+                z: now.junctionPos[2 * j + 1],
+                name: junctionName(now, j),
+              };
+            });
+            railMarkers.setVisible(!!traffic?.enabled && shown.has('trains'));
+            debug.railMarkers = railMarkers;
+          });
           applyDemand();
           /** The simulation the player sees, with the edits in force. */
           const launch = (speed: number): SimClient => {
@@ -1362,6 +1411,16 @@ export async function startApp(container: HTMLElement): Promise<void> {
         const alpha = sim.alpha(now);
         const wasVisible = vehicles.object.visible;
         trafficMoving = simChanged || alpha < 1 || moving;
+        for (const [kind, type] of [
+          ['trains', VEHICLE_TYPES.indexOf('train')],
+          ['bikes', VEHICLE_TYPES.indexOf('bike')],
+        ] as const) {
+          if (shown.has(kind) === vehicles.hidden.has(type)) {
+            if (shown.has(kind)) vehicles.hidden.delete(type);
+            else vehicles.hidden.add(type);
+            trafficMoving = true;
+          }
+        }
         if (trafficMoving) {
           vehicles.update(sim.prev?.render, sim.cur.render, alpha, {
             target: view.target,
@@ -1373,8 +1432,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
           });
         }
         trafficMoving = trafficMoving && (vehicles.object.visible || wasVisible);
-        if (pedestrians && (simChanged || moving)) {
-          pedestrians.update(sim.crossings, view.target, view.viewHeight);
+        if (pedestrians) {
+          if (pedestrians.object.visible !== shown.has('pedestrians')) {
+            pedestrians.object.visible = shown.has('pedestrians');
+            dirty = true;
+          }
+          if (simChanged || moving) pedestrians.update(sim.crossings, view.target, view.viewHeight);
+        }
+        if (railMarkers?.visible && simChanged) {
+          railMarkers.update(sim.displayTime(now), sim.levelCrossings);
         }
         simChanged = false;
         if (sim.stats && (now - lastHudSim > 250 || sim.paused)) {
@@ -1495,6 +1561,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const closures = closureLayer;
       if (closures && closureMarkers?.visible) {
         closureMarkers.place((x, z) => toScreen(x, closures.markerY(x, z), z));
+      }
+      if (railMarkers?.visible) {
+        railMarkers.place((x, z) => toScreen(x, terrain.heightfield.sample(x, z) + 2, z));
       }
       const newsLayer = news;
       if (newsLayer && newsPanel?.visible) {

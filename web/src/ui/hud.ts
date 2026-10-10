@@ -20,7 +20,22 @@ export interface HudCallbacks {
   /** Sound on or off. */
   onSound?(on: boolean): void;
   onBuild?(enabled: boolean): void;
+  /** Trains, pedestrians or cyclists shown in the view, or not (M8e). */
+  onShow?(kind: Shown, on: boolean): void;
 }
+
+/** What the view can leave out. */
+export type Shown = 'trains' | 'pedestrians' | 'bikes';
+
+const SHOWN: { kind: Shown; label: string; title: string }[] = [
+  {
+    kind: 'trains',
+    label: 'Trains',
+    title: "HŽ's trains; with the traffic map, stations and level crossings",
+  },
+  { kind: 'pedestrians', label: 'Pedestrians', title: 'Pedestrians at crossings near the view' },
+  { kind: 'bikes', label: 'Cyclists', title: 'Cyclists on the cycle tracks and roads' },
+];
 
 /** A colour and its meaning, for the traffic map legend. */
 export interface LegendEntry {
@@ -116,6 +131,8 @@ export class Hud {
   private readonly buildButton: HTMLButtonElement;
   private readonly zonesButton: HTMLButtonElement;
   private readonly budgetButton: HTMLButtonElement;
+  private readonly showButtons = new Map<Shown, HTMLButtonElement>();
+  private readonly shown = new Set<Shown>(SHOWN.map((s) => s.kind));
   private readonly dayButton: HTMLButtonElement;
   private alwaysDay = false;
   private readonly soundButton: HTMLButtonElement;
@@ -207,6 +224,16 @@ export class Hud {
     this.budgetButton.hidden = true;
     this.budgetButton.setAttribute('aria-pressed', 'false');
     this.budgetButton.addEventListener('click', () => this.setBudget(!this.budget, callbacks));
+    for (const { kind, label, title } of SHOWN) {
+      const button = el('button', 'hud-button hud-speed', this.layers);
+      button.type = 'button';
+      button.textContent = label;
+      button.title = title;
+      button.hidden = true;
+      button.setAttribute('aria-pressed', 'true');
+      button.addEventListener('click', () => this.setShown(kind, !this.shown.has(kind), callbacks));
+      this.showButtons.set(kind, button);
+    }
 
     const toolbar = el('div', 'hud-panel hud-toolbar', this.root);
     toolbar.setAttribute('role', 'toolbar');
@@ -409,6 +436,20 @@ export class Hud {
     this.alwaysDay = on;
     this.dayButton.setAttribute('aria-pressed', String(on));
     callbacks?.onAlwaysDay?.(on);
+  }
+
+  /** Offer to leave trains, pedestrians or cyclists out of the view. */
+  enableShown(kind: Shown): void {
+    this.layers.hidden = false;
+    this.showButtons.get(kind)!.hidden = false;
+  }
+
+  /** Show trains, pedestrians or cyclists, or not (`callbacks` given: tell the app). */
+  setShown(kind: Shown, on: boolean, callbacks?: HudCallbacks): void {
+    if (on) this.shown.add(kind);
+    else this.shown.delete(kind);
+    this.showButtons.get(kind)!.setAttribute('aria-pressed', String(on));
+    callbacks?.onShow?.(kind, on);
   }
 
   /** Offer the Budget panel. */
