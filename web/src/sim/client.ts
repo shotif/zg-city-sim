@@ -92,6 +92,7 @@ export class SimClient {
         break;
       case 'routeTimes':
       case 'volumes':
+      case 'transit':
       case 'reach': {
         const resolve = this.waiting.get(message.id);
         this.waiting.delete(message.id);
@@ -216,6 +217,16 @@ export class SimClient {
       sources,
       decay,
       max,
+    });
+  }
+
+  /** The buses, trams and trains running (trip and lateness, two numbers each) and, unless
+   * `trip` is -1, the edges that trip drives along (M9a). */
+  transit(trip: number): Promise<{ time: number; path: Uint32Array; running: Float32Array }> {
+    return this.ask<Extract<FromWorker, { type: 'transit' }>>({
+      type: 'transit',
+      id: ++this.requestId,
+      trip,
     });
   }
 

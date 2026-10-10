@@ -61,6 +61,8 @@ pub struct TransitRun {
     /// Leave the stop at this time (while dwelling).
     pub dwell_until: f64,
     pub dwelling: bool,
+    /// How late it left its last stop (s).
+    pub late: f32,
 }
 
 impl TransitRun {

@@ -42,6 +42,9 @@ struct State {
     crossing_state: Vec<u8>,
     /// The level crossings' state, for the app (`Engine::write_level_crossings`).
     level_crossing_state: Vec<f32>,
+    /// A trip's path and the buses, trams and trains running, for the app's Transit panel.
+    transit_path: Vec<u32>,
+    transit_state: Vec<f32>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -438,6 +441,47 @@ pub extern "C" fn zg_level_crossings_update() -> u32 {
         s.level_crossing_state = out;
         len
     })
+}
+
+/// The edges timetabled trip `trip` drives along (`Engine::transit_path`); returns how many,
+/// `zg_transit_path_ptr` points to them.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_transit_path(trip: u32) -> u32 {
+    with_state(|s| {
+        s.transit_path = s
+            .engine
+            .as_mut()
+            .map(|e| e.transit_path(trip))
+            .unwrap_or_default();
+        s.transit_path.len() as u32
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_transit_path_ptr() -> *const u32 {
+    with_state(|s| s.transit_path.as_ptr())
+}
+
+/// Two numbers per bus, tram or train running: its trip and how late it is (s)
+/// (`Engine::write_transit_state`); returns how many numbers, `zg_transit_state_ptr` points
+/// to them.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_transit_state() -> u32 {
+    with_state(|s| {
+        let mut out = std::mem::take(&mut s.transit_state);
+        out.clear();
+        if let Some(e) = s.engine.as_ref() {
+            e.write_transit_state(&mut out);
+        }
+        let len = out.len() as u32;
+        s.transit_state = out;
+        len
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_transit_state_ptr() -> *const f32 {
+    with_state(|s| s.transit_state.as_ptr())
 }
 
 #[unsafe(no_mangle)]

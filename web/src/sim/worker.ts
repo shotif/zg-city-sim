@@ -274,6 +274,16 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
     case 'volumes':
       volumeAsks.push({ id: message.id, at: message.at });
       break;
+    case 'transit': {
+      if (!engine) break;
+      const path = message.trip >= 0 ? engine.transitPath(message.trip) : new Uint32Array(0);
+      const running = engine.transitState();
+      post({ type: 'transit', id: message.id, time: engine.stats()[0], path, running }, [
+        path.buffer,
+        running.buffer,
+      ]);
+      break;
+    }
     case 'reach':
       reachJob = {
         ...message,

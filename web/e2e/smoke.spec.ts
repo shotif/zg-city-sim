@@ -172,6 +172,42 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
   expect(errors).toEqual([]);
 });
 
+test("shows ZET's lines, their stops and departures", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('./');
+  await page.waitForFunction(() => window.__ZG__?.sim?.ready === true, null, { timeout: 150_000 });
+
+  // The Public transport panel (M9a): find tram 6.
+  await page.getByRole('button', { name: 'Public transport' }).click();
+  const panel = page.locator('.transit-panel');
+  await expect(panel).toBeVisible();
+  await panel.getByRole('searchbox', { name: 'Find a line or stop' }).fill('6');
+  await panel.locator('.transit-item', { hasText: 'Sopot' }).first().click();
+  await expect(panel.locator('.transit-title')).toContainText('Sopot');
+  const stops = await panel.locator('.transit-stops li').count();
+  expect(stops).toBeGreaterThan(15);
+  await expect(panel.locator('.transit-stats')).toHaveText(/^\d+ trips today; \d+ running now/);
+  // Its stops are marked on the map; its route is drawn.
+  await expect(page.locator('.transit-marker')).toHaveCount(stops);
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: testInfo.outputPath('tram-6.png') });
+
+  // A stop's departures, then back to the line and to all lines.
+  await panel.locator('.transit-stops .transit-item').nth(5).click();
+  await expect(panel.locator('.rail-table tr').first()).toBeVisible();
+  await panel.getByRole('button', { name: '‹ Back to the line' }).click();
+  await expect(panel.locator('.transit-title')).toContainText('Sopot');
+  await panel.getByRole('button', { name: '‹ All lines' }).click();
+  await expect(page.locator('.transit-marker')).toHaveCount(0);
+  await page.keyboard.press('p');
+  await expect(panel).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
 test('shows news hotspots and live road closures', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('console', (message) => {

@@ -16,6 +16,7 @@ import logging
 import time
 import urllib.request
 import zipfile
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -53,6 +54,12 @@ VCLASS = {BUS: 2, TRAM: 4, TRAIN: 16}
 # How far from a stop its lane may be (m): platforms sit beside the track or kerb, and a
 # station spans several tracks.
 STOP_RADIUS = {BUS: 40.0, TRAM: 30.0, TRAIN: 80.0}
+# A stop visit that names no stop (a train crossing the map's edge), in `transitStopRef`.
+NO_STOP = 0xFFFFFFFF
+# A line's stop patterns kept for the app: those with this share of its trips, at most this
+# many (both directions and the main variants).
+PATTERN_SHARE = 0.05
+MAX_PATTERNS = 6
 # A train coming from beyond the map drives in where a track crosses the map's edge: track
 # ends within this far (m) of the edge, and within this far (m) of the straight line between
 # the stations either side of it.
@@ -397,7 +404,7 @@ def train_trips(
     lanes: tuple,
     tree: shapely.STRtree,
     route_base: int,
-) -> tuple[list, list[dict], dict, list[dict]]:
+) -> tuple[list, list[dict], dict, list[dict], dict]:
     """HŽ's trains running on `date` that call at a station inside the map, each from where
     it enters the map (or its first station) to where it leaves (or its last). Stations go on
     a track running the way the train does, judged from the stations before and after; a
@@ -406,7 +413,9 @@ def train_trips(
     stations), and one going beyond it ends on a track leaving the map. Of the tracks that
     could serve, each trip takes those with the quickest way between them. Also the stations
     served, each with its calls: [arrival, departure (s), train number, from, to], where `from`
-    is empty at the train's first station and `to` at its last."""
+    is empty at the train's first station and `to` at its last; and each station's name and
+    position, by ("hz", stop id) as the trips' stops name them (None where a train crosses
+    the map's edge)."""
     with zipfile.ZipFile(path) as feed:
         routes = {r["route_id"]: r for r in read_table(feed, "routes.txt")}
         names = feed.namelist()
@@ -497,14 +506,14 @@ def train_trips(
         entry = nearest_ends(sources, pts[first - 1], pts[first], 0.0) if first > 0 else []
         exit_ = nearest_ends(sinks, pts[last], pts[last + 1], 1.0) if last < len(seq) - 1 else []
         picked = quickest_tracks(graph, [entry] + [options[i] for i in inside] + [exit_])
-        stops_out: list[tuple[int, float, float]] = []
+        stops_out: list[tuple[int, float, float, tuple[str, str] | None]] = []
         trip_calls = []
         if picked[0] is not None:
             end = source_point[picked[0][0]]
             d0 = np.hypot(*(end - pts[first - 1]))
             d1 = np.hypot(*(pts[first] - end))
             t0, t1 = seq[first - 1][3], seq[first][2]
-            stops_out.append((picked[0][0], 0.0, t0 + (t1 - t0) * d0 / max(d0 + d1, 1.0)))
+            stops_out.append((picked[0][0], 0.0, t0 + (t1 - t0) * d0 / max(d0 + d1, 1.0), None))
             entering += 1
         for i, hit in zip(inside, picked[1:-1], strict=True):
             if hit is None:
@@ -526,14 +535,15 @@ def train_trips(
             )
             if stops_out and stops_out[-1][0] == edge and abs(stops_out[-1][1] - frac) < 0.02:
                 continue
-            stops_out.append((edge, frac, seq[i][3]))
+            stops_out.append((edge, frac, seq[i][3], ("hz", seq[i][1])))
         if picked[-1] is not None:
-            stops_out.append((picked[-1][0], 1.0, seq[last + 1][2]))
+            stops_out.append((picked[-1][0], 1.0, seq[last + 1][2], None))
             leaving += 1
         for a, b in zip(stops_out, stops_out[1:], strict=False):
             tight.append(graph.between(a[0], a[1], b[0], b[1]) - (b[2] - a[2]))
         if len(stops_out) >= 2:
-            out.append((stops_out[0][2], TRAIN, route_index[trip["route_id"]], stops_out))
+            headsign = stops[seq[-1][1]]["stop_name"]
+            out.append((stops_out[0][2], TRAIN, route_index[trip["route_id"]], stops_out, headsign))
             for stop_id, call in trip_calls:
                 calls.setdefault(stop_id, []).append(call)
     stations = [
@@ -566,7 +576,34 @@ def train_trips(
         "legsTooShortBy": round(float(max(tight, default=0.0)), 1),
         "trackEnds": [len(sources), len(sinks)],
     }
-    return out, table, stats, stations
+    stop_info = {
+        ("hz", s): (stops[s]["stop_name"], float(xy[s][0]), float(xy[s][1])) for s in served
+    }
+    return out, table, stats, stations, stop_info
+
+
+def line_patterns(out_trips: list, refs: np.ndarray) -> list[dict]:
+    """Each line's stop patterns, most trips first: its trips grouped by headsign and the
+    stops they call at (`refs`, per stop visit in `out_trips`' order), keeping those with
+    `PATTERN_SHARE` of the line's trips (at most `MAX_PATTERNS`)."""
+    patterns: dict[int, Counter] = {}
+    k = 0
+    for trip in out_trips:
+        n = len(trip[3])
+        seq = tuple(int(r) for r in refs[k : k + n] if r != NO_STOP)
+        k += n
+        patterns.setdefault(trip[2], Counter())[(trip[4], seq)] += 1
+    lines = []
+    for route in sorted(patterns):
+        counts = patterns[route]
+        total = sum(counts.values())
+        kept = [
+            {"headsign": headsign, "stops": list(seq), "trips": n}
+            for (headsign, seq), n in counts.most_common(MAX_PATTERNS)
+            if n >= PATTERN_SHARE * total
+        ]
+        lines.append({"route": route, "trips": total, "patterns": kept})
+    return lines
 
 
 def build_transit(root: Path = OUTPUT_DIR) -> dict:
@@ -708,18 +745,26 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
         else:
             heading = shape_directions(trip["shape_id"], ids)
             hits = [place(s, mode, d) for s, d in zip(ids, heading, strict=True)]
-        for (_, _, depart), hit in zip(seq, hits, strict=True):
+        for (_, stop_id, depart), hit in zip(seq, hits, strict=True):
             if hit is None:
                 dropped_stops += 1
                 continue
             # Consecutive stops on the same spot (timing points) count once.
             if stops_out and stops_out[-1][0] == hit[0] and abs(stops_out[-1][1] - hit[1]) < 0.02:
-                stops_out[-1] = (hit[0], hit[1], depart)
+                stops_out[-1] = (hit[0], hit[1], depart, ("zet", stop_id))
                 continue
-            stops_out.append((hit[0], hit[1], depart))
+            stops_out.append((hit[0], hit[1], depart, ("zet", stop_id)))
         if len(stops_out) >= 2:
-            out_trips.append((stops_out[0][2], mode, route_index[trip["route_id"]], stops_out))
-    trains, train_routes, train_stats, stations = train_trips(
+            out_trips.append(
+                (
+                    stops_out[0][2],
+                    mode,
+                    route_index[trip["route_id"]],
+                    stops_out,
+                    trip.get("trip_headsign", ""),
+                )
+            )
+    trains, train_routes, train_stats, stations, train_stops = train_trips(
         fetch_hz_gtfs(), date, scene, net, n_index, lanes[TRAIN], trees[TRAIN], len(route_ids)
     )
     out_trips.extend(trains)
@@ -736,6 +781,28 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
         "transitStopFrac": np.asarray([s[1] for s in all_stops], np.float32),
         "transitStopTime": np.asarray([s[2] for s in all_stops], np.float32),
     }
+    # The stops the trips call at, for the app's Transit panel (M9a): each stop visit names
+    # its stop (NO_STOP where a train crosses the map's edge), and lines.json lists the
+    # stops' names and positions and each line's stop patterns.
+    stop_index: dict[tuple[str, str], int] = {}
+    stop_rows: list[list] = []
+
+    def stop_ref(key: tuple[str, str] | None) -> int:
+        if key is None:
+            return NO_STOP
+        if key not in stop_index:
+            if key[0] == "zet":
+                name = stops[key[1]]["stop_name"]
+                x, z = stop_xy[key[1]]
+            else:
+                name, x, z = train_stops[key]
+            stop_index[key] = len(stop_rows)
+            stop_rows.append([name, round(float(x), 1), round(float(z), 1)])
+        return stop_index[key]
+
+    refs = np.asarray([stop_ref(s[3]) for s in all_stops], np.uint32)
+    arrays["transitStopRef"] = refs
+    lines = line_patterns(out_trips, refs)
     out_dir = root / "transit"
     packed = write_packed(out_dir / "transit.bin.gz", arrays)
     route_table = [
@@ -763,9 +830,30 @@ def build_transit(root: Path = OUTPUT_DIR) -> dict:
     (out_dir / "stations.json").write_text(
         json.dumps({"stations": stations}, ensure_ascii=False, separators=(",", ":"))
     )
+    # Where each trip goes, as its signs say (HŽ's trains: their last station), by trip.
+    headsigns = sorted({t[4] for t in out_trips})
+    sign_index = {h: i for i, h in enumerate(headsigns)}
+    (out_dir / "lines.json").write_text(
+        json.dumps(
+            {
+                "stops": stop_rows,
+                "lines": lines,
+                "headsigns": headsigns,
+                "tripHeadsign": [sign_index[t[4]] for t in out_trips],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
     (out_dir / "transit.json").write_text(
         json.dumps(
-            {**packed, "routes": route_table, "stations": "stations.json", **stats},
+            {
+                **packed,
+                "routes": route_table,
+                "stations": "stations.json",
+                "lines": "lines.json",
+                **stats,
+            },
             ensure_ascii=False,
         )
     )

@@ -47,7 +47,9 @@ export type ToWorker =
   | { type: 'volumes'; id: number; at: number }
   /** Homes and jobs within reach by car of each source edge on the measured travel times,
    * weighted by exp(-time / decay) up to `max` seconds (engine `reach`). */
-  | { type: 'reach'; id: number; sources: Uint32Array; decay: number; max: number };
+  | { type: 'reach'; id: number; sources: Uint32Array; decay: number; max: number }
+  /** The buses, trams and trains running, and (if `trip` is not -1) that trip's path. */
+  | { type: 'transit'; id: number; trip: number };
 
 export interface FrameMessage {
   type: 'frame';
@@ -82,4 +84,7 @@ export type FromWorker =
   /** Homes and jobs within reach of each source asked for (two numbers each), measured
    * over a few batches ending at simulated time `time`. */
   | { type: 'reach'; id: number; time: number; values: Float32Array }
+  /** The edges of the trip asked for, and two numbers per vehicle running: its trip and
+   * how late it is (s), at simulated time `time`. */
+  | { type: 'transit'; id: number; time: number; path: Uint32Array; running: Float32Array }
   | { type: 'error'; message: string };

@@ -2167,6 +2167,36 @@ fn drivers_do_not_enter_a_roundabout_whose_exit_is_full() {
 }
 
 #[test]
+fn a_bus_line_shows_its_path_and_how_late_its_buses_run() {
+    use crate::transit::{Transit, TransitData};
+    // A bus from a stop on the first road to one on the second, due there 20 s after it
+    // leaves: it cannot make it (200 m), so it runs late.
+    let (b, e0, e1) = straight_road(400.0, 1);
+    let mut engine = Engine::new(b.build(), 2);
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::BUS],
+        trip_route: vec![0],
+        trip_stops: vec![0, 2],
+        stop_edge: vec![e0, e1],
+        stop_frac: vec![0.5, 0.5],
+        stop_time: vec![10.0, 30.0],
+    }));
+    engine.set_time(0.0);
+    assert_eq!(engine.transit_path(0), vec![e0, e1]);
+    assert!(engine.transit_path(1).is_empty());
+    let mut state = Vec::new();
+    let mut late_seen = 0.0f32;
+    run_until(&mut engine, 60.0, |e| {
+        e.write_transit_state(&mut state);
+        if let [trip, late] = state[..] {
+            assert_eq!(trip, 0.0);
+            late_seen = late_seen.max(late);
+        }
+    });
+    assert!(late_seen > 5.0, "the bus ran {late_seen} s late");
+}
+
+#[test]
 fn a_crossroads_made_a_roundabout_keeps_traffic_and_buses_going() {
     use crate::transit::{Transit, TransitData};
     let (base, roads) = crossroads(false);

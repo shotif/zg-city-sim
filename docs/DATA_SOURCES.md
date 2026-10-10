@@ -139,6 +139,8 @@ Two layers carry a **restrictive** DGU clause (use only for approved purposes): 
   - `shape_dist_traveled` is empty.
   - Some shapes wander: tram line 3's (`3_3`) is 61.7 km long for a route of about 10 km, running back and forth past its stops, so the shape's direction at a stop can be the wrong way. Tram stops therefore go on any tram track within 30 m, and each run of stops takes the tracks with the quickest way between them (as HŽ's stations do). Bus stops go on a lane running the way the shape does where it passes them, taken in the order the stops are served (a route running out and back along one street passes each stop on both sides).
 
+- **In the app (M9a):** the transit step names each stop visit's stop (`transitStopRef`) and writes `transit/lines.json`: the stops called at with their names and positions, each line's stop patterns and each trip's headsign. ZET's route colours are all white in the feed, so lines are coloured by mode.
+
 ### GTFS-RT
 
 - **URL:** `https://www.zet.hr/gtfs-rt-protobuf`, labelled "TEST PURPOSE ONLY".

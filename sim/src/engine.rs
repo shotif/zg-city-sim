@@ -2518,6 +2518,9 @@ impl Engine {
             run.dwelling = false;
             left_late = Some((time - scheduled).max(0.0));
         }
+        if let Some(late) = left_late {
+            run.late = late as f32;
+        }
         if let (Some(late), Some(tr)) = (left_late, self.transit.as_mut()) {
             tr.departures[vtype] += 1;
             tr.late_sum[vtype] += late;
@@ -2572,38 +2575,90 @@ impl Engine {
 
     /// Put a bus or tram on the road at stop `from_stop` of `trip`. Some(false): no room
     /// yet; None: the trip cannot be routed.
+    /// The way between two stops' edges for vehicle class `vclass` (cached in `tr`).
+    fn transit_leg(&mut self, tr: &mut Transit, e0: u32, e1: u32, vclass: u16) -> Option<Vec<u32>> {
+        let key = (e0, e1, vclass);
+        if let Some(leg) = tr.legs.get(&key) {
+            return leg.clone();
+        }
+        self.router.tolls = true;
+        let leg = self
+            .router
+            .route(&self.net, &self.free_time, e0, e1, vclass);
+        tr.legs.insert(key, leg.clone());
+        leg
+    }
+
+    /// The edges timetabled trip `trip` drives along, stop to stop, as its runs do (stops
+    /// the network cannot reach left out); empty without such a trip (M9a: the app draws a
+    /// line's route).
+    pub fn transit_path(&mut self, trip: u32) -> Vec<u32> {
+        let Some(mut tr) = self.transit.take() else {
+            return Vec::new();
+        };
+        let mut path = Vec::new();
+        if (trip as usize) < tr.data.trips() {
+            let stops = tr.data.stops(trip);
+            let vclass = TYPES[tr.data.trip_type[trip as usize] as usize].vclass;
+            let mut at = tr.data.stop_edge[stops.start];
+            path.push(at);
+            for next in stops.start + 1..stops.end {
+                let e1 = tr.data.stop_edge[next];
+                if e1 == at {
+                    continue;
+                }
+                if let Some(leg) = self.transit_leg(&mut tr, at, e1, vclass) {
+                    path.extend_from_slice(&leg[1..]);
+                    at = e1;
+                }
+            }
+        }
+        self.transit = Some(tr);
+        path
+    }
+
+    /// For the app, two numbers per bus, tram or train running: its trip, and how late it
+    /// is (s): past its scheduled departure while it stands at a stop, else how late it left
+    /// the last one.
+    pub fn write_transit_state(&self, out: &mut Vec<f32>) {
+        out.clear();
+        let Some(tr) = self.transit.as_ref() else {
+            return;
+        };
+        for veh in &self.vehs {
+            let Some(run) = veh.transit.as_ref().filter(|_| veh.alive()) else {
+                continue;
+            };
+            let mut late = run.late;
+            if run.dwelling
+                && let Some(stop) = run.next_stop()
+            {
+                let scheduled = tr.day_start + tr.data.stop_time[stop as usize] as f64;
+                late = late.max((self.time - scheduled).max(0.0) as f32);
+            }
+            out.extend([run.trip as f32, late]);
+        }
+    }
+
     fn start_run(&mut self, tr: &mut Transit, trip: u32, from_stop: u32) -> Option<bool> {
-        let data = &tr.data;
-        let stops = data.stops(trip);
-        let vtype = data.trip_type[trip as usize];
+        let stops = tr.data.stops(trip);
+        let vtype = tr.data.trip_type[trip as usize];
         let p = &TYPES[vtype as usize];
         let first = from_stop as usize;
-        let mut route = vec![data.stop_edge[first]];
+        let mut route = vec![tr.data.stop_edge[first]];
         let mut served = vec![(first as u32, 0u32)];
         // Drive stop to stop; a stop the network cannot reach (or one behind the last on
         // the same edge) is skipped.
         let mut at = first;
         for next in first + 1..stops.end {
-            let (e0, e1) = (data.stop_edge[at], data.stop_edge[next]);
+            let (e0, e1) = (tr.data.stop_edge[at], tr.data.stop_edge[next]);
             if e0 == e1 {
-                if data.stop_frac[next] < data.stop_frac[at] {
+                if tr.data.stop_frac[next] < tr.data.stop_frac[at] {
                     tr.skipped_stops += 1;
                     continue;
                 }
             } else {
-                let key = (e0, e1, p.vclass);
-                let leg = match tr.legs.get(&key) {
-                    Some(leg) => leg.clone(),
-                    None => {
-                        self.router.tolls = true;
-                        let leg = self
-                            .router
-                            .route(&self.net, &self.free_time, e0, e1, p.vclass);
-                        tr.legs.insert(key, leg.clone());
-                        leg
-                    }
-                };
-                let Some(leg) = leg else {
+                let Some(leg) = self.transit_leg(tr, e0, e1, p.vclass) else {
                     tr.skipped_stops += 1;
                     continue;
                 };
@@ -2631,7 +2686,7 @@ impl Engine {
             return None;
         }
         let len = self.net.d.lane_length[lane as usize];
-        let pos = (data.stop_frac[first] * len)
+        let pos = (tr.data.stop_frac[first] * len)
             .max(p.length.min(len))
             .min(len);
         let list = &self.lane_vehs[lane as usize];
@@ -2652,10 +2707,10 @@ impl Engine {
         }
 
         let last = *route.last().unwrap();
-        let last_frac = data.stop_frac[served.last().unwrap().0 as usize];
+        let last_frac = tr.data.stop_frac[served.last().unwrap().0 as usize];
         let last_len = self.net.edge_length[last as usize];
         let arrival_pos = (last_frac * last_len + 1.0).min(last_len - 0.1);
-        let scheduled = tr.day_start + data.stop_time[first] as f64;
+        let scheduled = tr.day_start + tr.data.stop_time[first] as f64;
         let next_link = self.choose_link(lane, &route, 0, p.vclass);
         let run = TransitRun {
             trip,
@@ -2663,6 +2718,7 @@ impl Engine {
             next: 0,
             dwell_until: scheduled,
             dwelling: true,
+            late: 0.0,
         };
         let v = self.alloc_vehicle();
         let look = (self.rng.next_u32() & 0xffff) as u16;

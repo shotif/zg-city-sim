@@ -37,6 +37,10 @@ export interface EngineExports {
   zg_crossings_ptr(): number;
   zg_level_crossings_update(): number;
   zg_level_crossings_ptr(): number;
+  zg_transit_path(trip: number): number;
+  zg_transit_path_ptr(): number;
+  zg_transit_state(): number;
+  zg_transit_state_ptr(): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
 }
@@ -281,6 +285,24 @@ export class TrafficEngine {
     const len = ex.zg_level_crossings_update();
     return len > 0
       ? new Float32Array(this.memory, ex.zg_level_crossings_ptr(), len).slice()
+      : new Float32Array(0);
+  }
+
+  /** The edges timetabled trip `trip` drives along, stop to stop (M9a). */
+  transitPath(trip: number): Uint32Array {
+    const ex = this.exports;
+    const len = ex.zg_transit_path(trip);
+    return len > 0
+      ? new Uint32Array(this.memory, ex.zg_transit_path_ptr(), len).slice()
+      : new Uint32Array(0);
+  }
+
+  /** Two numbers per bus, tram or train running: its trip and how late it is (s) (M9a). */
+  transitState(): Float32Array {
+    const ex = this.exports;
+    const len = ex.zg_transit_state();
+    return len > 0
+      ? new Float32Array(this.memory, ex.zg_transit_state_ptr(), len).slice()
       : new Float32Array(0);
   }
 

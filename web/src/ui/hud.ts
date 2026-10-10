@@ -13,6 +13,8 @@ export interface HudCallbacks {
   onClosures?(enabled: boolean): void;
   onZones?(enabled: boolean): void;
   onBudget?(enabled: boolean): void;
+  /** The Public transport panel open or closed (M9a). */
+  onTransit?(enabled: boolean): void;
   /** Light as at midday whatever the time (true), or as the time of day. */
   onAlwaysDay?(on: boolean): void;
   /** The weather: as observed in Zagreb now ('live'), or a kind the player picks. */
@@ -131,6 +133,8 @@ export class Hud {
   private readonly buildButton: HTMLButtonElement;
   private readonly zonesButton: HTMLButtonElement;
   private readonly budgetButton: HTMLButtonElement;
+  private readonly transitButton: HTMLButtonElement;
+  private transit = false;
   private readonly showButtons = new Map<Shown, HTMLButtonElement>();
   private readonly shown = new Set<Shown>(SHOWN.map((s) => s.kind));
   private readonly dayButton: HTMLButtonElement;
@@ -224,6 +228,13 @@ export class Hud {
     this.budgetButton.hidden = true;
     this.budgetButton.setAttribute('aria-pressed', 'false');
     this.budgetButton.addEventListener('click', () => this.setBudget(!this.budget, callbacks));
+    this.transitButton = el('button', 'hud-button hud-speed', this.layers);
+    this.transitButton.type = 'button';
+    this.transitButton.textContent = 'Public transport';
+    this.transitButton.title = "ZET's and HŽ's lines, their stops and departures (P)";
+    this.transitButton.hidden = true;
+    this.transitButton.setAttribute('aria-pressed', 'false');
+    this.transitButton.addEventListener('click', () => this.setTransit(!this.transit, callbacks));
     for (const { kind, label, title } of SHOWN) {
       const button = el('button', 'hud-button hud-speed', this.layers);
       button.type = 'button';
@@ -330,6 +341,8 @@ export class Hud {
         this.setZones(!this.zones, callbacks);
       } else if ((event.key === 'm' || event.key === 'M') && !this.budgetButton.hidden) {
         this.setBudget(!this.budget, callbacks);
+      } else if ((event.key === 'p' || event.key === 'P') && !this.transitButton.hidden) {
+        this.setTransit(!this.transit, callbacks);
       } else if (event.key === 'l' || event.key === 'L') {
         this.setAlwaysDay(!this.alwaysDay, callbacks);
       } else if (event.key === 's' || event.key === 'S') {
@@ -450,6 +463,19 @@ export class Hud {
     else this.shown.delete(kind);
     this.showButtons.get(kind)!.setAttribute('aria-pressed', String(on));
     callbacks?.onShow?.(kind, on);
+  }
+
+  /** Offer the Public transport panel. */
+  enableTransit(): void {
+    this.layers.hidden = false;
+    this.transitButton.hidden = false;
+  }
+
+  /** Open or close the Public transport panel (`callbacks` given: tell the app). */
+  setTransit(enabled: boolean, callbacks?: HudCallbacks): void {
+    this.transit = enabled;
+    this.transitButton.setAttribute('aria-pressed', String(enabled));
+    callbacks?.onTransit?.(enabled);
   }
 
   /** Offer the Budget panel. */

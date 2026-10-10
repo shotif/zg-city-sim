@@ -101,3 +101,41 @@ def test_trains_take_the_platform_their_track_leads_to():
         (0, 0.2),
         (1, 0.5),
     ]
+
+
+def test_line_patterns_keep_the_main_ways_a_line_runs():
+    from pipeline.transit import NO_STOP, line_patterns
+
+    def trip(route, stops, headsign):
+        return (0.0, 3, route, [(0, 0.0, 0.0, None)] * len(stops), headsign)
+
+    # Line 0: ten trips each way, one short working; a train (line 1) entering the map.
+    trips = [trip(0, [0, 1, 2], "East")] * 10 + [trip(0, [2, 1, 0], "West")] * 10
+    trips += [trip(0, [0, 1], "Depot")]
+    trips += [trip(1, [NO_STOP, 5, 6], "Dugo Selo")]
+    refs = np.array(
+        [
+            r
+            for t in trips
+            for r in (
+                [0, 1, 2]
+                if t[4] == "East"
+                else [2, 1, 0]
+                if t[4] == "West"
+                else [0, 1]
+                if t[4] == "Depot"
+                else [NO_STOP, 5, 6]
+            )
+        ],
+        np.uint32,
+    )
+    lines = line_patterns(trips, refs)
+    assert [line["route"] for line in lines] == [0, 1]
+    assert lines[0]["trips"] == 21
+    # The short working has under 5 % of the trips: left out.
+    assert [(p["headsign"], p["stops"], p["trips"]) for p in lines[0]["patterns"]] == [
+        ("East", [0, 1, 2], 10),
+        ("West", [2, 1, 0], 10),
+    ]
+    # Where a train crosses the map's edge names no stop.
+    assert lines[1]["patterns"][0]["stops"] == [5, 6]

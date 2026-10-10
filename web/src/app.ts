@@ -48,6 +48,8 @@ import { ClosureMarkers } from './ui/closureMarkers';
 import { Hud, type HudCallbacks, type Shown } from './ui/hud';
 import { NewsPanel } from './ui/newsPanel';
 import { RailMarkers, type Station } from './ui/railMarkers';
+import { StopMarkers, TransitPanel } from './ui/transitPanel';
+import { type LinesFile, type Route, Timetable, type TimetableArrays } from './world/transitLines';
 import { ProjectsSection } from './ui/projectsSection';
 import { junctionName } from './edit/signals';
 import { RoadDrawer } from './ui/roadDrawer';
@@ -168,6 +170,27 @@ async function loadCycling(
 }
 
 /** HŽ's stations in the map with their trains (M8e), named in the transit index. */
+/** The lines' stops and patterns (M9a) with the transit index's route table, named in the
+ * transit index; loaded when the Public transport panel first opens. */
+async function loadLines(
+  indexPath: string | undefined,
+): Promise<{ routes: Route[]; file: LinesFile } | undefined> {
+  if (!indexPath) return undefined;
+  try {
+    const response = await fetch(DATA_URL + indexPath);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const index = (await response.json()) as { routes?: Route[]; lines?: string };
+    if (!index.lines || !index.routes) return undefined;
+    const folder = indexPath.slice(0, indexPath.lastIndexOf('/') + 1);
+    const lines = await fetch(DATA_URL + folder + index.lines);
+    if (!lines.ok) throw new Error(`HTTP ${lines.status}`);
+    return { routes: index.routes, file: (await lines.json()) as LinesFile };
+  } catch (error) {
+    console.warn('The lines could not be loaded', error);
+    return undefined;
+  }
+}
+
 async function loadStations(indexPath: string | undefined): Promise<Station[]> {
   if (!indexPath) return [];
   try {
@@ -266,6 +289,7 @@ export interface DebugApi {
   vehicles?: VehicleLayer;
   pedestrians?: PedestrianLayer;
   railMarkers?: RailMarkers;
+  transit?: TransitPanel;
   traffic?: TrafficLayer;
   news?: NewsLayer;
   newsPanel?: NewsPanel;
@@ -335,6 +359,12 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let closureMarkers: ClosureMarkers | undefined;
   /** HŽ's stations and the level crossings, on the traffic map (M8e). */
   let railMarkers: RailMarkers | undefined;
+  /** The Public transport panel, the line it shows drawn on the map and its stops (M9a). */
+  let transitPanel: TransitPanel | undefined;
+  let transitMarkers: StopMarkers | undefined;
+  let openTransit: (() => void) | undefined;
+  /** Whether the player wants the panel open (it loads its data on first opening). */
+  let transitWanted = false;
   /** Trains, pedestrians and cyclists drawn (M8e). */
   const shown = new Set<Shown>(['trains', 'pedestrians', 'bikes']);
   let closureLayer: ClosureLayer | undefined;
@@ -446,6 +476,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     },
     onBuild: (enabled) => {
       // One panel on the right at a time.
+      if (enabled && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
       if (enabled && zoning?.panel.visible) {
         hud.setZones(false);
         zoning.setVisible(false);
@@ -458,6 +489,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       invalidateView();
     },
     onZones: (enabled) => {
+      if (enabled && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
       if (enabled && buildPanel?.visible) {
         hud.setBuild(false);
         buildPanel.setVisible(false);
@@ -470,6 +502,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       invalidateView();
     },
     onBudget: (enabled) => {
+      if (enabled && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
       if (enabled && buildPanel?.visible) {
         hud.setBuild(false);
         buildPanel.setVisible(false);
@@ -479,6 +512,28 @@ export async function startApp(container: HTMLElement): Promise<void> {
         zoning.setVisible(false);
       }
       budgetTool.setVisible(enabled);
+    },
+    onTransit: (enabled) => {
+      transitWanted = enabled;
+      if (enabled) {
+        if (buildPanel?.visible) {
+          hud.setBuild(false);
+          buildPanel.setVisible(false);
+        }
+        if (zoning?.panel.visible) {
+          hud.setZones(false);
+          zoning.setVisible(false);
+        }
+        if (budgetTool.panel.visible) {
+          hud.setBudget(false);
+          budgetTool.setVisible(false);
+        }
+        if (transitPanel) transitPanel.setVisible(true);
+        else openTransit?.();
+      } else {
+        transitPanel?.setVisible(false);
+      }
+      invalidateView();
     },
   };
   const hud = new Hud(container, hudCallbacks);
@@ -1264,6 +1319,45 @@ export async function startApp(container: HTMLElement): Promise<void> {
             railMarkers.setVisible(!!traffic?.enabled && shown.has('trains'));
             debug.railMarkers = railMarkers;
           });
+          if (travelData.arrays.transitStopRef) {
+            hud.enableTransit();
+            openTransit = () => {
+              openTransit = undefined;
+              void loadLines(transitLayer?.index).then((lines) => {
+                if (!lines) return;
+                const timetable = new Timetable(
+                  lines.routes,
+                  lines.file,
+                  travelData.arrays as unknown as TimetableArrays,
+                );
+                const markers = new StopMarkers(hud.element, timetable, (s) =>
+                  transitPanel?.openStop(s),
+                );
+                let routeLayer: EditLayer | undefined;
+                transitPanel = new TransitPanel(hud.element, timetable, {
+                  onClose: () => hud.setTransit(false, hudCallbacks),
+                  onShow: (line) => {
+                    if (routeLayer) scene.remove(routeLayer.object);
+                    routeLayer = new EditLayer(networkNow?.net ?? net, surface);
+                    scene.add(routeLayer.object);
+                    markers.set(line?.stops ?? [], line?.color ?? 0);
+                    invalidateView();
+                    const layer = routeLayer;
+                    if (!line || !sim) return;
+                    void sim.transit(line.trip).then(({ path }) => {
+                      layer.show([{ edges: Array.from(path), color: line.color, width: 6 }]);
+                      invalidateView();
+                    });
+                  },
+                  onStop: (x, z) => rig?.jumpTo(x, z, 900),
+                });
+                transitMarkers = markers;
+                debug.transit = transitPanel;
+                transitPanel.setVisible(transitWanted);
+              });
+            };
+            if (transitWanted) openTransit();
+          }
           applyDemand();
           /** The simulation the player sees, with the edits in force. */
           const launch = (speed: number): SimClient => {
@@ -1396,6 +1490,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     const fog = new THREE.Fog(SKY, 1, 2);
     const marker = new THREE.Vector3();
     let lastHudSim = 0;
+    let lastTransit = 0;
     /** Draw a frame if anything changed; whether it drew. */
     const drawFrame = (time: number): boolean => {
       const moving = activeRig.update(time);
@@ -1441,6 +1536,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
         }
         if (railMarkers?.visible && simChanged) {
           railMarkers.update(sim.displayTime(now), sim.levelCrossings);
+        }
+        // The Public transport panel's vehicles running, every two seconds while it is open.
+        if (transitPanel?.visible && now - lastTransit > 2000) {
+          lastTransit = now;
+          const panel = transitPanel;
+          const client = sim;
+          void client.transit(-1).then(({ running }) => {
+            panel.update(client.displayTime(performance.now()), running);
+          });
         }
         simChanged = false;
         if (sim.stats && (now - lastHudSim > 250 || sim.paused)) {
@@ -1564,6 +1668,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
       }
       if (railMarkers?.visible) {
         railMarkers.place((x, z) => toScreen(x, terrain.heightfield.sample(x, z) + 2, z));
+      }
+      if (transitMarkers?.visible) {
+        transitMarkers.place((x, z) => toScreen(x, terrain.heightfield.sample(x, z) + 2, z));
       }
       const newsLayer = news;
       if (newsLayer && newsPanel?.visible) {

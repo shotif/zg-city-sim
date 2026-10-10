@@ -643,7 +643,8 @@ a.news-headline:hover {
 
 .build-panel,
 .zones-panel,
-.budget-panel {
+.budget-panel,
+.transit-panel {
   position: absolute;
   top: calc(max(12px, env(safe-area-inset-top)) + 56px);
   right: var(--gutter);
@@ -657,8 +658,125 @@ a.news-headline:hover {
 .build-panel [hidden],
 .zones-panel[hidden],
 .zones-panel [hidden],
-.budget-panel[hidden] {
+.budget-panel[hidden],
+.transit-panel[hidden],
+.transit-marker[hidden] {
   display: none;
+}
+
+/* The Public transport panel (M9a): lines, a line's stops, a stop's departures. */
+.transit-search {
+  width: 100%;
+  margin: 2px 0 6px;
+}
+
+.transit-modes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.transit-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.transit-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.transit-item:hover,
+.transit-item:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.transit-item span:not(.transit-badge):not(.transit-stop-dot) {
+  flex: 1;
+  min-width: 0;
+}
+
+.transit-item small {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.transit-badge {
+  display: inline-block;
+  min-width: 30px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+}
+
+.transit-stop-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 3px solid var(--text-dim);
+  border-radius: 50%;
+  background: #fff;
+}
+
+.transit-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 6px;
+  font-size: 15px;
+}
+
+.transit-back {
+  margin-top: 2px;
+}
+
+.transit-stats {
+  margin: 6px 0 2px;
+}
+
+.transit-hours {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 4px 0 6px;
+}
+
+.transit-hours rect {
+  fill: var(--accent);
+}
+
+.transit-hours text {
+  fill: var(--text-dim);
+  font-size: 8px;
+}
+
+.transit-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 4px solid var(--accent);
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 
 /* The Budget panel: the balance, a year's flows and the balance over time. */
@@ -1010,7 +1128,8 @@ a.news-headline:hover {
   .news-panel,
   .build-panel,
   .zones-panel,
-  .budget-panel {
+  .budget-panel,
+  .transit-panel {
     top: auto;
     bottom: calc(max(12px, env(safe-area-inset-bottom)) + 100px);
     max-height: 45%;
