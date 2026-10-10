@@ -5,6 +5,9 @@
 //! in the morning peak (`PEAK`), frequency-based: walk to a stop (`ACCESS` at most, as the
 //! crow flies), wait half the headway (at most `WAIT_CAP`), board (`BOARDING`), ride, change
 //! (a walk of `TRANSFER` at most, another wait and boarding), and walk from the last stop.
+//! Where several lines run between two stops, riders take the first of those worth taking
+//! (common lines, as in Spiess and Florian's optimal strategies, M10c): they wait half the
+//! lines' combined headway, and the lines share them by how often each runs.
 //! Walking and waiting count `WALK_WEIGHT` and `WAIT_WEIGHT` times. A car's is estimated
 //! from the distance between the zones. A logit on the two splits motorised trips between
 //! them (`ASC`, `BETA`).
@@ -49,7 +52,7 @@ pub const CAR_EXTRA: f32 = 480.0;
 /// The logit: utility per generalised minute, and public transport's constant (calibrated:
 /// 45.8 % of motorised trips within the City by public transport).
 pub const BETA: f32 = 0.04;
-pub const ASC: f32 = 1.682;
+pub const ASC: f32 = 1.591;
 /// Trips drawn for the expected car trips by zone pair.
 pub const OD_SAMPLES: usize = 500_000;
 /// Origins whose journeys are worked out each simulation step.
@@ -57,6 +60,8 @@ pub const ORIGINS_PER_STEP: usize = 8;
 /// A demand edge in no zone.
 pub const NO_ZONE: u32 = u32::MAX;
 const NONE: u32 = u32::MAX;
+/// Marks an arc that boards the first of several lines (`Graph::bundle_first`).
+const BUNDLE: u32 = 1 << 31;
 
 /// The zones: squares of `ZONE` m with homes or jobs, their centres (weighted by them) and
 /// the City's district most of them are in (`districts` of them; that value outside).
@@ -156,8 +161,13 @@ pub struct Graph {
     /// Each arc's time as it passes (s): walking and waiting not weighted, no boarding
     /// penalty (M9e: journey times to show).
     plain: Vec<f32>,
-    /// The pattern an arc boards (`NONE` for other arcs).
+    /// The pattern an arc boards, or `BUNDLE` and the lines it boards the first of (`NONE`
+    /// for other arcs).
     board: Vec<u32>,
+    /// Each bundle's lines, in `bundle_pattern` from `bundle_first`, and their shares.
+    bundle_first: Vec<u32>,
+    bundle_pattern: Vec<u32>,
+    bundle_share: Vec<f32>,
     /// Each pattern's route (the timetable's, or a new line's).
     pub pattern_route: Vec<u16>,
 }
@@ -206,6 +216,8 @@ impl Graph {
         let stops = stop_pos.len();
         let mut arcs: Vec<Vec<(u32, f32, u32, f32)>> = vec![Vec::new(); stops];
         let mut pattern_route = Vec::new();
+        let mut shared: Vec<(u32, u32, u32, f32)> = Vec::new();
+        let mut frequency: Vec<f32> = Vec::new();
         let mut keys: Vec<_> = patterns.into_iter().filter(|(_, v)| v.0 > 0).collect();
         keys.sort_by(|a, b| a.0.cmp(&b.0));
         for ((route, ids), (count, rep, _)) in keys {
@@ -231,6 +243,21 @@ impl Graph {
                     *t = data.stop_time[i];
                 }
             }
+            // Rides between every two of its stops, for lines sharing them (below).
+            let mut at = 0.0;
+            let mut rides = Vec::with_capacity(ids.len());
+            for k in 0..ids.len() {
+                if k > 0 {
+                    at += (times[k] - times[k - 1]).max(30.0);
+                }
+                rides.push(at);
+            }
+            for k in 0..ids.len() {
+                for m in k + 1..ids.len() {
+                    shared.push((ids[k], ids[m], p, rides[m] - rides[k]));
+                }
+            }
+            frequency.push(count as f32 / (PEAK.1 - PEAK.0));
             let base = arcs.len() as u32;
             for (k, &s) in ids.iter().enumerate() {
                 let node = base + k as u32;
@@ -245,6 +272,21 @@ impl Graph {
                 }
             }
         }
+        // Common lines: where two or more lines run from one stop to another, an arc boards
+        // the first of those worth taking.
+        let mut bundles = Bundles::default();
+        // Rides are positive, so their bits sort as they do.
+        shared.sort_unstable_by_key(|a| (a.0, a.1, a.3.to_bits()));
+        for group in shared.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
+            if group.len() < 2 {
+                continue;
+            }
+            if let Some((cost, plain)) = bundles.add(group, &frequency) {
+                let b = BUNDLE | (bundles.first.len() as u32 - 2);
+                arcs[group[0].0 as usize].push((group[0].1, cost, b, plain));
+            }
+        }
+        drop(shared);
         // Changing on foot between stops near each other.
         let mut stop_cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
         for (s, &p) in stop_pos.iter().enumerate() {
@@ -299,8 +341,30 @@ impl Graph {
             cost,
             plain,
             board,
+            bundle_first: bundles.first,
+            bundle_pattern: bundles.pattern,
+            bundle_share: bundles.share,
             pattern_route,
         }
+    }
+
+    /// The lines arc `a` boards, with each one's share of its riders.
+    fn boards(&self, a: usize) -> impl Iterator<Item = (u32, f32)> + '_ {
+        let b = self.board[a];
+        let (single, range) = if b == NONE {
+            (None, 0..0)
+        } else if b & BUNDLE != 0 {
+            let k = (b & !BUNDLE) as usize;
+            (
+                None,
+                self.bundle_first[k] as usize..self.bundle_first[k + 1] as usize,
+            )
+        } else {
+            (Some((b, 1.0)), 0..0)
+        };
+        single
+            .into_iter()
+            .chain(range.map(|i| (self.bundle_pattern[i], self.bundle_share[i])))
     }
 
     /// Journey times (s, as they pass: walking, waiting, riding) between every two of
@@ -386,6 +450,60 @@ impl Graph {
             }
         }
         out
+    }
+}
+
+/// Lines sharing stops, boarded as one (common lines, M10c).
+struct Bundles {
+    first: Vec<u32>,
+    pattern: Vec<u32>,
+    share: Vec<f32>,
+}
+
+impl Default for Bundles {
+    fn default() -> Bundles {
+        Bundles {
+            first: vec![0],
+            pattern: Vec::new(),
+            share: Vec::new(),
+        }
+    }
+}
+
+impl Bundles {
+    /// The lines worth taking from one stop to another, of those running there (`group`:
+    /// stop, stop, pattern and ride, by ride), as a bundle if two or more are: its
+    /// generalised time and its time as it passes (s). As in Spiess and Florian's optimal
+    /// strategies, the quickest rides are taken while each lowers the time expected: half
+    /// the combined headway waited, then the ride on whichever comes first.
+    fn add(&mut self, group: &[(u32, u32, u32, f32)], frequency: &[f32]) -> Option<(f32, f32)> {
+        let expected = |f: f32, fr: f32| {
+            let waiting = (0.5 / f).min(WAIT_CAP);
+            (WAIT_WEIGHT * waiting + BOARDING + fr / f, waiting + fr / f)
+        };
+        let (mut f, mut fr) = (0.0f32, 0.0f32);
+        let mut taken: Vec<(u32, f32)> = Vec::new();
+        for &(_, _, p, ride) in group {
+            if taken.iter().any(|&(q, _)| q == p) {
+                continue;
+            }
+            let fp = frequency[p as usize];
+            if f > 0.0 && expected(f + fp, fr + fp * ride).0 >= expected(f, fr).0 {
+                break;
+            }
+            f += fp;
+            fr += fp * ride;
+            taken.push((p, fp));
+        }
+        if taken.len() < 2 {
+            return None;
+        }
+        for (p, fp) in taken {
+            self.pattern.push(p);
+            self.share.push(fp / f);
+        }
+        self.first.push(self.pattern.len() as u32);
+        Some(expected(f, fr))
     }
 }
 
@@ -492,9 +610,8 @@ impl Skim {
                 let mut guard = 0;
                 while self.pred[node as usize] != NONE && guard < 10_000 {
                     let arc = self.pred_arc[node as usize] as usize;
-                    let p = self.graph.board[arc];
-                    if p != NONE {
-                        self.boardings[p as usize] += pt;
+                    for (p, share) in self.graph.boards(arc) {
+                        self.boardings[p as usize] += pt * share as f64;
                     }
                     node = self.pred[node as usize];
                     guard += 1;

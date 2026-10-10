@@ -2857,6 +2857,77 @@ fn riders_take_the_bus_and_more_buses_take_cars_off_the_road() {
 }
 
 #[test]
+fn riders_share_parallel_lines_by_how_often_they_run() {
+    use crate::riders::{BOARDING, WAIT_WEIGHT, WALK_DETOUR, WALK_SPEED, WALK_WEIGHT};
+    use crate::transit::{Transit, TransitData};
+    // Two lines between the same stops, 5 min apart by bus: every 10 min and every 20 min.
+    let (b, e0, e1) = straight_road(3000.0, 1);
+    let mut engine = Engine::new(b.build(), 4);
+    let mut d = TransitData {
+        trip_stops: vec![0],
+        ..TransitData::default()
+    };
+    for (route, every) in [(0u16, 600.0f32), (1, 1200.0)] {
+        for k in 0..(7200.0 / every) as usize {
+            let start = 6.5 * 3600.0 + every * k as f32 + 60.0 * route as f32;
+            d.trip_type.push(vtype::BUS);
+            d.trip_route.push(route);
+            d.stop_edge.extend([e0, e1]);
+            d.stop_frac.extend([0.1, 0.1]);
+            d.stop_time.extend([start, start + 300.0]);
+            d.trip_stops.push(d.stop_edge.len() as u32);
+        }
+    }
+    engine.transit = Some(Transit::new(d));
+    engine.demand = Some(Demand::new(
+        &engine.net,
+        vec![e0, e1],
+        &[1.0, 1.0],
+        &[1.0, 1.0],
+        10_000.0,
+    ));
+    engine.set_time(0.0);
+    engine.start_riders(None);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    let east = if riders.zones.centre[0].0 < riders.zones.centre[1].0 {
+        0
+    } else {
+        1
+    };
+    // Riders take whichever comes first: half the combined headway of 400 s.
+    let walk = WALK_WEIGHT * 298.8 * WALK_DETOUR / WALK_SPEED;
+    let time = riders.pair_today(east, 1 - east).1;
+    assert!(
+        (time - (2.0 * walk + WAIT_WEIGHT * 200.0 + BOARDING + 300.0)).abs() < 2.0,
+        "{time}"
+    );
+    // The lines share them two to one.
+    let b = riders.summary.boardings_today.clone();
+    assert!((b[0] / (b[0] + b[1]) - 2.0 / 3.0).abs() < 1e-3, "{b:?}");
+
+    // The second twice as often (copies between its six trips: eleven in the peak to the
+    // first's twelve): about one to one, more riders in all, but not twice its own.
+    engine.set_edits(&[Edit::Frequency {
+        route: 1,
+        factor: 2.0,
+    }]);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let s = &engine.riders.as_ref().unwrap().summary;
+    let now = &s.boardings_now;
+    assert!(
+        (now[0] / (now[0] + now[1]) - 12.0 / 23.0).abs() < 1e-3,
+        "{now:?}"
+    );
+    assert!(s.trips_now > s.trips_today);
+    assert!(now[1] < 1.8 * b[1], "{now:?} after {b:?}");
+}
+
+#[test]
 fn journey_times_between_places_walk_wait_and_ride() {
     use crate::riders::{WALK_DETOUR, WALK_SPEED};
     let (mut engine, _, _) = two_zones();

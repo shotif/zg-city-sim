@@ -120,5 +120,18 @@ fn main() {
             by_mode(&s.boardings_now, vtype::TRAM),
             by_mode(&s.boardings_now, vtype::BUS),
         );
+        // Tram lines' boardings, today and now.
+        let trams: Vec<String> = (0..s.boardings_today.len())
+            .filter(|&r| mode_of[r] == vtype::TRAM)
+            .map(|r| {
+                format!(
+                    "{}: {:.0} -> {:.0}",
+                    r,
+                    s.boardings_today[r],
+                    s.boardings_now.get(r).copied().unwrap_or(0.0)
+                )
+            })
+            .collect();
+        println!("tram routes' boardings: {}", trams.join(", "));
     }
 }
