@@ -208,12 +208,22 @@ test("shows ZET's lines, their stops and departures", async ({ page }, testInfo)
   await expect.poll(tram6, { timeout: 30_000 }).toBeGreaterThan(timetabled * 1.8);
   await expect(panel.locator('.transit-stats')).toHaveText(/\(\d+ timetabled\)/);
   await expect(panel.locator('.transit-service + .budget-note')).toContainText('costs about');
+  // Riders (M9d): tram 6's boardings rise, and car trips leave the roads.
+  await expect(panel.locator('.budget-note', { hasText: 'boardings a weekday' })).toContainText(
+    'with the changes',
+    { timeout: 90_000 },
+  );
   await page.screenshot({ path: testInfo.outputPath('tram-6-twice.png') });
   expect(await page.evaluate(() => localStorage.getItem('zg-city-sim:edits'))).toContain(
     '"frequency"',
   );
   await panel.getByLabel('Service').selectOption({ label: 'As timetabled' });
   await expect.poll(tram6, { timeout: 30_000 }).toBe(timetabled);
+  await panel.getByRole('button', { name: '‹ All lines' }).click();
+  await expect(panel.locator('.transit-riders')).toHaveText(
+    /^About [\d,]+ trips by public transport a weekday/,
+  );
+  await panel.locator('.transit-item', { hasText: 'Sopot' }).first().click();
 
   // A stop's departures, then back to the line and to all lines.
   await panel.locator('.transit-stops .transit-item').nth(5).click();

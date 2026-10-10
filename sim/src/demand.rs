@@ -123,6 +123,36 @@ impl Flow {
     }
 }
 
+/// Car trips moved to public transport or back (M9d): each trip's zones (`riders.rs`) and
+/// how many times today's car trips between two zones there are now.
+pub struct Shift {
+    /// Zone of each demand edge (`riders::NO_ZONE`: none).
+    pub zone: Vec<u32>,
+    pub zones: usize,
+    pub factor: std::sync::Arc<Vec<f32>>,
+}
+
+impl Shift {
+    /// How many car trips a trip drawn from demand edge `o` to `d` makes: 0, 1 or 2 (drawn
+    /// only where the factor is not 1).
+    fn copies(&self, o: usize, d: usize, rng: &mut Rng) -> usize {
+        let (a, b) = (self.zone[o], self.zone[d]);
+        if a as usize >= self.zones || b as usize >= self.zones {
+            return 1;
+        }
+        let f = self.factor[a as usize * self.zones + b as usize];
+        if f == 1.0 {
+            return 1;
+        }
+        let u = rng.f32();
+        if f < 1.0 {
+            (u < f) as usize
+        } else {
+            1 + (u < f - 1.0) as usize
+        }
+    }
+}
+
 pub struct Demand {
     edges: Vec<u32>,
     pos: Vec<(f32, f32)>,
@@ -154,6 +184,8 @@ pub struct Demand {
     by_edge: OnceCell<(Vec<f32>, Vec<f32>)>,
     /// The vehicle type of every trip made within the map, if not cars and lorries (bikes).
     pub vtype: Option<u8>,
+    /// Car trips moved to public transport or back, where edits change it (M9d).
+    shift: Option<Shift>,
 }
 
 fn cumulative(w: &[f32]) -> Vec<f64> {
@@ -249,7 +281,69 @@ impl Demand {
             through_exit: Vec::new(),
             by_edge: OnceCell::new(),
             vtype: None,
+            shift: None,
         }
+    }
+
+    /// The demand's edges (ids) and where they are.
+    pub fn edges(&self) -> (&[u32], &[(f32, f32)]) {
+        (&self.edges, &self.pos)
+    }
+
+    /// Move car trips between zones by `shift` (none: as today).
+    pub fn set_shift(&mut self, shift: Option<Shift>) {
+        self.shift = shift;
+    }
+
+    /// Car trips a weekday within the map at full demand by zone pair (`zone` of each demand
+    /// edge, `zones` of them), from `samples` trips drawn as the day draws them (lorries
+    /// left out).
+    pub fn expected_od(
+        &self,
+        zone: &[u32],
+        zones: usize,
+        samples: usize,
+        rng: &mut Rng,
+    ) -> Vec<f32> {
+        let mut od = vec![0f32; zones * zones];
+        if self.edges.is_empty() || samples == 0 {
+            return od;
+        }
+        let hours = cumulative(&HOURLY);
+        let each = (self.daily_trips * (1.0 - TRUCKS.0 as f64) / samples as f64) as f32;
+        for _ in 0..samples {
+            let Some(hour) = sample(&hours, rng) else {
+                break;
+            };
+            let (to_work, to_home) = purposes(hour);
+            let Some(Some((o, d))) = self.draw(to_work, to_home, rng) else {
+                continue;
+            };
+            let (a, b) = (zone[o] as usize, zone[d] as usize);
+            if a < zones && b < zones {
+                od[a * zones + b] += each;
+            }
+        }
+        od
+    }
+
+    /// A trip's origin and destination (indices into the demand edges) in an hour with these
+    /// shares going to work and home: None without origins, Some(None) when no destination
+    /// was found.
+    fn draw(&self, to_work: f32, to_home: f32, rng: &mut Rng) -> Option<Option<(usize, usize)>> {
+        let r = rng.f32();
+        let (from_cum, to_cum) = if r < to_work {
+            (&self.home_cum, &self.work_cum)
+        } else if r < to_work + to_home {
+            (&self.work_cum, &self.home_cum)
+        } else {
+            (&self.any_cum, &self.any_cum)
+        };
+        let o = sample(from_cum, rng)?;
+        Some(
+            self.near(self.pos[o], o, to_cum, self.decay, CANDIDATES, rng)
+                .map(|d| (o, d)),
+        )
     }
 
     /// Bike trips (M8d): `daily` a day between the edges' homes and jobs, over shorter
@@ -282,6 +376,8 @@ impl Demand {
         self.any_cum = fresh.any_cum;
         self.daily_trips = daily_trips;
         self.by_edge = OnceCell::new();
+        // The shift names the old edges: the engine sets it again.
+        self.shift = None;
     }
 
     /// The home and work weights by edge id (0 on edges without any; edges past the last
@@ -503,30 +599,29 @@ impl Demand {
         };
         while self.acc >= 1.0 {
             self.acc -= 1.0;
-            let r = rng.f32();
-            let (from_cum, to_cum) = if r < to_work {
-                (&self.home_cum, &self.work_cum)
-            } else if r < to_work + to_home {
-                (&self.work_cum, &self.home_cum)
-            } else {
-                (&self.any_cum, &self.any_cum)
-            };
-            let Some(o) = sample(from_cum, rng) else {
+            let Some(pair) = self.draw(to_work, to_home, rng) else {
                 return;
             };
-            let Some(d) = self.near(self.pos[o], o, to_cum, self.decay, CANDIDATES, rng) else {
+            let Some((o, d)) = pair else {
                 continue;
             };
             let truck = rng.f32() < truck_share && self.truck_ok[o] && self.truck_ok[d];
-            emit(Trip {
-                depart: t + rng.f64() * dt,
-                from: self.edges[o],
-                to: self.edges[d],
-                vtype: self
-                    .vtype
-                    .unwrap_or(if truck { vtype::TRUCK } else { vtype::CAR }),
-                flags: 0,
-            });
+            // Car trips public transport took, or gave back (M9d).
+            let copies = match &self.shift {
+                Some(shift) if !truck && self.vtype.is_none() => shift.copies(o, d, rng),
+                _ => 1,
+            };
+            for _ in 0..copies {
+                emit(Trip {
+                    depart: t + rng.f64() * dt,
+                    from: self.edges[o],
+                    to: self.edges[d],
+                    vtype: self
+                        .vtype
+                        .unwrap_or(if truck { vtype::TRUCK } else { vtype::CAR }),
+                    flags: 0,
+                });
+            }
         }
     }
 

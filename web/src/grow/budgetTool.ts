@@ -49,6 +49,13 @@ export class BudgetTool {
     this.show();
   }
 
+  /** Fares a year from the riders public transport edits gain or lose (M9d). */
+  setFares(fares: number): void {
+    if (Math.abs(fares - this.budget.yearly.fares) < 1) return;
+    this.budget.yearly.fares = fares;
+    this.show();
+  }
+
   /** Simulated time now (s). */
   tick(now: number): void {
     const minute = Math.floor(now / 60);

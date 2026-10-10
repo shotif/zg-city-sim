@@ -72,6 +72,18 @@ fn main() {
     engine.demand = Some(demand);
     engine.demand_scale = run::demand_scale(&format!("{root}/demand"));
     println!("demand scale: {}", engine.demand_scale);
+    // Public transport's riders (M9d); FREQUENCY=2: every tram and bus line that many times
+    // as often, and the car trips that moves.
+    let districts = run::load_districts(&format!("{root}/demand"));
+    engine.start_riders((!districts.is_empty()).then_some(&districts[..]));
+    if let Some(factor) = std::env::var("FREQUENCY")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+    {
+        let edits = run::frequency_edits(&engine, factor);
+        let applied = engine.set_edits(&edits);
+        println!("frequency: {applied} tram and bus lines {factor} times as often");
+    }
     engine.set_time((START_HOUR * 3600) as f64);
     // Where junctions lose time (M7a).
     engine.track_delay = true;
@@ -241,8 +253,15 @@ fn main() {
             )
         })
         .collect();
+    let riders = engine.riders.as_ref().map_or("null".to_string(), |r| {
+        let m = &r.summary;
+        format!(
+            "{{\"tripsToday\": {:.0}, \"tripsNow\": {:.0}, \"carMoved\": {:.0}}}",
+            m.trips_today, m.trips_now, m.car_moved
+        )
+    });
     let summary = format!(
-        "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
+        "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"riders\": {riders}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"removedBecause\": {:?}, \
          \"removedAt\": [{}], \"transit\": {transit}, \"bikes\": {{\"departed\": {}, \"arrived\": {}, \"removed\": {}, \"km\": {:.0}}}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,

@@ -13,6 +13,7 @@ import {
   MODE_NAME,
   type Mode,
   type Pattern,
+  type Riders,
   SET_FREQUENCY,
   type Timetable,
 } from '../world/transitLines';
@@ -93,6 +94,8 @@ export class TransitPanel {
   private trips = new Set<number>();
   /** How often lines run, by route, where edits change it. */
   private frequencies = new Map<number, number>();
+  /** Riders as the engine estimates them (M9d). */
+  private riders?: Riders;
   /** What the line or stop view shows: its controls, and what changes as time goes on. */
   private lastHead = '';
   private lastLive = '';
@@ -170,6 +173,32 @@ export class TransitPanel {
   setFrequencies(frequencies: Map<number, number>): void {
     this.frequencies = frequencies;
     if (this.shown) this.render(true);
+  }
+
+  /** Riders as the engine estimates them now (M9d). */
+  setRiders(riders: Riders | undefined): void {
+    this.riders = riders;
+    const line = this.body.querySelector<HTMLElement>(':scope > .transit-riders');
+    if (line) line.textContent = this.ridersText();
+    if (this.shown && this.view.kind !== 'list') this.render(false);
+  }
+
+  /** Riders a weekday, in a sentence (the list's). */
+  private ridersText(): string {
+    const r = this.riders;
+    if (!r?.ready) return 'Working out riders…';
+    const round = (n: number) => (Math.round(n / 100) * 100).toLocaleString('en-GB');
+    let text = `About ${round(r.today)} trips by public transport a weekday (estimated).`;
+    if (r.busy) text += ' Working out the changes…';
+    else if (Math.abs(r.now - r.today) > 50) {
+      const change = ((r.now / r.today - 1) * 100).toFixed(1);
+      const moved =
+        r.moved >= 0
+          ? `${round(r.moved)} car trips a day off the roads`
+          : `${round(-r.moved)} more car trips a day`;
+      text += ` With the changes ${round(r.now)} (${r.now > r.today ? '+' : ''}${change} %): ${moved}.`;
+    }
+    return text;
   }
 
   /** The trips that run changed (`Timetable.setService`): count and list them again. */
@@ -374,11 +403,12 @@ export class TransitPanel {
       this.body.innerHTML =
         `<div class="transit-find"><input class="build-select transit-search" name="transit-search" type="search" ` +
         `placeholder="Line or stop" aria-label="Find a line or stop" autocomplete="off">${draw}</div>` +
-        '<div class="transit-modes"></div><ul class="transit-list"></ul>';
+        '<p class="budget-note transit-riders"></p><div class="transit-modes"></div><ul class="transit-list"></ul>';
       search = this.body.querySelector<HTMLInputElement>('input[name="transit-search"]')!;
     }
     if (search.value !== this.query) search.value = this.query;
     this.body.querySelector('.transit-modes')!.innerHTML = chips;
+    this.body.querySelector('.transit-riders')!.textContent = this.ridersText();
     this.body.querySelector('.transit-list')!.innerHTML =
       stopItems + lineItems + (stopItems || lineItems ? '' : '<li>Nothing found.</li>');
     this.body.querySelectorAll('.transit-more').forEach((m) => m.remove());
@@ -449,11 +479,29 @@ export class TransitPanel {
         service,
       live:
         `<p class="transit-stats">${today} trips today${timetabled}; ${running} running now${lateText}.</p>` +
+        this.boardingsHtml(line.route) +
         `<svg class="transit-hours" viewBox="0 0 240 52" role="img" aria-label="Trips by hour">${bars}` +
         `<text x="0" y="51">00</text><text x="114" y="51">12</text><text x="226" y="51">23</text></svg>` +
         `<h4 class="build-count">Stops, and the next departure from each</h4>` +
         `<ol class="transit-list transit-stops">${stops}</ol>`,
     };
+  }
+
+  /** A line's boardings a weekday, today and with the changes (M9d). */
+  private boardingsHtml(route: number): string {
+    const r = this.riders;
+    if (!r?.ready) return '';
+    const round = (n: number) => (Math.round(n / 10) * 10).toLocaleString('en-GB');
+    const today = r.boardingsToday[route] ?? 0;
+    const now = r.boardingsNow[route] ?? today;
+    if (this.timetable.isNew(route)) {
+      return `<p class="budget-note">About ${round(now)} boardings a weekday (estimated).</p>`;
+    }
+    const change =
+      r.busy || Math.abs(now - today) < 5
+        ? '.'
+        : `; with the changes ${round(now)} (${now > today ? '+' : ''}${((now / Math.max(today, 1) - 1) * 100).toFixed(0)} %).`;
+    return `<p class="budget-note">About ${round(today)} boardings a weekday (estimated)${change}</p>`;
   }
 
   private newLineHtml(view: { draft: LineDraft; plan?: DraftPlan | null }): {

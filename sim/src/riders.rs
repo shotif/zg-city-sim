@@ -1,0 +1,695 @@
+//! Public transport's riders, and the car trips they take off the roads or put back (M9d).
+//!
+//! The map is cut into squares of `ZONE` metres; those with homes or jobs are zones. Public
+//! transport's journey between two zones is a generalised time from the timetable as it runs
+//! in the morning peak (`PEAK`), frequency-based: walk to a stop (`ACCESS` at most, as the
+//! crow flies), wait half the headway (at most `WAIT_CAP`), board (`BOARDING`), ride, change
+//! (a walk of `TRANSFER` at most, another wait and boarding), and walk from the last stop.
+//! Walking and waiting count `WALK_WEIGHT` and `WAIT_WEIGHT` times. A car's is estimated
+//! from the distance between the zones. A logit on the two splits motorised trips between
+//! them (`ASC`, `BETA`).
+//!
+//! The car trips are the demand's (`Demand::expected_od`); the trips by public transport are
+//! those the split adds to them. When edits change public transport, each zone pair's car
+//! trips are kept (or added to) in the ratio of the car's share then to its share today, an
+//! incremental logit: without edits nothing is drawn and the traffic stays as calibrated.
+//! The figures are estimates: the weights, penalties, car times and `BETA` are typical
+//! values, not measured in Zagreb; `ASC` is calibrated to the Transport Master Plan's split.
+
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
+
+use crate::demand::{Demand, Shift};
+use crate::network::Network;
+use crate::rng::Rng;
+use crate::transit::TransitData;
+
+/// Zones are squares this wide (m).
+pub const ZONE: f32 = 1_000.0;
+/// The morning peak whose service the journey times use (s after midnight).
+pub const PEAK: (f32, f32) = (6.5 * 3600.0, 8.5 * 3600.0);
+/// Walking: speed (m/s), the way walked over the crow's, how far to a stop from a zone's
+/// centre and between stops to change (m, as the crow flies).
+pub const WALK_SPEED: f32 = 1.25;
+pub const WALK_DETOUR: f32 = 1.3;
+pub const ACCESS: f32 = 1_000.0;
+pub const TRANSFER: f32 = 250.0;
+/// How much a minute walking or waiting counts against one riding, the longest wait
+/// counted (s) and each boarding's penalty (s).
+pub const WALK_WEIGHT: f32 = 2.0;
+pub const WAIT_WEIGHT: f32 = 2.0;
+pub const WAIT_CAP: f32 = 900.0;
+pub const BOARDING: f32 = 180.0;
+/// A car's journey: the road's length over the crow's, mean speed in the peak (m/s), and
+/// time parking and walking at both ends (s).
+pub const CAR_DETOUR: f32 = 1.3;
+pub const CAR_SPEED: f32 = 30.0 / 3.6;
+pub const CAR_EXTRA: f32 = 480.0;
+/// The logit: utility per generalised minute, and public transport's constant (calibrated:
+/// 45.8 % of motorised trips within the City by public transport).
+pub const BETA: f32 = 0.04;
+pub const ASC: f32 = 1.682;
+/// Trips drawn for the expected car trips by zone pair.
+pub const OD_SAMPLES: usize = 500_000;
+/// Origins whose journeys are worked out each simulation step.
+pub const ORIGINS_PER_STEP: usize = 8;
+/// A demand edge in no zone.
+pub const NO_ZONE: u32 = u32::MAX;
+const NONE: u32 = u32::MAX;
+
+/// The zones: squares of `ZONE` m with homes or jobs, their centres (weighted by them) and
+/// the City's district most of them are in (`districts` of them; that value outside).
+pub struct Zones {
+    cell: HashMap<(i32, i32), u32>,
+    pub centre: Vec<(f32, f32)>,
+    pub district: Vec<u8>,
+}
+
+fn cell_of((x, z): (f32, f32), size: f32) -> (i32, i32) {
+    ((x / size).floor() as i32, (z / size).floor() as i32)
+}
+
+impl Zones {
+    /// Zones of the places in `pos` weighted by `weight`, with their districts if known.
+    pub fn new(pos: &[(f32, f32)], weight: &[f32], district: Option<&[u8]>) -> Zones {
+        let mut cell = HashMap::new();
+        let mut sum: Vec<(f64, f64, f64)> = Vec::new();
+        let mut votes: Vec<HashMap<u8, f32>> = Vec::new();
+        for (i, &p) in pos.iter().enumerate() {
+            let next = cell.len() as u32;
+            let z = *cell.entry(cell_of(p, ZONE)).or_insert(next) as usize;
+            if z == sum.len() {
+                sum.push((0.0, 0.0, 0.0));
+                votes.push(HashMap::new());
+            }
+            let w = weight.get(i).copied().unwrap_or(0.0).max(1e-3) as f64;
+            sum[z].0 += p.0 as f64 * w;
+            sum[z].1 += p.1 as f64 * w;
+            sum[z].2 += w;
+            if let Some(d) = district.and_then(|d| d.get(i)) {
+                *votes[z].entry(*d).or_insert(0.0) += w as f32;
+            }
+        }
+        let centre = sum
+            .iter()
+            .map(|&(x, z, w)| ((x / w) as f32, (z / w) as f32))
+            .collect();
+        let district = votes
+            .iter()
+            .map(|v| {
+                v.iter()
+                    .max_by(|a, b| a.1.total_cmp(b.1))
+                    .map_or(u8::MAX, |(&d, _)| d)
+            })
+            .collect();
+        Zones {
+            cell,
+            centre,
+            district,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.centre.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.centre.is_empty()
+    }
+
+    /// The zone a place is in (`NO_ZONE`: none).
+    pub fn of(&self, p: (f32, f32)) -> u32 {
+        self.cell.get(&cell_of(p, ZONE)).copied().unwrap_or(NO_ZONE)
+    }
+
+    /// A car's generalised time (s) between two zones.
+    pub fn car_time(&self, a: usize, b: usize) -> f32 {
+        let (p, q) = (self.centre[a], self.centre[b]);
+        let d = ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt();
+        d * CAR_DETOUR / CAR_SPEED + CAR_EXTRA
+    }
+}
+
+/// Public transport's share of motorised trips with these generalised times (s; infinite
+/// for none).
+pub fn pt_share(pt: f32, car: f32) -> f32 {
+    share_with(ASC, pt, car)
+}
+
+fn share_with(asc: f32, pt: f32, car: f32) -> f32 {
+    if !pt.is_finite() {
+        return 0.0;
+    }
+    1.0 / (1.0 + (-(asc - BETA * (pt - car) / 60.0)).exp())
+}
+
+/// The public transport network as it runs in the peak, for journeys: stops (walking), and
+/// each stop pattern's stops (riding). Arcs in compressed rows.
+pub struct Graph {
+    stops: usize,
+    stop_pos: Vec<(f32, f32)>,
+    stop_cells: HashMap<(i32, i32), Vec<u32>>,
+    first: Vec<u32>,
+    head: Vec<u32>,
+    cost: Vec<f32>,
+    /// The pattern an arc boards (`NONE` for other arcs).
+    board: Vec<u32>,
+    /// Each pattern's route (the timetable's, or a new line's).
+    pub pattern_route: Vec<u16>,
+}
+
+impl Graph {
+    /// The network of `trips` of `data` (stops placed on `net`): patterns by route and
+    /// stops, each with its trips leaving its first stop in the peak; their headway, and
+    /// times between stops from the one leaving nearest the peak's middle.
+    pub fn new(net: &Network, data: &TransitData, trips: impl Iterator<Item = u32>) -> Graph {
+        let mut stop_id: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut stop_pos = Vec::new();
+        let mut patterns: HashMap<(u16, Vec<u32>), (u32, u32, f32)> = HashMap::new();
+        let middle = (PEAK.0 + PEAK.1) / 2.0;
+        for t in trips {
+            let range = data.stops(t);
+            let start = data.stop_time[range.start];
+            let mut ids = Vec::with_capacity(range.len());
+            for i in range {
+                let (edge, frac) = (data.stop_edge[i], data.stop_frac[i]);
+                let key = (edge, (frac * 1000.0).round() as u32);
+                let next = stop_id.len() as u32;
+                let id = *stop_id.entry(key).or_insert_with(|| {
+                    let lane = net.d.edge_lane_start[edge as usize];
+                    let s = frac * net.d.lane_length[lane as usize];
+                    let [x, _, z, _] = net.sample(lane, s, 0.0);
+                    stop_pos.push((x, z));
+                    next
+                });
+                if ids.last() != Some(&id) {
+                    ids.push(id);
+                }
+            }
+            if ids.len() < 2 {
+                continue;
+            }
+            let entry = patterns
+                .entry((data.trip_route[t as usize], ids))
+                .or_insert((0, NONE, f32::INFINITY));
+            if (PEAK.0..PEAK.1).contains(&start) {
+                entry.0 += 1;
+                if (start - middle).abs() < entry.2 {
+                    *entry = (entry.0, t, (start - middle).abs());
+                }
+            }
+        }
+        let stops = stop_pos.len();
+        let mut arcs: Vec<Vec<(u32, f32, u32)>> = vec![Vec::new(); stops];
+        let mut pattern_route = Vec::new();
+        let mut keys: Vec<_> = patterns.into_iter().filter(|(_, v)| v.0 > 0).collect();
+        keys.sort_by(|a, b| a.0.cmp(&b.0));
+        for ((route, ids), (count, rep, _)) in keys {
+            let p = pattern_route.len() as u32;
+            pattern_route.push(route);
+            let headway = (PEAK.1 - PEAK.0) / count as f32;
+            let wait = WAIT_WEIGHT * (headway / 2.0).min(WAIT_CAP) + BOARDING;
+            // The rep trip's times at its stops (stops repeated on one spot count once).
+            let range = data.stops(rep);
+            let mut times = Vec::with_capacity(ids.len());
+            let mut last = NONE;
+            for i in range {
+                let key = (
+                    data.stop_edge[i],
+                    (data.stop_frac[i] * 1000.0).round() as u32,
+                );
+                let id = stop_id[&key];
+                if id != last {
+                    times.push(data.stop_time[i]);
+                    last = id;
+                } else if let Some(t) = times.last_mut() {
+                    *t = data.stop_time[i];
+                }
+            }
+            let base = arcs.len() as u32;
+            for (k, &s) in ids.iter().enumerate() {
+                let node = base + k as u32;
+                arcs.push(Vec::new());
+                if k + 1 < ids.len() {
+                    arcs[s as usize].push((node, wait, p));
+                    let ride = (times[k + 1] - times[k]).max(30.0);
+                    arcs[node as usize].push((node + 1, ride, NONE));
+                }
+                if k > 0 {
+                    arcs[node as usize].push((s, 0.0, NONE));
+                }
+            }
+        }
+        // Changing on foot between stops near each other.
+        let mut stop_cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+        for (s, &p) in stop_pos.iter().enumerate() {
+            stop_cells
+                .entry(cell_of(p, TRANSFER))
+                .or_default()
+                .push(s as u32);
+        }
+        let near = |p: (f32, f32), r: f32, cells: &HashMap<(i32, i32), Vec<u32>>| {
+            let (cx, cz) = cell_of(p, TRANSFER);
+            let reach = (r / TRANSFER).ceil() as i32;
+            let mut out = Vec::new();
+            for dx in -reach..=reach {
+                for dz in -reach..=reach {
+                    for &s in cells.get(&(cx + dx, cz + dz)).into_iter().flatten() {
+                        let q = stop_pos[s as usize];
+                        let d = ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt();
+                        if d <= r {
+                            out.push((s, d));
+                        }
+                    }
+                }
+            }
+            out
+        };
+        for s in 0..stops {
+            for (t, d) in near(stop_pos[s], TRANSFER, &stop_cells) {
+                if t as usize != s {
+                    arcs[s].push((t, walk(d), NONE));
+                }
+            }
+        }
+        let mut first = Vec::with_capacity(arcs.len() + 1);
+        let (mut head, mut cost, mut board) = (Vec::new(), Vec::new(), Vec::new());
+        first.push(0);
+        for list in &arcs {
+            for &(h, c, b) in list {
+                head.push(h);
+                cost.push(c);
+                board.push(b);
+            }
+            first.push(head.len() as u32);
+        }
+        Graph {
+            stops,
+            stop_pos,
+            stop_cells,
+            first,
+            head,
+            cost,
+            board,
+            pattern_route,
+        }
+    }
+
+    pub fn nodes(&self) -> usize {
+        self.first.len() - 1
+    }
+
+    pub fn stops(&self) -> usize {
+        self.stops
+    }
+
+    /// Stops within `ACCESS` of a place, with the generalised time to walk there (s).
+    fn access(&self, p: (f32, f32)) -> Vec<(u32, f32)> {
+        let (cx, cz) = cell_of(p, TRANSFER);
+        let reach = (ACCESS / TRANSFER).ceil() as i32;
+        let mut out = Vec::new();
+        for dx in -reach..=reach {
+            for dz in -reach..=reach {
+                for &s in self
+                    .stop_cells
+                    .get(&(cx + dx, cz + dz))
+                    .into_iter()
+                    .flatten()
+                {
+                    let q = self.stop_pos[s as usize];
+                    let d = ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt();
+                    if d <= ACCESS {
+                        out.push((s, walk(d)));
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The generalised time to walk `d` metres as the crow flies (s).
+fn walk(d: f32) -> f32 {
+    WALK_WEIGHT * d * WALK_DETOUR / WALK_SPEED
+}
+
+/// Journeys from every zone over a graph, a few origins at a time; and the trips by public
+/// transport they make, boarding each route.
+pub struct Skim {
+    graph: Graph,
+    access: Vec<Vec<(u32, f32)>>,
+    next: usize,
+    /// Generalised time (s) by zone pair; infinite where public transport does not go.
+    pub time: Vec<f32>,
+    /// Trips by public transport a weekday, all and boarding each route (by pattern).
+    pub trips: f64,
+    boardings: Vec<f64>,
+    dist: Vec<f32>,
+    pred: Vec<u32>,
+    pred_arc: Vec<u32>,
+}
+
+impl Skim {
+    fn new(graph: Graph, zones: &Zones) -> Skim {
+        let access = zones.centre.iter().map(|&p| graph.access(p)).collect();
+        let n = zones.len();
+        let nodes = graph.nodes();
+        let patterns = graph.pattern_route.len();
+        Skim {
+            graph,
+            access,
+            next: 0,
+            time: vec![f32::INFINITY; n * n],
+            trips: 0.0,
+            boardings: vec![0.0; patterns],
+            dist: vec![f32::INFINITY; nodes],
+            pred: vec![NONE; nodes],
+            pred_arc: vec![NONE; nodes],
+        }
+    }
+
+    pub fn done(&self) -> bool {
+        self.next >= self.access.len()
+    }
+
+    /// Boardings a weekday by route (`routes` of them).
+    pub fn boardings_by_route(&self, routes: usize) -> Vec<f64> {
+        let mut out = vec![0.0; routes];
+        for (p, &b) in self.boardings.iter().enumerate() {
+            let r = self.graph.pattern_route[p] as usize;
+            if r < routes {
+                out[r] += b;
+            }
+        }
+        out
+    }
+
+    /// Journeys from the next `count` origins; the trips they make by public transport: `od`
+    /// car trips by zone pair today, `base` public transport's times today (none: this is
+    /// today's skim).
+    fn advance(&mut self, count: usize, zones: &Zones, od: &[f32], base: Option<&[f32]>) {
+        let n = zones.len();
+        for _ in 0..count {
+            if self.done() {
+                return;
+            }
+            let o = self.next;
+            self.next += 1;
+            self.search(o);
+            let row = o * n;
+            let mut best_stop = vec![NONE; n];
+            for d in 0..n {
+                if d == o {
+                    continue;
+                }
+                let mut best = f32::INFINITY;
+                for &(s, c) in &self.access[d] {
+                    let t = self.dist[s as usize] + c;
+                    if t < best {
+                        best = t;
+                        best_stop[d] = s;
+                    }
+                }
+                self.time[row + d] = best;
+            }
+            // Trips by public transport: all motorised trips today (the car's over its
+            // share) times public transport's share now; boarded along the quickest way.
+            for d in 0..n {
+                let car = od[row + d];
+                if car <= 0.0 || d == o {
+                    continue;
+                }
+                let car_time = zones.car_time(o, d);
+                let today = base.map_or(self.time[row + d], |b| b[row + d]);
+                let all = car / (1.0 - pt_share(today, car_time)).max(1e-3);
+                let pt = (all * pt_share(self.time[row + d], car_time)) as f64;
+                if pt <= 0.0 || best_stop[d] == NONE {
+                    continue;
+                }
+                self.trips += pt;
+                let mut node = best_stop[d];
+                let mut guard = 0;
+                while self.pred[node as usize] != NONE && guard < 10_000 {
+                    let arc = self.pred_arc[node as usize] as usize;
+                    let p = self.graph.board[arc];
+                    if p != NONE {
+                        self.boardings[p as usize] += pt;
+                    }
+                    node = self.pred[node as usize];
+                    guard += 1;
+                }
+            }
+        }
+    }
+
+    /// Generalised times from zone `o` to every node.
+    fn search(&mut self, o: usize) {
+        let g = &self.graph;
+        self.dist.fill(f32::INFINITY);
+        self.pred.fill(NONE);
+        let mut heap = BinaryHeap::new();
+        for &(s, c) in &self.access[o] {
+            if c < self.dist[s as usize] {
+                self.dist[s as usize] = c;
+                heap.push(Reverse((c.to_bits(), s)));
+            }
+        }
+        while let Some(Reverse((bits, v))) = heap.pop() {
+            let d = f32::from_bits(bits);
+            if d > self.dist[v as usize] {
+                continue;
+            }
+            for a in g.first[v as usize] as usize..g.first[v as usize + 1] as usize {
+                let h = g.head[a] as usize;
+                let nd = d + g.cost[a];
+                if nd < self.dist[h] {
+                    self.dist[h] = nd;
+                    self.pred[h] = v;
+                    self.pred_arc[h] = a as u32;
+                    heap.push(Reverse((nd.to_bits(), h as u32)));
+                }
+            }
+        }
+    }
+}
+
+/// What the app shows: trips by public transport a weekday today and now, car trips moved
+/// to it (fewer: back to the car), and boardings by route today and now.
+#[derive(Clone, Debug, Default)]
+pub struct Summary {
+    pub ready: bool,
+    pub trips_today: f64,
+    pub trips_now: f64,
+    pub car_moved: f64,
+    pub boardings_today: Vec<f64>,
+    pub boardings_now: Vec<f64>,
+}
+
+/// Riders today and with the edits in force, worked out a few origins each step.
+pub struct Riders {
+    pub zones: Zones,
+    /// Car trips a weekday at full demand by zone pair, as the demand draws them.
+    od: Vec<f32>,
+    /// Public transport's generalised times today, once worked out.
+    today: Option<Vec<f32>>,
+    job: Option<(Skim, bool)>,
+    /// The network with the edits, waiting for today's to finish; none: as today.
+    waiting: Option<Option<Graph>>,
+    /// Routes (for boardings by route).
+    routes: usize,
+    pub summary: Summary,
+    /// Car trips now over today's by zone pair, once worked out (none: as today).
+    pub factor: Option<Arc<Vec<f32>>>,
+    /// Bumped whenever `factor` changes.
+    pub version: u32,
+}
+
+impl Riders {
+    /// Riders for `demand`'s trips (districts by demand edge if known) on today's network
+    /// `graph`; `routes` routes.
+    pub fn new(demand: &Demand, district: Option<&[u8]>, graph: Graph, routes: usize) -> Riders {
+        let (edges, pos) = demand.edges();
+        let (home, work) = demand.weights_by_edge();
+        let weight: Vec<f32> = edges
+            .iter()
+            .map(|&e| {
+                home.get(e as usize).copied().unwrap_or(0.0)
+                    + work.get(e as usize).copied().unwrap_or(0.0)
+            })
+            .collect();
+        let district = district.filter(|d| d.len() == edges.len());
+        let zones = Zones::new(pos, &weight, district);
+        let zone: Vec<u32> = pos.iter().map(|&p| zones.of(p)).collect();
+        let mut rng = Rng::new(0x005E_ED0D);
+        let od = demand.expected_od(&zone, zones.len(), OD_SAMPLES, &mut rng);
+        let skim = Skim::new(graph, &zones);
+        Riders {
+            zones,
+            od,
+            today: None,
+            job: Some((skim, true)),
+            waiting: None,
+            routes,
+            summary: Summary::default(),
+            factor: None,
+            version: 0,
+        }
+    }
+
+    /// Public transport runs as `graph` now (none: as today): work its journeys out again.
+    pub fn set_network(&mut self, graph: Option<Graph>, routes: usize) {
+        self.routes = self.routes.max(routes);
+        if self.today.is_none() {
+            self.waiting = Some(graph);
+            return;
+        }
+        match graph {
+            Some(g) => {
+                let skim = Skim::new(g, &self.zones);
+                self.job = Some((skim, false));
+            }
+            None => {
+                self.job = None;
+                self.clear_now();
+            }
+        }
+    }
+
+    fn clear_now(&mut self) {
+        self.summary.trips_now = self.summary.trips_today;
+        self.summary.boardings_now = self.summary.boardings_today.clone();
+        self.summary.car_moved = 0.0;
+        if self.factor.take().is_some() {
+            self.version += 1;
+        }
+    }
+
+    /// Work on the journeys; true when the car trips' factors changed.
+    pub fn advance(&mut self) -> bool {
+        let Some((skim, is_today)) = self.job.as_mut() else {
+            return false;
+        };
+        let base = if *is_today {
+            None
+        } else {
+            self.today.as_deref()
+        };
+        skim.advance(ORIGINS_PER_STEP, &self.zones, &self.od, base);
+        if !skim.done() {
+            return false;
+        }
+        let (skim, is_today) = self.job.take().unwrap();
+        let boardings = skim.boardings_by_route(self.routes);
+        if is_today {
+            self.summary.trips_today = skim.trips;
+            self.summary.boardings_today = boardings;
+            self.summary.ready = true;
+            self.today = Some(skim.time);
+            self.clear_now();
+            if let Some(waiting) = self.waiting.take() {
+                self.set_network(waiting, self.routes);
+            }
+            return false;
+        }
+        let today = self.today.as_deref().unwrap_or(&[]);
+        let n = self.zones.len();
+        let mut factor = vec![1f32; n * n];
+        let mut moved = 0.0;
+        for o in 0..n {
+            for d in 0..n {
+                let k = o * n + d;
+                if o == d || skim.time[k] == today[k] {
+                    continue;
+                }
+                let car_time = self.zones.car_time(o, d);
+                let before = pt_share(today[k], car_time);
+                let after = pt_share(skim.time[k], car_time);
+                factor[k] = ((1.0 - after) / (1.0 - before).max(1e-3)).min(2.0);
+                moved += (self.od[k] / (1.0 - before).max(1e-3) * (after - before)) as f64;
+            }
+        }
+        self.summary.trips_now = skim.trips;
+        self.summary.boardings_now = boardings;
+        self.summary.car_moved = moved;
+        self.factor = Some(Arc::new(factor));
+        self.version += 1;
+        true
+    }
+
+    /// The demand's shift for its edges now (none: as today).
+    pub fn shift_for(&self, demand: &Demand) -> Option<Shift> {
+        let factor = self.factor.clone()?;
+        let (_, pos) = demand.edges();
+        Some(Shift {
+            zone: pos.iter().map(|&p| self.zones.of(p)).collect(),
+            zones: self.zones.len(),
+            factor,
+        })
+    }
+
+    /// Whether journeys are being worked out.
+    pub fn busy(&self) -> bool {
+        self.job.is_some() || self.waiting.is_some()
+    }
+
+    /// For tests: the car trips and public transport's time today between two zones.
+    pub fn pair_today(&self, o: usize, d: usize) -> (f32, f32) {
+        let k = o * self.zones.len() + d;
+        (self.od[k], self.today.as_ref().map_or(f32::NAN, |t| t[k]))
+    }
+
+    /// For checking (M9d): within zones `within` takes, the car trips today with public
+    /// transport between their zones and without, and their mean generalised times by car
+    /// and public transport (min).
+    pub fn reach_today(&self, within: impl Fn(u8) -> bool) -> Option<[f64; 4]> {
+        let today = self.today.as_deref()?;
+        let n = self.zones.len();
+        let (mut with, mut without, mut car, mut pt) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for o in 0..n {
+            for d in 0..n {
+                let k = o * n + d;
+                let w = self.od[k] as f64;
+                if o == d
+                    || w <= 0.0
+                    || !within(self.zones.district[o])
+                    || !within(self.zones.district[d])
+                {
+                    continue;
+                }
+                if today[k].is_finite() {
+                    with += w;
+                    car += w * self.zones.car_time(o, d) as f64 / 60.0;
+                    pt += w * today[k] as f64 / 60.0;
+                } else {
+                    without += w;
+                }
+            }
+        }
+        Some([with, without, car / with.max(1.0), pt / with.max(1.0)])
+    }
+
+    /// Public transport's share of motorised trips today between zones `within` takes (by
+    /// their district), with constant `asc` (for calibrating `ASC`); none until worked out.
+    pub fn share_today(&self, asc: f32, within: impl Fn(u8) -> bool) -> Option<f64> {
+        let today = self.today.as_deref()?;
+        let n = self.zones.len();
+        let (mut pt, mut all) = (0.0f64, 0.0f64);
+        for o in 0..n {
+            if !within(self.zones.district[o]) {
+                continue;
+            }
+            for d in 0..n {
+                let k = o * n + d;
+                if o == d || self.od[k] <= 0.0 || !within(self.zones.district[d]) {
+                    continue;
+                }
+                let s = share_with(asc, today[k], self.zones.car_time(o, d)) as f64;
+                let total = self.od[k] as f64 / (1.0 - s).max(1e-3);
+                pt += total * s;
+                all += total;
+            }
+        }
+        Some(pt / all.max(1.0))
+    }
+}

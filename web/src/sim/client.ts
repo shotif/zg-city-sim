@@ -96,6 +96,7 @@ export class SimClient {
       case 'volumes':
       case 'transit':
       case 'linePlan':
+      case 'riders':
       case 'reach': {
         const resolve = this.waiting.get(message.id);
         this.waiting.delete(message.id);
@@ -231,6 +232,14 @@ export class SimClient {
       id: ++this.requestId,
       trip,
     });
+  }
+
+  /** Public transport's riders (M9d; `readRiders`). */
+  riders(): Promise<Float32Array> {
+    return this.ask<Extract<FromWorker, { type: 'riders' }>>({
+      type: 'riders',
+      id: ++this.requestId,
+    }).then((m) => m.riders);
   }
 
   /** A new line's way through its stops (M9c; see `TrafficEngine.planLine`). */

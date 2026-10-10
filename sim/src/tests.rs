@@ -2502,6 +2502,135 @@ fn a_new_bus_line_runs_from_stop_to_stop_every_headway() {
     assert!(served.values().all(|&n| n >= 2), "{served:?}");
 }
 
+/// Two zones 3 km apart on a road east, both with homes and jobs (at the roads' starts),
+/// and a bus between them every 10 min through the morning peak.
+fn two_zones() -> (Engine, u32, u32) {
+    use crate::transit::{Transit, TransitData};
+    let (b, e0, e1) = straight_road(3000.0, 1);
+    let mut engine = Engine::new(b.build(), 4);
+    let mut d = TransitData {
+        trip_stops: vec![0],
+        ..TransitData::default()
+    };
+    for k in 0..12 {
+        let start = 6.5 * 3600.0 + 600.0 * k as f32;
+        d.trip_type.push(vtype::BUS);
+        d.trip_route.push(0);
+        d.stop_edge.extend([e0, e1]);
+        d.stop_frac.extend([0.1, 0.1]);
+        d.stop_time.extend([start, start + 300.0]);
+        d.trip_stops.push(d.stop_edge.len() as u32);
+    }
+    engine.transit = Some(Transit::new(d));
+    let demand = Demand::new(
+        &engine.net,
+        vec![e0, e1],
+        &[1.0, 1.0],
+        &[1.0, 1.0],
+        10_000.0,
+    );
+    engine.demand = Some(demand);
+    (engine, e0, e1)
+}
+
+#[test]
+fn riders_take_the_bus_and_more_buses_take_cars_off_the_road() {
+    use crate::riders::{
+        ASC, BETA, BOARDING, CAR_EXTRA, WAIT_WEIGHT, WALK_DETOUR, WALK_SPEED, WALK_WEIGHT, pt_share,
+    };
+    let (mut engine, _, _) = two_zones();
+    engine.set_time(0.0);
+    engine.start_riders(None);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    assert_eq!(riders.zones.len(), 2);
+    assert!(riders.summary.ready && !riders.busy());
+    // East: walk to the stop 300 m away, wait half of 10 min, board, ride 5 min and walk
+    // again (walking and waiting count twice); no bus west.
+    let (east, west) = if riders.zones.centre[0].0 < riders.zones.centre[1].0 {
+        (0, 1)
+    } else {
+        (1, 0)
+    };
+    let walk = WALK_WEIGHT * 298.8 * WALK_DETOUR / WALK_SPEED;
+    let (trips, time) = riders.pair_today(east, west);
+    assert!(trips > 4_000.0, "{trips}");
+    assert!((time - (2.0 * walk + WAIT_WEIGHT * 300.0 + BOARDING + 300.0)).abs() < 2.0);
+    assert!(riders.pair_today(west, east).1.is_infinite());
+    let share = pt_share(time, 3000.0 * 1.3 / (30.0 / 3.6) + CAR_EXTRA);
+    assert!(share > 0.3 && share < 0.95, "{share} ({ASC}, {BETA})");
+    let today = riders.summary.trips_today;
+    assert!(today > 0.0);
+    assert!((riders.summary.boardings_today[0] - today).abs() < 1e-6 * today);
+    assert!(riders.factor.is_none());
+
+    // Twice as often: shorter waits, more riders, fewer car trips east (none moved west,
+    // where no bus runs).
+    let twice = Edit::Frequency {
+        route: 0,
+        factor: 2.0,
+    };
+    engine.set_edits(&[twice]);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    let factor = riders.factor.clone().expect("car trips moved");
+    let (to_east, to_west) = (factor[east * 2 + west], factor[west * 2 + east]);
+    assert!(to_east < 1.0 && to_east > 0.3, "{to_east}");
+    assert_eq!(to_west, 1.0);
+    assert!(riders.summary.trips_now > today);
+    assert!(riders.summary.car_moved > 0.0);
+
+    // Taken back: as today.
+    engine.set_edits(&[]);
+    let riders = engine.riders.as_ref().unwrap();
+    assert!(riders.factor.is_none());
+    assert_eq!(riders.summary.trips_now, today);
+}
+
+#[test]
+fn car_trips_moved_to_public_transport_are_drawn_only_where_it_changed() {
+    use crate::demand::Shift;
+    use std::sync::Arc;
+    let count = |factor: Option<f32>| {
+        let (engine, e0, _) = two_zones();
+        let mut demand = Demand::new(
+            &engine.net,
+            vec![e0, e0 + 1],
+            &[1.0, 1.0],
+            &[1.0, 1.0],
+            20_000.0,
+        );
+        demand.set_shift(factor.map(|f| Shift {
+            zone: vec![0, 1],
+            zones: 2,
+            factor: Arc::new(vec![1.0, f, f, 1.0]),
+        }));
+        let mut rng = Rng::new(9);
+        let mut trips = Vec::new();
+        for k in 0..2_880 {
+            demand.generate(k as f64 * 30.0, 30.0, 1.0, &mut rng, &mut |t| {
+                trips.push((t.from, t.to, t.depart.to_bits()))
+            });
+        }
+        trips
+    };
+    // A factor of 1 draws nothing: the same trips as without.
+    let today = count(None);
+    assert_eq!(count(Some(1.0)), today);
+    // Half the car trips between the zones, or half as many again; none within one.
+    let between = |trips: &[(u32, u32, u64)]| trips.iter().filter(|t| t.0 != t.1).count() as f64;
+    let n = between(&today);
+    assert!(n > 5_000.0, "{n}");
+    let half = between(&count(Some(0.5))) / n;
+    let more = between(&count(Some(1.5))) / n;
+    assert!((half - 0.5).abs() < 0.05, "{half}");
+    assert!((more - 1.5).abs() < 0.05, "{more}");
+}
+
 #[test]
 fn a_crossroads_made_a_roundabout_keeps_traffic_and_buses_going() {
     use crate::transit::{Transit, TransitData};

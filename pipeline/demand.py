@@ -545,6 +545,12 @@ def build_demand(root: Path = OUTPUT_DIR) -> dict:
     home = np.bincount(edge_of[attached], trip_weight[attached], n_edges)
     work = np.bincount(edge_of[attached], jobs[attached], n_edges)
     used = np.flatnonzero((home > 0) | (work > 0))
+    # The City's district of each street's homes and jobs (the one with most of them;
+    # len(names) outside the City), for public transport's riders by district (M9d).
+    weight = trip_weight + jobs
+    by_district = np.zeros((n_edges, len(names) + 1))
+    np.add.at(by_district, (edge_of[attached], district[attached]), weight[attached])
+    edge_district = by_district[used].argmax(axis=1)
     gateway_arrays, gateways = build_gateways(net, n_index)
 
     out_dir = root / "demand"
@@ -554,6 +560,7 @@ def build_demand(root: Path = OUTPUT_DIR) -> dict:
             "demandEdge": used.astype(np.uint32),
             "demandHome": home[used].astype(np.float32),
             "demandWork": work[used].astype(np.float32),
+            "demandDistrict": edge_district.astype(np.uint8),
             **gateway_arrays,
         },
     )

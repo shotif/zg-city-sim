@@ -20,6 +20,7 @@ use crate::edits::{self, Edit, Loaded};
 use crate::idm;
 use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::pedestrians::{self, MIN_WALK, OWN_SIGNAL_GAP, OWN_SIGNAL_YELLOW, Pedestrians};
+use crate::riders::{Graph, Riders};
 use crate::rng::Rng;
 use crate::router::{LandmarkBuild, Landmarks, Router};
 use crate::transit::{
@@ -521,6 +522,12 @@ pub struct Engine {
     pub demand: Option<Demand>,
     /// Timetabled trams and buses.
     pub transit: Option<Transit>,
+    /// Public transport's riders and the car trips edits move (M9d), and the version of
+    /// their factors the demand has.
+    pub riders: Option<Riders>,
+    riders_applied: u32,
+    /// The public transport edits the riders were last worked out for.
+    riders_key: Vec<u32>,
     /// Scale applied to generated demand (1 = full).
     pub demand_scale: f32,
     /// How the weather changes driving (M6b).
@@ -990,6 +997,9 @@ impl Engine {
             waiting: VecDeque::new(),
             demand: None,
             transit: None,
+            riders: None,
+            riders_applied: 0,
+            riders_key: Vec::new(),
             demand_scale: 1.0,
             weather: Weather::CLEAR,
             stats: Stats::default(),
@@ -1083,6 +1093,7 @@ impl Engine {
         self.lane_changes();
         lap(self, 3);
         self.start_transit();
+        self.advance_riders();
         self.insert_vehicles();
         self.replan_some();
         self.reroute_en_route();
@@ -2486,6 +2497,69 @@ impl Engine {
             .lane_links(lane)
             .find(|&l| self.net.link_allow[l as usize] & vclass != 0)
             .unwrap_or(NONE)
+    }
+
+    // ---- riders (M9d) ----------------------------------------------------------------------
+
+    /// Work out public transport's riders today (and the car trips edits move) for the
+    /// demand and timetable loaded; `district` of each demand edge if known.
+    pub fn start_riders(&mut self, district: Option<&[u8]>) {
+        let (Some(demand), Some(tr)) = (self.demand.as_ref(), self.transit.as_ref()) else {
+            return;
+        };
+        let graph = Graph::new(&self.net, &tr.data, 0..tr.timetabled as u32);
+        let routes = tr
+            .data
+            .trip_route
+            .iter()
+            .map(|&r| r as usize + 1)
+            .max()
+            .unwrap_or(0);
+        self.riders = Some(Riders::new(demand, district, graph, routes));
+        self.riders_key.clear();
+    }
+
+    fn advance_riders(&mut self) {
+        let Some(riders) = self.riders.as_mut() else {
+            return;
+        };
+        riders.advance();
+        if riders.version != self.riders_applied {
+            self.riders_applied = riders.version;
+            self.refresh_shift();
+        }
+    }
+
+    /// Give the demand the car trips moved now (after the riders or the demand change).
+    pub fn refresh_shift(&mut self) {
+        if let (Some(riders), Some(demand)) = (self.riders.as_ref(), self.demand.as_mut()) {
+            demand.set_shift(riders.shift_for(demand));
+        }
+    }
+
+    /// The timetable runs as edited: work the riders out again where public transport's
+    /// edits (`key`: their records) changed.
+    fn riders_for_service(&mut self, key: Vec<u32>) {
+        if self.riders.is_none() || key == self.riders_key {
+            return;
+        }
+        self.riders_key = key;
+        let Some(tr) = self.transit.as_ref() else {
+            return;
+        };
+        let graph = (!self.riders_key.is_empty())
+            .then(|| Graph::new(&self.net, &tr.data, tr.order.iter().copied()));
+        let routes = tr
+            .data
+            .trip_route
+            .iter()
+            .map(|&r| r as usize + 1)
+            .max()
+            .unwrap_or(0);
+        if let Some(riders) = self.riders.as_mut() {
+            riders.set_network(graph, routes);
+        }
+        self.advance_riders();
     }
 
     // ---- scheduled trams and buses --------------------------------------------------------------
@@ -4417,6 +4491,13 @@ impl Engine {
             }
             tr.set_service(&frequencies, &made, self.time - tr.day_start);
             self.transit = Some(tr);
+            // Riders again for the public transport edits in force.
+            let key: Vec<u32> = applied
+                .iter()
+                .filter(|e| matches!(e, Edit::Frequency { .. } | Edit::Line(_)))
+                .flat_map(|e| e.encode())
+                .collect();
+            self.riders_for_service(key);
         }
         let valid = self
             .router

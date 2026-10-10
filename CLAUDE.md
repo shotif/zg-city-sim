@@ -38,11 +38,12 @@ Read these before changing anything:
 | `sim/src/weather.rs` | The weather's factors on desired speed, headway and acceleration (M6b). |
 | `sim/src/transit.rs` | Trams, buses and trains on timetable; lines run more or less often by frequency edits (M9b: trips cancelled, or copies of them appended to the timetable); new lines' trips (M9c). |
 | `sim/src/pedestrians.rs` | Pedestrians at crossings (M8c): arrivals by the hour, zebras, walking with a junction's signals, crossings with signals of their own. |
+| `sim/src/riders.rs` | Public transport's riders (M9d): 1 km zones, journeys between them from the timetable as it runs in the morning peak (frequency-based), the logit split with the car, boardings by route, and the factors that move car trips when edits change public transport. |
 | `pipeline/cycling.py` | Cycle tracks and lanes (M8d): the City's and OSM's, matched to the roads they run along (`edgeCycleway`); bike trip ends by the City's homes and jobs. |
 | `pipeline/data/bike_counts_2014.json` | The City's 2014 bike counts at 7 places, for the validation report (M8d). |
 | `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
-| `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck; `--features profile` times each phase and the route searches), `day.rs` (a whole weekday, for validation, with the delay queued at each junction by cause), `compare.rs` (one network through the morning peak, for a project's before and after) and `routes.rs` (times route searches, and how much longer routes get with other heuristic weights). |
+| `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck; `--features profile` times each phase and the route searches), `day.rs` (a whole weekday, for validation, with the delay queued at each junction by cause), `compare.rs` (one network through the morning peak, for a project's before and after), `routes.rs` (times route searches, and how much longer routes get with other heuristic weights) and `riders.rs` (public transport's riders today, and the constant calibrated to the Transport Master Plan's split). |
 | `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (terrain in tiles coarser with distance, roads, buildings, vehicles and their models, traffic map, closures, news, edits, the sun, daylight and night lights, the weather); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, with tram tracks if asked, roundabouts and signal programs, built into the network the engine runs), the junctions' movements for the signal editor (`signals.ts`) and new public transport lines' stops (`lines.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool, buildings that grow and the homes and jobs they add to the traffic's demand, land value and demand per zone, the budget); `src/ui/` the HUD, panels (stations and level crossings on the traffic map: `railMarkers.ts`; the Public transport panel: `transitPanel.ts`, over the timetable in `src/world/transitLines.ts`), sound and the `?perf` overlay; `src/camera/` the views. |
 | `.github/workflows/` | `deploy.yml` (build, test, deploy main) and `live-data.yml` (copies the City's closures feed and DHMZ's weather in Zagreb to the `live-data` branch every 15 minutes). |
 
@@ -82,7 +83,7 @@ Environment variables for the native runs:
 - `NO_REROUTE=1` (the `day` and `run` examples) keeps drivers on the route they chose at the start, as before M7g.
 - `NO_PEDESTRIANS=1` (the `day`, `run` and `compare` examples) leaves pedestrians out, as before M8c; `PEDESTRIAN_SCALE=0.5` lets half of the estimated pedestrians arrive.
 - `NO_BIKES=1` (the `day`, `run` and `compare` examples) leaves bikes out, as before M8d; `BIKE_SCALE=0.5` runs half of the estimated bike trips.
-- `FREQUENCY=2` (the `run` example) runs every tram and bus line that many times as often (M9b).
+- `FREQUENCY=2` (the `run`, `day` and `riders` examples) runs every tram and bus line that many times as often (M9b), moving car trips to public transport (M9d).
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite
@@ -125,6 +126,7 @@ Environment variables for the native runs:
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
 | Pedestrians a day per crossing (`USES_PER_PERSON`, `WALKERS_PER_STOP`, `HOURLY`) | `pipeline/pedestrians.py` | 0.3 uses a day per resident or job beside a crossing, falling to none at 400 m; 6 per bus or tram stopping within 150 m (estimates) |
 | Pedestrians crossing (`WALK_SPEED`, `MIN_WALK`, `OWN_SIGNAL_GAP`) | `sim/src/pedestrians.rs` | 1.2 m/s plus 2 s to step off; at signals at least 5 s of walk before the clearance; own signals red at most once a minute |
+| Public transport's riders (`ZONE`, `PEAK`, `ACCESS`, `TRANSFER`, `WALK_WEIGHT`, `WAIT_WEIGHT`, `BOARDING`, `CAR_SPEED`, `CAR_EXTRA`, `BETA`, `ASC`; `FARE`) | `sim/src/riders.rs`, `web/src/grow/economy.ts` | 1 km zones; 06:30-08:30; stops within 1 km, changes within 250 m; walking and waiting count twice, 3 min a boarding; cars 30 km/h plus 8 min; 0.04 a generalised minute, constant 1.682 (45.8 % of motorised trips in the City); fares €0.21 a boarding |
 | Bike trips (`BIKE_TRIPS_DAILY`, `BIKE_DECAY`) | `pipeline/cycling.py`, `sim/src/demand.rs` | 42,000 a weekday in the City, all simulated whatever the cars' share; 2 km decay |
 | Cycle tracks on roads (`ALONG`, `SHARE`) | `pipeline/cycling.py` | a cycle line within 12 m alongside half a road's length |
 | Bikes' routes and speed (`MIXED_ROAD`, `BUSY_ROAD`, `vtype::BIKE`) | `sim/src/engine.rs`, `sim/src/vtype.rs` | roads without a cycle track count 1.15 times as long (one lane each way) or 1.5 times (more); 18 km/h times each rider's speed factor |

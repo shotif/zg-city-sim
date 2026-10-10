@@ -22,6 +22,8 @@ struct State {
     demand_edges: Vec<u32>,
     demand_home: Vec<f32>,
     demand_work: Vec<f32>,
+    /// The City's district of each demand edge (M9d), if loaded.
+    demand_district: Vec<u8>,
     gateway_entry: Vec<u32>,
     gateway_exit: Vec<u32>,
     gateway_daily: Vec<f32>,
@@ -49,6 +51,8 @@ struct State {
     transit_service: Vec<u32>,
     /// A new line's way as its stops are picked (`zg_plan_line`).
     line_plan: Vec<u32>,
+    /// Public transport's riders (`zg_riders`).
+    riders: Vec<f32>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -98,6 +102,7 @@ fn alloc_extra_array(s: &mut State, name: &str, count: usize, elem_size: usize) 
     let c = &mut s.crossings;
     let (ptr, size) = match name {
         "demandEdge" => (alloc(&mut s.demand_edges, count), 4),
+        "demandDistrict" => (alloc(&mut s.demand_district, count), 1),
         "demandHome" => (alloc(&mut s.demand_home, count), 4),
         "demandWork" => (alloc(&mut s.demand_work, count), 4),
         "gatewayEntry" => (alloc(&mut s.gateway_entry, count), 4),
@@ -239,6 +244,9 @@ pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
                 daily,
             ));
         }
+        // Public transport's riders, worked out as the simulation runs (M9d).
+        let district = std::mem::take(&mut s.demand_district);
+        engine.start_riders((!district.is_empty()).then_some(&district[..]));
         s.engine = Some(engine);
         0
     })
@@ -297,6 +305,7 @@ pub extern "C" fn zg_set_demand(daily_trips: f64) -> i32 {
         match e.demand.as_mut() {
             Some(d) => {
                 d.set_weights(&e.net, edges, &s.demand_home, &s.demand_work, daily_trips);
+                e.refresh_shift();
                 0
             }
             None => -1,
@@ -555,6 +564,39 @@ pub unsafe extern "C" fn zg_plan_line(words: *const u32, n: usize) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_line_plan_ptr() -> *const u32 {
     with_state(|s| s.line_plan.as_ptr())
+}
+
+/// Public transport's riders (M9d): `[worked out (0 or 1), still working (0 or 1), trips a
+/// weekday today, now, car trips moved to public transport, routes, boardings by route
+/// today..., now...]`; returns how many numbers, `zg_riders_ptr` points to them (none
+/// without riders).
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_riders() -> u32 {
+    with_state(|s| {
+        s.riders.clear();
+        if let Some(r) = s.engine.as_ref().and_then(|e| e.riders.as_ref()) {
+            let m = &r.summary;
+            let routes = m.boardings_today.len().max(m.boardings_now.len());
+            s.riders.extend([
+                m.ready as u8 as f32,
+                r.busy() as u8 as f32,
+                m.trips_today as f32,
+                m.trips_now as f32,
+                m.car_moved as f32,
+                routes as f32,
+            ]);
+            for list in [&m.boardings_today, &m.boardings_now] {
+                s.riders
+                    .extend((0..routes).map(|k| list.get(k).copied().unwrap_or(0.0) as f32));
+            }
+        }
+        s.riders.len() as u32
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_riders_ptr() -> *const f32 {
+    with_state(|s| s.riders.as_ptr())
 }
 
 #[unsafe(no_mangle)]

@@ -21,6 +21,8 @@ import {
   editCost,
   editsCost,
   euros,
+  FARE,
+  faresFrom,
   loadBudget,
   saveBudget,
 } from '../src/grow/economy';
@@ -145,6 +147,20 @@ describe('what building costs', () => {
       (name, _mode, isNew) => (isNew && name === '400' ? 500 : undefined),
     );
     expect(line.service).toBeCloseTo(500 * SERVICE_DAYS.bus * VEHICLE_KM.bus);
+    // Fares from riders gained by route (M9d), lost on another; trains left out.
+    const riders = {
+      ready: true,
+      busy: false,
+      today: 0,
+      now: 0,
+      moved: 0,
+      boardingsToday: Float32Array.from([1000, 500, 300]),
+      boardingsNow: Float32Array.from([1200, 400, 900]),
+    };
+    const modes = ['tram', 'bus', 'train'] as const;
+    expect(faresFrom(riders, (r) => modes[r])).toBeCloseTo(
+      200 * FARE * SERVICE_DAYS.tram - 100 * FARE * SERVICE_DAYS.bus,
+    );
     // A line the timetable does not run costs nothing.
     expect(
       editCost({ kind: 'frequency', line: '99', mode: 'bus', factor: 2 }, undefined, km).service,
@@ -201,7 +217,7 @@ describe('the balance', () => {
   it('flows a year a simulated day, pays for building and refuses what it cannot', () => {
     const budget = new Budget();
     expect(budget.balance).toBe(BASE_INCOME);
-    budget.yearly = { base: BASE_INCOME, tax: 1e6, fee: 2e5, upkeep: 2e5, service: 0 };
+    budget.yearly = { base: BASE_INCOME, tax: 1e6, fee: 2e5, upkeep: 2e5, service: 0, fares: 0 };
     budget.tick(6 * 3600);
     budget.tick(18 * 3600);
     // Half a day: half a year's income less upkeep.

@@ -294,6 +294,39 @@ fn load_demand(dir: &str) -> Option<DemandData> {
     })
 }
 
+/// Edits running every tram and bus line `factor` times as often (M9b).
+pub fn frequency_edits(engine: &Engine, factor: f32) -> Vec<Edit> {
+    let routes: std::collections::BTreeSet<u16> = engine
+        .transit
+        .as_ref()
+        .map(|tr| {
+            let d = &tr.data;
+            (0..tr.timetabled)
+                .filter(|&t| matches!(d.trip_type[t], vtype::TRAM | vtype::BUS))
+                .map(|t| d.trip_route[t])
+                .collect()
+        })
+        .unwrap_or_default();
+    routes
+        .iter()
+        .map(|&route| Edit::Frequency {
+            route: route as u32,
+            factor,
+        })
+        .collect()
+}
+
+/// The City's district of each demand edge (M9d; empty if the data has none).
+pub fn load_districts(demand_dir: &str) -> Vec<u8> {
+    let Some((arrays, blob)) = read_packed(demand_dir, "demand") else {
+        return Vec::new();
+    };
+    match arrays.get("demandDistrict") {
+        Some((_, offset, length)) => blob[*offset..*offset + length].to_vec(),
+        None => Vec::new(),
+    }
+}
+
 /// Demand from `demand_dir` (with traffic across the map's edge unless NO_GATEWAYS is
 /// set), or a placeholder from the network. `trips`: car trips a day within the map (0 =
 /// from the residents).
@@ -411,29 +444,15 @@ fn main() {
     engine.demand = Some(demand);
     engine.demand_scale = demand_scale(&format!("{dir}/../demand"));
     println!("demand scale: {}", engine.demand_scale);
-    // FREQUENCY=2: every tram and bus line run that many times as often (M9b).
+    // Public transport's riders (M9d); FREQUENCY=2: every tram and bus line run that many
+    // times as often (M9b).
+    let districts = load_districts(&format!("{dir}/../demand"));
+    engine.start_riders((!districts.is_empty()).then_some(&districts[..]));
     if let Some(factor) = std::env::var("FREQUENCY")
         .ok()
         .and_then(|v| v.parse::<f32>().ok())
     {
-        let routes: std::collections::BTreeSet<u16> = engine
-            .transit
-            .as_ref()
-            .map(|tr| {
-                let d = &tr.data;
-                (0..d.trips())
-                    .filter(|&t| matches!(d.trip_type[t], vtype::TRAM | vtype::BUS))
-                    .map(|t| d.trip_route[t])
-                    .collect()
-            })
-            .unwrap_or_default();
-        let edits: Vec<Edit> = routes
-            .iter()
-            .map(|&route| Edit::Frequency {
-                route: route as u32,
-                factor,
-            })
-            .collect();
+        let edits = frequency_edits(&engine, factor);
         let applied = engine.set_edits(&edits);
         println!("frequency: {applied} tram and bus lines {factor} times as often");
     }

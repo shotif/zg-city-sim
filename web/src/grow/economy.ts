@@ -52,11 +52,16 @@
  * as drivers' pay is most of them (an estimate: ZET does not split its costs by mode). A
  * weekday's timetable is about 1/244 of a year's tram-km and 1/308 of its bus-km (ZET's
  * 2024 km over the weekday timetable's). A new line (M9c) costs the same per vehicle-km it
- * runs; building its stops is left out. Fares from riders gained or lost are left out.
+ * runs; building its stops is left out.
+ *
+ * Fares (M9d): €0.21 for each boarding gained or lost (ZET's 2024 passenger income,
+ * €37.88 million with the City's payment for those who ride free, over the 179.1 million
+ * passengers it carried), the engine's estimate of a weekday's change times the mode's
+ * weekdays a year as above.
  */
 import type { Point } from '../edit/builder';
 import type { Edit } from '../edit/edits';
-import type { Mode } from '../world/transitLines';
+import type { Mode, Riders } from '../world/transitLines';
 import { ARCHETYPES, type Grown, NET_AREA, heights, occupants } from './growth';
 
 export const BASE_INCOME = 63_900_000;
@@ -89,6 +94,19 @@ export const LIGHTS_UPKEEP = 3_000;
 /** ZET's cost per vehicle-km (€), and weekdays' service a year comes to. */
 export const VEHICLE_KM: Record<Mode, number> = { tram: 7.0, bus: 4.9, train: 0 };
 export const SERVICE_DAYS: Record<Mode, number> = { tram: 244, bus: 308, train: 0 };
+export const FARE = 0.21;
+
+/** Fares a year from the boardings the edits gain (lose, negative): by route, its mode
+ * (`modeOf`; none: left out). */
+export function faresFrom(riders: Riders, modeOf: (route: number) => Mode | undefined): number {
+  let total = 0;
+  for (let r = 0; r < riders.boardingsNow.length; r++) {
+    const mode = modeOf(r);
+    if (!mode) continue;
+    total += (riders.boardingsNow[r] - riders.boardingsToday[r]) * FARE * SERVICE_DAYS[mode];
+  }
+  return total;
+}
 /** Seconds of simulated time a budget year takes. */
 export const YEAR = 86_400;
 
@@ -213,6 +231,8 @@ export interface Yearly {
   upkeep: number;
   /** Public transport run more (or less, negative) than timetabled. */
   service: number;
+  /** Fares from riders gained (lost, negative) by public transport edits. */
+  fares: number;
 }
 
 export interface SavedBudget {
@@ -239,7 +259,7 @@ export class Budget {
   /** Cost of the edits in force, as paid. */
   spent: number;
   readonly history: [number, number][];
-  yearly: Yearly = { base: BASE_INCOME, tax: 0, fee: 0, upkeep: 0, service: 0 };
+  yearly: Yearly = { base: BASE_INCOME, tax: 0, fee: 0, upkeep: 0, service: 0, fares: 0 };
   /** Communal contributions paid since the page was opened. */
   contributions = 0;
   private last?: number;
@@ -288,7 +308,7 @@ export class Budget {
     const dt = Math.min(now - this.last, YEAR);
     this.last = now;
     const y = this.yearly;
-    this.balance += ((y.base + y.tax + y.fee - y.upkeep - y.service) * dt) / YEAR;
+    this.balance += ((y.base + y.tax + y.fee + y.fares - y.upkeep - y.service) * dt) / YEAR;
     this.sample(now);
   }
 

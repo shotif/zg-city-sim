@@ -287,6 +287,11 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
       ]);
       break;
     }
+    case 'riders': {
+      const riders = engine ? engine.riders() : new Float32Array(0);
+      post({ type: 'riders', id: message.id, riders }, [riders.buffer]);
+      break;
+    }
     case 'planLine': {
       const plan = engine ? engine.planLine(message.words) : new Uint32Array(0);
       post({ type: 'linePlan', id: message.id, plan }, [plan.buffer]);

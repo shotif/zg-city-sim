@@ -45,6 +45,8 @@ export interface EngineExports {
   zg_transit_service_ptr(): number;
   zg_plan_line(words: number, count: number): number;
   zg_line_plan_ptr(): number;
+  zg_riders(): number;
+  zg_riders_ptr(): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
 }
@@ -327,6 +329,15 @@ export class TrafficEngine {
     return len > 0
       ? new Uint32Array(this.memory, ex.zg_line_plan_ptr(), len).slice()
       : new Uint32Array(0);
+  }
+
+  /** Public transport's riders (M9d; `readRiders`). */
+  riders(): Float32Array {
+    const ex = this.exports;
+    const len = ex.zg_riders();
+    return len > 0
+      ? new Float32Array(this.memory, ex.zg_riders_ptr(), len).slice()
+      : new Float32Array(0);
   }
 
   /** The trips that run with the frequency edits in force (M9b; `Timetable.setService`). */

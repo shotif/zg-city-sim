@@ -64,6 +64,33 @@ export interface TimetableArrays {
   transitStopRef: ArrayLike<number>;
 }
 
+/** Public transport's riders a weekday as the engine estimates them (M9d): trips today and
+ * with the edits in force, car trips moved off the roads, boardings by route. */
+export interface Riders {
+  ready: boolean;
+  busy: boolean;
+  today: number;
+  now: number;
+  moved: number;
+  boardingsToday: Float32Array;
+  boardingsNow: Float32Array;
+}
+
+/** The engine's riders (sim `zg_riders`); undefined without. */
+export function readRiders(words: Float32Array): Riders | undefined {
+  if (words.length < 6) return undefined;
+  const routes = words[5];
+  return {
+    ready: words[0] === 1,
+    busy: words[1] === 1,
+    today: words[2],
+    now: words[3],
+    moved: words[4],
+    boardingsToday: words.subarray(6, 6 + routes),
+    boardingsNow: words.subarray(6 + routes, 6 + 2 * routes),
+  };
+}
+
 /** A stop visit that names no stop (a train crossing the map's edge). */
 export const NO_STOP = 0xffffffff;
 /** Colours of the lines by mode. */

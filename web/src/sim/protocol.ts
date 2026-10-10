@@ -51,7 +51,9 @@ export type ToWorker =
   /** The buses, trams and trains running, and (if `trip` is not -1) that trip's path. */
   | { type: 'transit'; id: number; trip: number }
   /** Plan a new line's way (M9c, `TrafficEngine.planLine`). */
-  | { type: 'planLine'; id: number; words: Uint32Array };
+  | { type: 'planLine'; id: number; words: Uint32Array }
+  /** Public transport's riders (M9d, `TrafficEngine.riders`). */
+  | { type: 'riders'; id: number };
 
 export interface FrameMessage {
   type: 'frame';
@@ -97,4 +99,5 @@ export type FromWorker =
    * how late it is (s), at simulated time `time`. */
   | { type: 'transit'; id: number; time: number; path: Uint32Array; running: Float32Array }
   | { type: 'linePlan'; id: number; plan: Uint32Array }
+  | { type: 'riders'; id: number; riders: Float32Array }
   | { type: 'error'; message: string };

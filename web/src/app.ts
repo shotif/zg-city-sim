@@ -54,7 +54,7 @@ import { type DemandArrays, type EdgeDemand, mergeDemand } from './grow/demand';
 import { loadLots } from './grow/lots';
 import { BudgetTool } from './grow/budgetTool';
 import { CitySound } from './ui/sound';
-import { type LineKm, editCost, editsCost, euros } from './grow/economy';
+import { type LineKm, editCost, editsCost, euros, faresFrom } from './grow/economy';
 import { type ZoningTool, setUpZoning } from './grow/zoningTool';
 import { DATA_URL, type WorldManifest, attributions, loadManifest } from './manifest';
 import { SimClient } from './sim/client';
@@ -69,9 +69,11 @@ import {
   type LinesFile,
   MODE_COLOR,
   type NewWay,
+  type Riders,
   type Route,
   Timetable,
   type TimetableArrays,
+  readRiders,
 } from './world/transitLines';
 import { ProjectsSection } from './ui/projectsSection';
 import { junctionName } from './edit/signals';
@@ -394,6 +396,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let timetable: Timetable | undefined;
   let serviceNow: Uint32Array | undefined;
   let frequenciesNow = new Map<number, number>();
+  /** Public transport's riders as the engine last said (M9d). */
+  let ridersNow: Riders | undefined;
   /** New lines' ways sent to the engine with the edits, in order (M9c). */
   let newWaysNow: NewWay[] = [];
   /** Change the edits in force (set up with the Build tools); cost them again once the
@@ -1540,6 +1544,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
                   },
                 });
                 transitPanel.setFrequencies(frequenciesNow);
+                transitPanel.setRiders(ridersNow);
                 transitMarkers = markers;
                 debug.transit = transitPanel;
                 transitPanel.setVisible(transitWanted);
@@ -1711,6 +1716,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     const marker = new THREE.Vector3();
     let lastHudSim = 0;
     let lastTransit = 0;
+    let lastRiders = 0;
     /** Draw a frame if anything changed; whether it drew. */
     const drawFrame = (time: number): boolean => {
       const moving = activeRig.update(time);
@@ -1764,6 +1770,17 @@ export async function startApp(container: HTMLElement): Promise<void> {
           const client = sim;
           void client.transit(-1).then(({ running }) => {
             panel.update(client.displayTime(performance.now()), running);
+          });
+        }
+        // Public transport's riders (M9d), every three seconds: the panel, and the fares.
+        if (now - lastRiders > 3000) {
+          lastRiders = now;
+          void sim.riders().then((words) => {
+            ridersNow = readRiders(words);
+            transitPanel?.setRiders(ridersNow);
+            const t = timetable;
+            if (ridersNow?.ready && !ridersNow.busy && t)
+              budgetTool.setFares(faresFrom(ridersNow, (r) => t.routes[r]?.mode));
           });
         }
         simChanged = false;
