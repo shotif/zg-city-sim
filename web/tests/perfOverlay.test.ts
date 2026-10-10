@@ -36,5 +36,12 @@ describe('frame statistics', () => {
     });
     expect(text).toContain('6 % of a core');
     expect(text).toContain('12,345 vehicles');
+    expect(text).toContain('routes by A*');
+    // Once routes run on a contraction hierarchy (M11c).
+    const later = perfText({
+      ...empty,
+      sim: { stepMs: 2, dt: 0.5, rate: 16, speed: 16, vehicles: 1, hierarchyS: 9.25 },
+    });
+    expect(later).toContain('contraction hierarchy (from 9.3 s after load)');
   });
 });

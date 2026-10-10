@@ -15,6 +15,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 
+use crate::cch::{Cch, Hierarchy, Times};
 use crate::demand::Demand;
 use crate::edits::{self, Edit, Loaded};
 use crate::idm;
@@ -22,7 +23,7 @@ use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::pedestrians::{self, MIN_WALK, OWN_SIGNAL_GAP, OWN_SIGNAL_YELLOW, Pedestrians};
 use crate::riders::{CAR_ORIGINS_PER_STEP, Graph, NO_ZONE, Riders};
 use crate::rng::Rng;
-use crate::router::{LandmarkBuild, Landmarks, Query, Router, purpose};
+use crate::router::{LandmarkBuild, Landmarks, Query, Router, purpose, route_hash};
 use crate::transit::{
     FREQUENCY_RANGE, LINE_DWELL, LINE_HEADWAY, LINE_PACE, LINE_TRIPS, LinePlan, PendingRun,
     Transit, TransitRun,
@@ -128,7 +129,7 @@ const LANE_CHANGE_SECONDS: f32 = 10.0;
 /// How many short edges ahead lane choice looks through.
 const SHORT_EDGE_LOOKAHEAD: u32 = 4;
 /// Routing cost of a closed road (s): routes avoid it wherever there is another way.
-const CLOSED_TIME: f32 = 3_600.0;
+pub(crate) const CLOSED_TIME: f32 = 3_600.0;
 /// After an edit, every vehicle re-plans its route within this time (s); those whose way on
 /// the edit closed re-plan at once.
 const REPLAN_TIME: f32 = 60.0;
@@ -529,6 +530,11 @@ pub struct Engine {
     replan_per_step: usize,
     /// Landmark tables being rebuilt after an edit made roads faster.
     landmark_job: Option<LandmarkBuild>,
+    /// The contraction hierarchy car, truck and bike routes are searched on, once built
+    /// (M11; `build_hierarchy`); A* until then, and for transit legs.
+    hierarchy: Option<Hierarchy>,
+    /// Scratch for searches to every edge on the hierarchy (by rank).
+    one_to_all: Vec<f32>,
     /// Vehicle-seconds queued at each junction, by why the queue's front vehicle waits
     /// (`Holdup as usize`); measured only while `track_delay` is set (M7a).
     pub delay: Vec<[f32; Holdup::COUNT]>,
@@ -990,6 +996,8 @@ impl Engine {
             replan: Vec::new(),
             replan_per_step: 0,
             landmark_job: None,
+            hierarchy: None,
+            one_to_all: Vec::new(),
             delay: Vec::new(),
             delay_root: Vec::new(),
             track_delay: false,
@@ -1104,6 +1112,90 @@ impl Engine {
         (&self.free_time, &self.bike_time)
     }
 
+    /// Build the contraction hierarchy for the network (M11): car, truck and bike routes are
+    /// searched on it from then on, transit legs still by A*.
+    pub fn build_hierarchy(&mut self) {
+        self.hierarchy = Some(Hierarchy::new(Cch::build(&self.net), &self.net));
+    }
+
+    /// Route on a hierarchy in `order` (edges, lowest rank first, as `cch::order_words`
+    /// gives them): the browser orders the routing graph in another worker (M11c), and roads
+    /// drawn meanwhile rank above it. False if it ranks less than nine edges in ten of the
+    /// network's (A* goes on: so poor an order would make a slow hierarchy).
+    pub fn set_hierarchy_order(&mut self, order: &[u32]) -> bool {
+        if Cch::coverage(&self.net, order) < 0.9 {
+            return false;
+        }
+        self.hierarchy = Some(Hierarchy::new(
+            Cch::with_edge_order(&self.net, order),
+            &self.net,
+        ));
+        true
+    }
+
+    /// Say that `travel_time` was changed from outside (tests, tools): searches on the
+    /// hierarchy customise it again.
+    pub fn travel_times_changed(&mut self) {
+        if let Some(h) = self.hierarchy.as_mut() {
+            h.travel_changed();
+        }
+    }
+
+    /// The hierarchy routes are searched on, if built.
+    pub fn hierarchy(&self) -> Option<&Hierarchy> {
+        self.hierarchy.as_ref()
+    }
+
+    /// The travel times a vehicle type chooses routes by.
+    fn times_for(&self, vtype: u8) -> Times {
+        if vtype == vtype::BIKE && !self.bike_time.is_empty() {
+            Times::Bike
+        } else {
+            Times::Travel
+        }
+    }
+
+    /// The fastest route from `from` to `to` (both included) for `vclass` on `times`,
+    /// tolls counted or not: on the hierarchy where it covers the search, else by A*.
+    /// `router.purpose` says what the search is for, for the log.
+    fn find_route(
+        &mut self,
+        times: Times,
+        from: u32,
+        to: u32,
+        vclass: u16,
+        tolls: bool,
+    ) -> Option<Vec<u32>> {
+        let t: &[f32] = match times {
+            Times::Travel => &self.travel_time,
+            Times::Free => &self.free_time,
+            Times::Bike => &self.bike_time,
+            Times::Peak => &self.peak_time,
+        };
+        if let Some(h) = self.hierarchy.as_mut()
+            && let Some(kind) = h.kind(times, vclass, tolls)
+        {
+            let route = h.route(&self.net, t, kind, from, to);
+            let router = &mut self.router;
+            router.last_settled = h.last_visited();
+            if let Some(log) = router.log.as_mut() {
+                log.push(Query {
+                    from,
+                    to,
+                    vclass,
+                    tolls,
+                    purpose: router.purpose,
+                    found: route.is_some(),
+                    settled: router.last_settled as u32,
+                    hash: route.as_deref().map_or(0, route_hash),
+                });
+            }
+            return route;
+        }
+        self.router.tolls = tolls;
+        self.router.route(&self.net, t, from, to, vclass)
+    }
+
     /// The route search log (`Router::log`): set it to log every search from then on.
     pub fn route_log(&mut self) -> &mut Option<Vec<Query>> {
         &mut self.router.log
@@ -1212,6 +1304,9 @@ impl Engine {
                 net.edge_length[e] / speed * factor
             })
             .collect();
+        if let Some(h) = self.hierarchy.as_mut() {
+            h.bike_changed();
+        }
     }
 
     // ---- traffic lights -------------------------------------------------------------------
@@ -2752,7 +2847,21 @@ impl Engine {
                 break;
             };
             let mut times = vec![f32::INFINITY; riders.zones.len()];
-            if (from as usize) < self.net.edge_count() {
+            // On the hierarchy (M11d): to every edge at once.
+            let kind = self
+                .hierarchy
+                .as_ref()
+                .and_then(|h| h.kind(Times::Peak, vclass::PASSENGER, false));
+            if let (Some(h), Some(kind)) = (self.hierarchy.as_mut(), kind)
+                && h.one_to_all(&self.net, &self.peak_time, kind, from, &mut self.one_to_all)
+            {
+                for (r, &t) in self.one_to_all.iter().enumerate() {
+                    let z = riders.zone_of_edge(h.cch.edge[r]);
+                    if z != NO_ZONE && t <= CAR_REACH {
+                        times[z as usize] = times[z as usize].min(t);
+                    }
+                }
+            } else if (from as usize) < self.net.edge_count() {
                 self.router.reach(
                     &self.net,
                     &self.peak_time,
@@ -2808,6 +2917,9 @@ impl Engine {
                 self.free_time[e] / share
             })
             .collect();
+        if let Some(h) = self.hierarchy.as_mut() {
+            h.peak_changed();
+        }
     }
 
     /// Give the demand the car trips moved now (after the riders or the demand change).
@@ -3758,33 +3870,22 @@ impl Engine {
     /// A vehicle stuck at the end of a lane that does not lead on its route takes any way
     /// out of the lane and routes again from there.
     fn reroute_from_lane(&mut self, v: u32) {
-        let Engine {
-            net,
-            vehs,
-            router,
-            travel_time,
-            bike_time,
-            ..
-        } = self;
-        let veh = &mut vehs[v as usize];
+        let veh = &self.vehs[v as usize];
         let vclass = TYPES[veh.vtype as usize].vclass;
-        let travel_time: &[f32] = if veh.vtype == vtype::BIKE && !bike_time.is_empty() {
-            bike_time
-        } else {
-            travel_time
-        };
+        let times = self.times_for(veh.vtype);
         let Some(&dest) = veh.route.last() else {
             return;
         };
-        router.tolls = veh.weighs_tolls;
-        router.purpose = purpose::LANE;
-        let here = net.d.lane_edge[veh.lane as usize];
-        for l in net.lane_links(veh.lane) {
-            if net.link_allow[l as usize] & vclass == 0 {
+        let (tolls, lane) = (veh.weighs_tolls, veh.lane);
+        self.router.purpose = purpose::LANE;
+        let here = self.net.d.lane_edge[lane as usize];
+        for l in self.net.lane_links(lane) {
+            if self.net.link_allow[l as usize] & vclass == 0 {
                 continue;
             }
-            let to_edge = net.d.lane_edge[net.d.link_to[l as usize] as usize];
-            if let Some(route) = router.route(net, travel_time, to_edge, dest, vclass) {
+            let to_edge = self.net.d.lane_edge[self.net.d.link_to[l as usize] as usize];
+            if let Some(route) = self.find_route(times, to_edge, dest, vclass, tolls) {
+                let veh = &mut self.vehs[v as usize];
                 veh.route.clear();
                 veh.route.push(here);
                 veh.route.extend_from_slice(&route);
@@ -3797,7 +3898,7 @@ impl Engine {
                 return;
             }
         }
-        veh.reroute_timer = REROUTE_RETRY;
+        self.vehs[v as usize].reroute_timer = REROUTE_RETRY;
     }
 
     /// Whether a trip's driver weighs motorway tolls. Drivers already on a tolled motorway
@@ -3826,16 +3927,10 @@ impl Engine {
                 self.stats.no_route += 1;
                 continue;
             }
-            self.router.tolls = self.weighs_tolls(&trip);
+            let tolls = self.weighs_tolls(&trip);
             self.router.purpose = purpose::DEPART;
-            let times = if trip.vtype == vtype::BIKE && !self.bike_time.is_empty() {
-                &self.bike_time
-            } else {
-                &self.travel_time
-            };
-            let route = self
-                .router
-                .route(&self.net, times, trip.from, trip.to, vclass);
+            let times = self.times_for(trip.vtype);
+            let route = self.find_route(times, trip.from, trip.to, vclass, tolls);
             self.stats.routes += 1;
             self.stats.route_settled += self.router.last_settled as u64;
             match route {
@@ -4717,6 +4812,9 @@ impl Engine {
         for &e in &self.closed {
             self.travel_time[e as usize] = CLOSED_TIME;
         }
+        if let Some(h) = self.hierarchy.as_mut() {
+            h.travel_changed();
+        }
     }
 
     /// Close these roads (replacing earlier closures): new routes avoid them where they can,
@@ -4737,6 +4835,9 @@ impl Engine {
             self.travel_time[e as usize] = CLOSED_TIME;
         }
         self.closed = closed;
+        if let Some(h) = self.hierarchy.as_mut() {
+            h.travel_changed();
+        }
         if self.closed.is_empty() {
             return;
         }
@@ -4811,6 +4912,9 @@ impl Engine {
         for &e in &self.closed {
             self.travel_time[e as usize] = CLOSED_TIME;
         }
+        if let Some(h) = self.hierarchy.as_mut() {
+            h.network_changed(&self.net);
+        }
         self.refresh_peak_time();
         // The timetable with the frequencies and new lines in force, on the network now.
         if let Some(mut tr) = self.transit.take() {
@@ -4869,11 +4973,8 @@ impl Engine {
         if from >= n || to >= n {
             return None;
         }
-        self.router.tolls = true;
         self.router.purpose = purpose::INFO;
-        let route = self
-            .router
-            .route(&self.net, &self.travel_time, from, to, vclass::PASSENGER)?;
+        let route = self.find_route(Times::Travel, from, to, vclass::PASSENGER, true)?;
         Some(
             route[1..]
                 .iter()
@@ -4893,11 +4994,33 @@ impl Engine {
         };
         let (home, work) = demand.weights_by_edge();
         let decay = decay.max(1.0);
+        let kind = self
+            .hierarchy
+            .as_ref()
+            .and_then(|h| h.kind(Times::Travel, vclass::PASSENGER, false));
         sources
             .iter()
             .map(|&from| {
                 let mut sum = [0.0f32; 2];
-                if (from as usize) < n {
+                // On the hierarchy (M11d): every edge at once, those within `max` counted.
+                if let (Some(h), Some(kind)) = (self.hierarchy.as_mut(), kind)
+                    && h.one_to_all(
+                        &self.net,
+                        &self.travel_time,
+                        kind,
+                        from,
+                        &mut self.one_to_all,
+                    )
+                {
+                    for (r, &t) in self.one_to_all.iter().enumerate() {
+                        if t <= max {
+                            let e = h.cch.edge[r] as usize;
+                            let w = (-t / decay).exp();
+                            sum[0] += w * home.get(e).copied().unwrap_or(0.0);
+                            sum[1] += w * work.get(e).copied().unwrap_or(0.0);
+                        }
+                    }
+                } else if (from as usize) < n {
                     self.router.reach(
                         &self.net,
                         &self.travel_time,
@@ -4955,16 +5078,12 @@ impl Engine {
         };
         let vclass = veh.params().vclass;
         let here = self.net.d.lane_edge[lane as usize];
-        self.router.tolls = veh.weighs_tolls;
+        let (tolls, times) = (veh.weighs_tolls, self.times_for(veh.vtype));
         self.router.purpose = purpose::REPLAN;
-        let times: &[f32] = if veh.vtype == vtype::BIKE && !self.bike_time.is_empty() {
-            &self.bike_time
-        } else {
-            &self.travel_time
-        };
-        let Some(route) = self.router.route(&self.net, times, here, dest, vclass) else {
+        let Some(route) = self.find_route(times, here, dest, vclass, tolls) else {
             return;
         };
+        let veh = &self.vehs[v as usize];
         if route[..] == veh.route[veh.route_idx as usize..] {
             return;
         }
@@ -5046,11 +5165,9 @@ impl Engine {
         let vclass = veh.params().vclass;
         let here = d.lane_edge[lane as usize];
         let dest = *veh.route.last().unwrap();
-        self.router.tolls = veh.weighs_tolls;
+        let tolls = veh.weighs_tolls;
         self.router.purpose = purpose::EN_ROUTE;
-        let found = self
-            .router
-            .route(&self.net, &self.travel_time, here, dest, vclass);
+        let found = self.find_route(Times::Travel, here, dest, vclass, tolls);
         let veh = &self.vehs[v as usize];
         if let Some(route) = found
             && route[..] != veh.route[veh.route_idx as usize..]

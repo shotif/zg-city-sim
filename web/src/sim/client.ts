@@ -43,6 +43,9 @@ export class SimClient {
   networkApplied = 0;
   onEdgeSpeeds?: (speeds: Uint8Array) => void;
   onReady?: (buildMs: number) => void;
+  /** Milliseconds after the engine was built that routes ran on a contraction hierarchy
+   * (M11c); undefined until then. */
+  hierarchyMs?: number;
   onError?: (message: string) => void;
 
   constructor(init: Omit<InitMessage, 'type'>, transfer: Transferable[] = []) {
@@ -70,6 +73,9 @@ export class SimClient {
         this.editsApplied = { id: message.id, applied: message.applied };
         if (message.id === this.editsId)
           this.onEdited?.(message.applied, message.signals, message.service);
+        break;
+      case 'hierarchy':
+        this.hierarchyMs = message.ms;
         break;
       case 'networked':
         this.signals = message.signals;

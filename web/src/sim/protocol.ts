@@ -89,6 +89,9 @@ export type FromWorker =
     }
   /** Network `id` runs (or could not be swapped in: `error`), and its signal programs. */
   | { type: 'networked'; id: number; signals: SignalPrograms; error?: string }
+  /** Routes run on a contraction hierarchy (M11c), ordered in `orderMs` in another worker
+   * and ready `ms` after the engine was built. */
+  | { type: 'hierarchy'; ms: number; orderMs: number }
   | FrameMessage
   | { type: 'edgeSpeeds'; time: number; speeds: Uint8Array }
   /** Seconds per pair asked for (-1: no route), at simulated time `time`. */

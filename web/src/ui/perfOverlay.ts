@@ -68,6 +68,9 @@ export interface SimPerf {
   /** The speed asked for (×), and vehicles running. */
   speed: number;
   vehicles: number;
+  /** Seconds after load that routes ran on a contraction hierarchy (M11c); undefined
+   * while they run on A*. */
+  hierarchyS?: number;
 }
 
 export interface Perf extends FrameSummary {
@@ -92,6 +95,9 @@ export function perfText(p: Perf): string {
       `sim ${format(s.stepMs, 2)} ms/step (${format(s.dt)} s), ${format(s.rate, 0)}× of ${format(s.speed, 0)}×, ` +
         `${format(load, 0)} % of a core`,
       `${s.vehicles.toLocaleString('en-GB')} vehicles`,
+      s.hierarchyS === undefined
+        ? 'routes by A* (ordering a hierarchy)'
+        : `routes on a contraction hierarchy (from ${format(s.hierarchyS)} s after load)`,
     );
   }
   return lines.join('\n');

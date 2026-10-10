@@ -4,6 +4,10 @@
  *
  *   cargo build --release --target wasm32-unknown-unknown   (in sim/)
  *   node --experimental-strip-types sim/bench/bench.ts [--start 7] [--minutes 30] [--trips 500000]
+ *
+ * `--data` loads the demand, timetable, pedestrians and bikes as the app does (with the
+ * demand's trips a day and share), and `--hierarchy` routes on a contraction hierarchy
+ * (M11), ordered first as the app's order worker does.
  */
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -18,14 +22,12 @@ const { values: args } = parseArgs({
     trips: { type: 'string', default: '500000' },
     scale: { type: 'string', default: '1' },
     seed: { type: 'string', default: '1' },
+    data: { type: 'boolean', default: false },
+    hierarchy: { type: 'boolean', default: false },
   },
 });
 
 const root = new URL('../../', import.meta.url);
-const dataDir = new URL('web/public/data/network/', root);
-const index = JSON.parse(readFileSync(new URL('net.json', dataDir), 'utf8'));
-const raw = gunzipSync(readFileSync(new URL(index.file, dataDir)));
-const buffer = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
 
 const CONSTRUCTORS = {
   u8: Uint8Array,
@@ -36,13 +38,35 @@ const CONSTRUCTORS = {
   i32: Int32Array,
   f32: Float32Array,
 };
-const arrays: Record<string, NumericArray> = {};
-for (const [name, spec] of Object.entries(index.arrays) as [string, any][]) {
-  arrays[name] = new CONSTRUCTORS[spec.type as keyof typeof CONSTRUCTORS](
-    buffer,
-    spec.offset,
-    spec.length,
-  );
+/** A packed data file's index and arrays (`pipeline/packed.py`). */
+function readPacked(path: string): { index: any; arrays: Record<string, NumericArray> } {
+  const dir = new URL(`web/public/data/${path.slice(0, path.lastIndexOf('/') + 1)}`, root);
+  const index = JSON.parse(readFileSync(new URL(`web/public/data/${path}`, root), 'utf8'));
+  const raw = gunzipSync(readFileSync(new URL(index.file, dir)));
+  const buffer = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+  const arrays: Record<string, NumericArray> = {};
+  for (const [name, spec] of Object.entries(index.arrays) as [string, any][]) {
+    arrays[name] = new CONSTRUCTORS[spec.type as keyof typeof CONSTRUCTORS](
+      buffer,
+      spec.offset,
+      spec.length,
+    );
+  }
+  return { index, arrays };
+}
+const { arrays } = readPacked('network/net.json');
+let dailyTrips = Number(args.trips);
+let demandScale = Number(args.scale);
+if (args.data) {
+  const demand = readPacked('demand/demand.json');
+  Object.assign(arrays, demand.arrays);
+  dailyTrips = demand.index.dailyCarTrips;
+  demandScale = demand.index.demandScale ?? 1;
+  Object.assign(arrays, readPacked('transit/transit.json').arrays);
+  const crossings = readPacked('pedestrians/crossings.json');
+  Object.assign(arrays, crossings.arrays, { crossingHourly: Float32Array.from(crossings.index.hourly) });
+  const bikes = readPacked('cycling/cycling.json');
+  Object.assign(arrays, bikes.arrays, { bikeDaily: Float32Array.of(bikes.index.bikeTripsDaily) });
 }
 
 // Lane shapes, decoded as the app does (web/src/world/roadNetwork.ts decodePolylines).
@@ -68,11 +92,22 @@ const wasm = readFileSync(new URL('sim/target/wasm32-unknown-unknown/release/zg_
 const engine = await TrafficEngine.create(wasm);
 let t0 = performance.now();
 const used = Object.entries(arrays).filter(([name, data]) => engine.setArray(name, data));
-engine.build(Number(args.seed), Number(args.trips));
+engine.build(Number(args.seed), dailyTrips);
 console.log(`loaded ${used.length} arrays and built the engine in ${(performance.now() - t0).toFixed(0)} ms`);
+if (args.hierarchy) {
+  t0 = performance.now();
+  const graph = engine.hierarchyGraph();
+  const order = engine.order(graph);
+  const t1 = performance.now();
+  const fits = engine.setOrder(order);
+  console.log(
+    `contraction hierarchy: ordered in ${((t1 - t0) / 1000).toFixed(1)} s, contracted in ` +
+      `${(performance.now() - t1).toFixed(0)} ms${fits ? '' : ' (did not fit: A*)'}`,
+  );
+}
 
 engine.setTime(Number(args.start) * 3600);
-engine.setDemandScale(Number(args.scale));
+engine.setDemandScale(demandScale);
 const minutes = Number(args.minutes);
 const stepsPerMinute = Math.round(60 / engine.dt);
 const clock = (t: number) =>
@@ -106,3 +141,4 @@ console.log(
 );
 const render = engine.render();
 console.log(`render buffer: ${render.length / 8} slots`);
+console.log(`memory: ${(engine.memoryBytes / 2 ** 20).toFixed(0)} MiB`);

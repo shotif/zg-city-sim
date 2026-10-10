@@ -4,6 +4,7 @@
  * times the chosen speed (slower if the engine cannot keep up) and posts a render frame
  * after each batch of steps.
  */
+import type { OrderReply, OrderRequest } from './orderWorker';
 import type { FromWorker, InitMessage, ToWorker } from './protocol';
 import { TrafficEngine } from './wasm';
 
@@ -59,6 +60,14 @@ const REACH_MS = 8;
  * streets fill and at high speeds. */
 const RIDERS_MS = 8;
 const RIDERS_IDLE_MS = 25;
+/** Where the engine's WebAssembly came from, for the worker that orders its routing graph
+ * (M11c), the one ordering it now, how often it has been asked, and when the engine was
+ * built. */
+let wasmUrl = '';
+let orderer: Worker | undefined;
+let orderAsks = 0;
+let builtAt = 0;
+const ORDER_ASKS = 3;
 /** Volume requests waiting for their simulated time. */
 let volumeAsks: { id: number; at: number }[] = [];
 
@@ -80,6 +89,8 @@ async function init(message: InitMessage): Promise<void> {
   engine = await TrafficEngine.create(await response.arrayBuffer());
   for (const [name, data] of Object.entries(message.arrays)) engine.setArray(name, data);
   engine.build(message.seed, message.dailyTrips);
+  wasmUrl = message.wasmUrl;
+  builtAt = performance.now();
   engine.setDemandScale(message.demandScale);
   engine.setTime(message.startTime);
   if (closed) engine.setClosed(closed);
@@ -96,8 +107,39 @@ async function init(message: InitMessage): Promise<void> {
   if (edits) applyEdits(engine, edits);
   if (weights) applyWeights(engine, weights);
   if (weather) engine.setWeather(weather.speed, weather.headway, weather.accel);
+  orderGraph(engine);
   last = performance.now();
   tick();
+}
+
+/** Have another worker order the routing graph for a contraction hierarchy (M11c): seconds
+ * of work, during which routes use A*. Roads drawn meanwhile, or later, rank above the
+ * order in the engine; asked again only if the order does not cover the network. */
+function orderGraph(sim: TrafficEngine): void {
+  if (typeof Worker === 'undefined' || orderAsks >= ORDER_ASKS) return;
+  const graph = sim.hierarchyGraph();
+  if (graph.length === 0) return;
+  orderAsks++;
+  orderer?.terminate();
+  const worker = new Worker(new URL('./orderWorker.ts', import.meta.url), { type: 'module' });
+  orderer = worker;
+  const done = () => {
+    worker.terminate();
+    if (orderer === worker) orderer = undefined;
+  };
+  worker.addEventListener('message', (event: MessageEvent<OrderReply>) => {
+    done();
+    const reply = event.data;
+    if (!('order' in reply) || engine !== sim) return;
+    if (sim.setOrder(reply.order)) {
+      post({ type: 'hierarchy', ms: performance.now() - builtAt, orderMs: reply.ms });
+    } else {
+      orderGraph(sim);
+    }
+  });
+  worker.addEventListener('error', done);
+  const request: OrderRequest = { wasmUrl, graph };
+  worker.postMessage(request, [graph.buffer]);
 }
 
 function applyWeights(

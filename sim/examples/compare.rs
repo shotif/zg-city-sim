@@ -56,6 +56,7 @@ fn engine_for(root: &str, seed: u64) -> Engine {
     }
     run::attach_pedestrians(&mut engine, &format!("{root}/pedestrians"));
     run::attach_bikes(&mut engine, &format!("{root}/cycling"));
+    run::attach_hierarchy(&mut engine);
     engine.demand = Some(demand);
     engine.demand_scale = run::demand_scale(&format!("{root}/demand"));
     engine

@@ -129,6 +129,11 @@ test('simulates traffic and draws the vehicles', async ({ page }, testInfo) => {
   const perf = await page.evaluate(() => window.__ZG__?.perf);
   expect(perf?.drawCalls).toBeGreaterThan(0);
   expect(perf?.sim?.stepMs).toBeGreaterThan(0);
+  // Routes run on a contraction hierarchy once another worker has ordered it (M11c).
+  await page.waitForFunction(() => window.__ZG__?.sim?.hierarchyMs !== undefined, null, {
+    timeout: 120_000,
+  });
+  await expect(page.locator('.perf-overlay')).toContainText('contraction hierarchy');
 
   // With the traffic map, HŽ's stations and the level crossings (M8e); a station's panel
   // lists its next trains.

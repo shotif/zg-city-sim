@@ -48,6 +48,10 @@ export interface EngineExports {
   zg_riders(): number;
   zg_riders_ptr(): number;
   zg_work_riders(): number;
+  zg_hierarchy_graph(): number;
+  zg_order(words: number, count: number): number;
+  zg_set_order(order: number, count: number): number;
+  zg_hierarchy_ptr(): number;
   zg_pt_journeys(points: number, count: number): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
@@ -149,6 +153,11 @@ export class TrafficEngine {
 
   private get memory(): ArrayBuffer {
     return this.exports.memory.buffer;
+  }
+
+  /** Bytes of memory the module has (it only grows). */
+  get memoryBytes(): number {
+    return this.exports.memory.buffer.byteLength;
   }
 
   /** What the engine panicked at (message, file and line), if it did: a panic only traps
@@ -335,13 +344,56 @@ export class TrafficEngine {
       : new Uint32Array(0);
   }
 
-  /** Public transport's riders (M9d; `readRiders`). */
   /** Work on the riders a little (M10d: car journeys from one zone, then public
    * transport's); whether there is more to do. */
   workRiders(): boolean {
     return this.exports.zg_work_riders() !== 0;
   }
 
+  /** The routing graph to order for a contraction hierarchy (M11c), as words. */
+  hierarchyGraph(): Uint32Array {
+    const ex = this.exports;
+    const len = ex.zg_hierarchy_graph();
+    return len > 0
+      ? new Uint32Array(this.memory, ex.zg_hierarchy_ptr(), len).slice()
+      : new Uint32Array(0);
+  }
+
+  /** The edges of a routing graph (`hierarchyGraph`'s words) in nested dissection order,
+   * lowest rank first: seconds of work that needs no network loaded, so another worker does
+   * it. Empty if the words are not a graph. */
+  order(graph: Uint32Array): Uint32Array {
+    const ex = this.exports;
+    const ptr = this.copyIn(graph);
+    const len = ex.zg_order(ptr, graph.length);
+    if (graph.byteLength > 0) ex.zg_free(ptr, graph.byteLength);
+    return len > 0
+      ? new Uint32Array(this.memory, ex.zg_hierarchy_ptr(), len).slice()
+      : new Uint32Array(0);
+  }
+
+  /** Route cars, trucks and bikes on a hierarchy in `order` (M11c; roads drawn since rank
+   * above it); false if it does not cover the network now (routes stay with A*). */
+  setOrder(order: Uint32Array): boolean {
+    const ex = this.exports;
+    const ptr = this.copyIn(order);
+    const fits = ex.zg_set_order(ptr, order.length) !== 0;
+    if (order.byteLength > 0) ex.zg_free(ptr, order.byteLength);
+    return fits;
+  }
+
+  /** Copy words into the module's memory (0 for none); the caller frees them. */
+  private copyIn(words: Uint32Array): number {
+    const bytes = words.byteLength;
+    if (bytes === 0) return 0;
+    const ptr = this.exports.zg_alloc(bytes);
+    new Uint8Array(this.memory, ptr, bytes).set(
+      new Uint8Array(words.buffer, words.byteOffset, bytes),
+    );
+    return ptr;
+  }
+
+  /** Public transport's riders (M9d; `readRiders`). */
   riders(): Float32Array {
     const ex = this.exports;
     const len = ex.zg_riders();

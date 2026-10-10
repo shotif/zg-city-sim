@@ -56,23 +56,27 @@ fn routable(net: &Network, e: u32) -> bool {
             .any(|l| net.d.lane_allow[l as usize] & !(vclass::TRAM | vclass::RAIL) != 0)
 }
 
-impl Cch {
-    /// Order, contract and index the hierarchy for a network's routing graph.
-    pub fn build(net: &Network) -> Cch {
+/// The graph a hierarchy is built over: the edges in it (in edge order), the pairs of them
+/// a move joins (by index, smaller first, each once) and where each edge's middle is.
+pub struct RoutingGraph {
+    pub edges: Vec<u32>,
+    pub pairs: Vec<(u32, u32)>,
+    pub pos: Vec<(f32, f32)>,
+}
+
+impl RoutingGraph {
+    pub fn of(net: &Network) -> RoutingGraph {
         let n_edges = net.edge_count();
-        // Nodes: routable edges, numbered in edge order for now.
         let mut node = vec![NONE; n_edges];
-        let mut edge_of = Vec::new();
+        let mut edges = Vec::new();
         for e in 0..n_edges as u32 {
             if routable(net, e) {
-                node[e as usize] = edge_of.len() as u32;
-                edge_of.push(e);
+                node[e as usize] = edges.len() as u32;
+                edges.push(e);
             }
         }
-        let n = edge_of.len();
-        // The undirected graph between them, without loops or parallel edges.
         let mut pairs: Vec<(u32, u32)> = Vec::new();
-        for (x, &e) in edge_of.iter().enumerate() {
+        for (x, &e) in edges.iter().enumerate() {
             for s in net.successors(e) {
                 let y = node[s.edge as usize];
                 if y != NONE && y != x as u32 {
@@ -83,17 +87,126 @@ impl Cch {
         }
         pairs.sort_unstable();
         pairs.dedup();
-        let graph = Graph::undirected(n, &pairs);
-        let pos: Vec<(f32, f32)> = edge_of.iter().map(|&e| net.edge_mid[e as usize]).collect();
-        let order = nested_dissection(&graph, &pos);
+        let pos = edges.iter().map(|&e| net.edge_mid[e as usize]).collect();
+        RoutingGraph { edges, pairs, pos }
+    }
 
-        // Rank each node; then contract in rank order.
-        let mut rank_of_node = vec![0u32; n];
-        for (r, &x) in order.iter().enumerate() {
-            rank_of_node[x as usize] = r as u32;
+    /// The graph as words for another worker to order (`order_words`): nodes, pairs, the
+    /// pairs' ends, the positions' bits, then the edges.
+    pub fn to_words(&self) -> Vec<u32> {
+        let mut words = vec![self.pos.len() as u32, self.pairs.len() as u32];
+        words.extend(self.pairs.iter().flat_map(|&(a, b)| [a, b]));
+        words.extend(
+            self.pos
+                .iter()
+                .flat_map(|&(x, z)| [x.to_bits(), z.to_bits()]),
+        );
+        words.extend_from_slice(&self.edges);
+        words
+    }
+}
+
+/// The edges of a graph given as words (`RoutingGraph::to_words`) in nested dissection
+/// order, lowest rank first; None if the words are not a graph.
+pub fn order_words(words: &[u32]) -> Option<Vec<u32>> {
+    let (&n, &m) = (words.first()?, words.get(1)?);
+    let (n, m) = (n as usize, m as usize);
+    if words.len() != 2 + 2 * m + 3 * n {
+        return None;
+    }
+    let ends = &words[2..2 + 2 * m];
+    let pairs: Vec<(u32, u32)> = ends.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+    if pairs.iter().any(|&(a, b)| a >= b || b as usize >= n) {
+        return None;
+    }
+    let pos = words[2 + 2 * m..2 + 2 * m + 2 * n]
+        .chunks_exact(2)
+        .map(|p| (f32::from_bits(p[0]), f32::from_bits(p[1])))
+        .collect::<Vec<_>>();
+    let edges = &words[2 + 2 * m + 2 * n..];
+    Some(
+        order(&pairs, &pos)
+            .into_iter()
+            .map(|x| edges[x as usize])
+            .collect(),
+    )
+}
+
+/// Nested dissection order of a graph's nodes, lowest rank first (seconds for a city).
+pub fn order(pairs: &[(u32, u32)], pos: &[(f32, f32)]) -> Vec<u32> {
+    nested_dissection(&Graph::undirected(pos.len(), pairs), pos)
+}
+
+impl Cch {
+    /// Order, contract and index the hierarchy for a network's routing graph.
+    pub fn build(net: &Network) -> Cch {
+        let graph = RoutingGraph::of(net);
+        let order = order(&graph.pairs, &graph.pos);
+        Cch::with_order(net, &graph, &order).expect("an order of the graph's nodes")
+    }
+
+    /// The hierarchy for a network with roads drawn (M11c): this one's order for the edges
+    /// both have (the network as loaded keeps its ids), the new edges ranked above them.
+    /// Contraction takes a fraction of a second, against seconds for a new order.
+    pub fn extend(&self, net: &Network) -> Cch {
+        Cch::with_edge_order(net, &self.edge)
+    }
+
+    /// The hierarchy for a network in an order of edges, lowest rank first (`order_words`,
+    /// for this network or one before roads were drawn): edges not in it ranked above those
+    /// that are, by id. Any order is right; a poor one makes searches slower.
+    pub fn with_edge_order(net: &Network, edges: &[u32]) -> Cch {
+        let graph = RoutingGraph::of(net);
+        let mut at = vec![NONE; net.edge_count()];
+        for (k, &e) in edges.iter().enumerate() {
+            if let Some(slot) = at.get_mut(e as usize) {
+                *slot = k as u32;
+            }
         }
+        let mut order: Vec<u32> = (0..graph.edges.len() as u32).collect();
+        let key = |i: u32| {
+            let e = graph.edges[i as usize];
+            match at[e as usize] {
+                NONE => (1, e),
+                k => (0, k),
+            }
+        };
+        order.sort_unstable_by_key(|&i| key(i));
+        Cch::with_order(net, &graph, &order).expect("a permutation")
+    }
+
+    /// The share of a network's routable edges an order of edges ranks.
+    pub fn coverage(net: &Network, edges: &[u32]) -> f32 {
+        let graph = RoutingGraph::of(net);
+        let mut known = vec![false; net.edge_count()];
+        for &e in edges {
+            if let Some(k) = known.get_mut(e as usize) {
+                *k = true;
+            }
+        }
+        let covered = graph.edges.iter().filter(|&&e| known[e as usize]).count();
+        covered as f32 / graph.edges.len().max(1) as f32
+    }
+
+    /// Contract and index the hierarchy for `graph` (a network's) in `order` (its node
+    /// indices, lowest rank first); None if that is not an order of its nodes.
+    pub fn with_order(net: &Network, graph: &RoutingGraph, order: &[u32]) -> Option<Cch> {
+        let n = graph.edges.len();
+        if order.len() != n {
+            return None;
+        }
+        let mut rank_of_node = vec![NONE; n];
+        for (r, &x) in order.iter().enumerate() {
+            let slot = rank_of_node.get_mut(x as usize)?;
+            if *slot != NONE {
+                return None;
+            }
+            *slot = r as u32;
+        }
+        // Contract in rank order: each rank's higher neighbours become a clique, by adding
+        // all but the lowest to the lowest's.
         let mut up: Vec<Vec<u32>> = vec![Vec::new(); n];
-        for &(a, b) in &pairs {
+        for &(a, b) in &graph.pairs {
             let (ra, rb) = (rank_of_node[a as usize], rank_of_node[b as usize]);
             up[ra.min(rb) as usize].push(ra.max(rb));
         }
@@ -118,9 +231,9 @@ impl Cch {
             tail.extend(std::iter::repeat_n(v as u32, list.len()));
             first.push(head.len() as u32);
         }
-        let mut rank = vec![NONE; n_edges];
+        let mut rank = vec![NONE; net.edge_count()];
         let mut edge = vec![0u32; n];
-        for (x, &e) in edge_of.iter().enumerate() {
+        for (x, &e) in graph.edges.iter().enumerate() {
             rank[e as usize] = rank_of_node[x];
             edge[rank_of_node[x] as usize] = e;
         }
@@ -135,7 +248,7 @@ impl Cch {
             input_up: Vec::new(),
         };
         cch.index_inputs(net);
-        cch
+        Some(cch)
     }
 
     /// Map the network's successors onto arcs (again after edits rebuild them: the pairs of
@@ -217,10 +330,17 @@ pub struct Metric {
     /// The class and whether tolls count, as customised.
     pub vclass: u16,
     pub tolls: bool,
+    /// Whether routes are unpacked on it (else only times are read, `Query::one_to_all`, and
+    /// the middles are not kept).
+    paths: bool,
 }
 
 impl Metric {
     pub fn new(vclass: u16, tolls: bool) -> Metric {
+        Metric::with_paths(vclass, tolls, true)
+    }
+
+    pub fn with_paths(vclass: u16, tolls: bool, paths: bool) -> Metric {
         Metric {
             up: Vec::new(),
             down: Vec::new(),
@@ -229,6 +349,7 @@ impl Metric {
             mark: Vec::new(),
             vclass,
             tolls,
+            paths,
         }
     }
 
@@ -242,10 +363,11 @@ impl Metric {
         self.up.resize(m, f32::INFINITY);
         self.down.clear();
         self.down.resize(m, f32::INFINITY);
+        let mids = if self.paths { m } else { 0 };
         self.up_mid.clear();
-        self.up_mid.resize(m, NONE);
+        self.up_mid.resize(mids, NONE);
         self.down_mid.clear();
-        self.down_mid.resize(m, NONE);
+        self.down_mid.resize(mids, NONE);
         self.mark.clear();
         self.mark.resize(n, NONE);
         for (i, s) in net.succ.iter().enumerate() {
@@ -290,12 +412,16 @@ impl Metric {
                     let via = to_v + up[c];
                     if via < up[b] {
                         up[b] = via;
-                        up_mid[b] = v as u32;
+                        if let Some(m) = up_mid.get_mut(b) {
+                            *m = v as u32;
+                        }
                     }
                     let via = down[c] + from_v;
                     if via < down[b] {
                         down[b] = via;
-                        down_mid[b] = v as u32;
+                        if let Some(m) = down_mid.get_mut(b) {
+                            *m = v as u32;
+                        }
                     }
                 }
             }
@@ -347,7 +473,8 @@ impl Query {
         if self.fwd.len() != cch.len() {
             *self = Query::new(cch);
         }
-        let (s, t) = (cch.rank[from as usize], cch.rank[to as usize]);
+        let rank = |e: u32| cch.rank.get(e as usize).copied().unwrap_or(NONE);
+        let (s, t) = (rank(from), rank(to));
         if s == NONE || t == NONE {
             return None;
         }
@@ -411,6 +538,53 @@ impl Query {
             }
         }
         route.map(|r| (r, best))
+    }
+
+    /// Times from edge `from` to every rank, in `out` (infinite where there is no way):
+    /// PHAST, a walk up the elimination tree from it, then one sweep down over every rank,
+    /// highest first. False if `from` is not in the hierarchy.
+    pub fn one_to_all(
+        &mut self,
+        cch: &Cch,
+        metric: &Metric,
+        from: u32,
+        out: &mut Vec<f32>,
+    ) -> bool {
+        let s = cch.rank.get(from as usize).copied().unwrap_or(NONE);
+        if s == NONE {
+            return false;
+        }
+        let n = cch.len();
+        let (first, head, parent) = (&cch.first, &cch.head, &cch.parent);
+        out.clear();
+        out.resize(n, f32::INFINITY);
+        out[s as usize] = 0.0;
+        let mut x = s;
+        while x != NONE {
+            let d = out[x as usize];
+            if d < f32::INFINITY {
+                for a in first[x as usize] as usize..first[x as usize + 1] as usize {
+                    let y = head[a] as usize;
+                    let c = d + metric.up[a];
+                    if c < out[y] {
+                        out[y] = c;
+                    }
+                }
+            }
+            x = parent[x as usize];
+        }
+        // Down: each rank from those above it, which are final by then.
+        for v in (0..n).rev() {
+            let mut d = out[v];
+            for a in first[v] as usize..first[v + 1] as usize {
+                let c = out[head[a] as usize] + metric.down[a];
+                if c < d {
+                    d = c;
+                }
+            }
+            out[v] = d;
+        }
+        true
     }
 
     /// The edges of the route through `meet`.
@@ -855,5 +1029,188 @@ impl Flow {
                 v = back;
             }
         }
+    }
+}
+
+/// Whether trucks may make exactly the moves cars may.
+fn trucks_as_cars(net: &Network) -> bool {
+    net.succ
+        .iter()
+        .all(|s| (s.allow & vclass::PASSENGER != 0) == (s.allow & vclass::TRUCK != 0))
+}
+
+/// Which travel times a search runs on (`Hierarchy::kind`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Times {
+    /// As measured on the roads (`Engine::travel_time`).
+    Travel,
+    /// At the speed limits (transit legs).
+    Free,
+    /// As bikes choose routes (`Engine::bike_time`).
+    Bike,
+    /// In the morning peak as day runs had it (`Engine::peak_time`, M10d), for the riders'
+    /// car journeys.
+    Peak,
+}
+
+/// The metrics the engine routes on: cars and trucks on the measured times, each with and
+/// without tolls, bikes on their own times, and cars in the morning peak (times only, for
+/// the riders). Each is customised only once a search needs it.
+const KINDS: [(Times, u16, bool); 6] = [
+    (Times::Travel, vclass::PASSENGER, true),
+    (Times::Travel, vclass::PASSENGER, false),
+    (Times::Travel, vclass::TRUCK, true),
+    (Times::Travel, vclass::TRUCK, false),
+    (Times::Bike, vclass::BICYCLE, true),
+    (Times::Peak, vclass::PASSENGER, false),
+];
+
+/// A hierarchy with a metric per kind of search (M11b), each customised when a search
+/// first needs it after its travel times changed.
+pub struct Hierarchy {
+    pub cch: Cch,
+    metrics: Vec<Metric>,
+    stale: Vec<bool>,
+    /// Whether trucks may make every move cars may and no other (true of Zagreb's roads as
+    /// mapped): then they route on the cars' metrics.
+    trucks_as_cars: bool,
+    query: Query,
+    /// Searches, ranks they visited, and customisations so far.
+    pub searches: u64,
+    pub visited: u64,
+    pub customisations: u64,
+    /// Time spent searching and customising (s); counted only with the `profile` feature.
+    pub seconds: f64,
+    pub custom_seconds: f64,
+}
+
+impl Hierarchy {
+    pub fn new(cch: Cch, net: &Network) -> Hierarchy {
+        let query = Query::new(&cch);
+        Hierarchy {
+            metrics: KINDS
+                .iter()
+                .map(|&(times, v, t)| Metric::with_paths(v, t, times != Times::Peak))
+                .collect(),
+            stale: vec![true; KINDS.len()],
+            trucks_as_cars: trucks_as_cars(net),
+            cch,
+            query,
+            searches: 0,
+            visited: 0,
+            customisations: 0,
+            seconds: 0.0,
+            custom_seconds: 0.0,
+        }
+    }
+
+    /// The metric a search on `times` for `vclass` uses (tolls counted or not), if any:
+    /// other searches (buses, trams and trains, transit legs at the speed limits) are left
+    /// to A*.
+    pub fn kind(&self, times: Times, vclass: u16, tolls: bool) -> Option<usize> {
+        let vclass = if vclass == vclass::TRUCK && self.trucks_as_cars {
+            vclass::PASSENGER
+        } else {
+            vclass
+        };
+        KINDS.iter().position(|&(t, v, toll)| {
+            t == times && v == vclass && (toll == tolls || times == Times::Bike)
+        })
+    }
+
+    /// The measured times changed: cars and trucks customise again.
+    pub fn travel_changed(&mut self) {
+        for (k, &(t, _, _)) in KINDS.iter().enumerate() {
+            if t == Times::Travel {
+                self.stale[k] = true;
+            }
+        }
+    }
+
+    /// The network's successors or permissions changed (edits): index them again, and
+    /// every metric customises again.
+    pub fn network_changed(&mut self, net: &Network) {
+        self.cch.index_inputs(net);
+        self.trucks_as_cars = trucks_as_cars(net);
+        self.stale.fill(true);
+    }
+
+    /// The peak times changed.
+    pub fn peak_changed(&mut self) {
+        for (k, &(t, _, _)) in KINDS.iter().enumerate() {
+            if t == Times::Peak {
+                self.stale[k] = true;
+            }
+        }
+    }
+
+    /// Bikes' times changed.
+    pub fn bike_changed(&mut self) {
+        for (k, &(t, _, _)) in KINDS.iter().enumerate() {
+            if t == Times::Bike {
+                self.stale[k] = true;
+            }
+        }
+    }
+
+    /// The fastest route from `from` to `to` for metric `kind` on `times` (the travel times
+    /// that kind runs on), customising it first if they changed.
+    pub fn route(
+        &mut self,
+        net: &Network,
+        times: &[f32],
+        kind: usize,
+        from: u32,
+        to: u32,
+    ) -> Option<Vec<u32>> {
+        #[cfg(feature = "profile")]
+        let start = std::time::Instant::now();
+        if self.stale[kind] {
+            self.metrics[kind].customize(&self.cch, net, times);
+            self.stale[kind] = false;
+            self.customisations += 1;
+            #[cfg(feature = "profile")]
+            {
+                self.custom_seconds += start.elapsed().as_secs_f64();
+            }
+        }
+        #[cfg(feature = "profile")]
+        let start = std::time::Instant::now();
+        let route = self
+            .query
+            .route(&self.cch, &self.metrics[kind], from, to)
+            .map(|(r, _)| r);
+        self.searches += 1;
+        self.visited += self.query.last_visited as u64;
+        #[cfg(feature = "profile")]
+        {
+            self.seconds += start.elapsed().as_secs_f64();
+        }
+        route
+    }
+
+    /// Times from edge `from` to every edge in the hierarchy for metric `kind` on `times`
+    /// (`Query::one_to_all`), in `out` by rank (`cch.edge` names each rank's edge). False
+    /// if `from` is not in the hierarchy.
+    pub fn one_to_all(
+        &mut self,
+        net: &Network,
+        times: &[f32],
+        kind: usize,
+        from: u32,
+        out: &mut Vec<f32>,
+    ) -> bool {
+        if self.stale[kind] {
+            self.metrics[kind].customize(&self.cch, net, times);
+            self.stale[kind] = false;
+            self.customisations += 1;
+        }
+        self.query
+            .one_to_all(&self.cch, &self.metrics[kind], from, out)
+    }
+
+    /// Ranks the last search visited.
+    pub fn last_visited(&self) -> usize {
+        self.query.last_visited
     }
 }

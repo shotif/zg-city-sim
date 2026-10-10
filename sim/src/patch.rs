@@ -331,6 +331,10 @@ impl Engine {
         self.closed.retain(|&e| (e as usize) < n_edges);
         self.router = Router::new(n_edges);
         self.landmark_job = None;
+        // The hierarchy for the new network: today's order, new edges ranked on top (M11c).
+        if let Some(h) = self.hierarchy.take() {
+            self.hierarchy = Some(Hierarchy::new(h.cch.extend(&self.net), &self.net));
+        }
         self.loaded = Loaded::of(&self.net);
         let edits = std::mem::take(&mut self.edits);
         // Applies the edits, starts rebuilding the landmarks and has vehicles re-plan.

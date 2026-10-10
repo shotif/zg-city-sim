@@ -2,7 +2,7 @@
 
 use crate::demand::{Demand, Gateway};
 use crate::edits::Edit;
-use crate::engine::{DT, Engine, LanePiece, Trip, stat, travel_time, trip};
+use crate::engine::{CLOSED_TIME, DT, Engine, LanePiece, Trip, stat, travel_time, trip};
 use crate::idm;
 use crate::network::{LINK_STATE_CHARS, NONE, Network, NetworkData, dir, edge_flag, vclass};
 use crate::rng::Rng;
@@ -1531,17 +1531,24 @@ fn a_closed_road_keeps_cars_out_but_lets_those_on_it_leave() {
 
 #[test]
 fn a_closed_lane_or_bus_lane_empties_of_cars() {
-    for edit in [
-        Edit::CloseLane { edge: 1, lane: 1 },
-        Edit::LaneClasses {
-            edge: 1,
-            lane: 1,
-            classes: vclass::BUS,
-        },
+    for (edit, hierarchy) in [
+        (Edit::CloseLane { edge: 1, lane: 1 }, false),
+        (
+            Edit::LaneClasses {
+                edge: 1,
+                lane: 1,
+                classes: vclass::BUS,
+            },
+            false,
+        ),
+        (Edit::CloseLane { edge: 1, lane: 1 }, true),
     ] {
         let (b, e0, e1) = straight_road(600.0, 2);
         assert_eq!(e1, 1);
         let mut engine = Engine::new(b.build(), 8);
+        if hierarchy {
+            engine.build_hierarchy();
+        }
         let closed = engine.net.edge_lanes(e1).start + 1;
         assert_eq!(engine.set_edits(&[edit]), 1);
         for k in 0..30 {
@@ -1753,9 +1760,18 @@ fn detour(direct: bool) -> (NetworkData, [u32; 4]) {
 
 #[test]
 fn a_new_road_takes_traffic_while_vehicles_drive() {
+    for hierarchy in [false, true] {
+        a_new_road_takes_traffic(hierarchy);
+    }
+}
+
+fn a_new_road_takes_traffic(hierarchy: bool) {
     let (base, [entry, up, exit, _]) = detour(false);
     let (patched, [.., across]) = detour(true);
     let mut engine = Engine::new(Network::build(base).unwrap(), 4);
+    if hierarchy {
+        engine.build_hierarchy();
+    }
     let route = |engine: &Engine| {
         let down = engine.net.d.lane_edge[engine.net.d.link_to[1] as usize];
         vec![entry, up, down, exit]
@@ -1794,6 +1810,11 @@ fn a_new_road_takes_traffic_while_vehicles_drive() {
     assert!(!engine.vehs[on_detour as usize].alive() && !engine.vehs[coming as usize].alive());
     assert_eq!((engine.stats.arrived, engine.stats.teleported), (2, 0));
     assert!(engine.landmarks_ready());
+    if hierarchy {
+        let h = engine.hierarchy().expect("built again for the new network");
+        assert_eq!(h.cch.rank.len(), engine.net.edge_count());
+        assert!(h.searches > 0);
+    }
 }
 
 #[test]
@@ -3213,8 +3234,18 @@ fn homes_and_jobs_added_while_running_make_and_draw_trips() {
 
 #[test]
 fn reach_counts_homes_and_jobs_by_travel_time_measured() {
+    // By Dijkstra, and on the hierarchy (M11d).
+    for hierarchy in [false, true] {
+        reach_counts(hierarchy);
+    }
+}
+
+fn reach_counts(hierarchy: bool) {
     use crate::demand::Demand;
     let (mut engine, [direct, up, down, last]) = two_ways();
+    if hierarchy {
+        engine.build_hierarchy();
+    }
     assert_eq!(engine.reach(&[up], 360.0, 1200.0), vec![[0.0, 0.0]]);
     // Homes past the junction the roads meet at, jobs on the way down to it.
     engine.demand = Some(Demand::new(
@@ -3245,6 +3276,7 @@ fn reach_counts_homes_and_jobs_by_travel_time_measured() {
     assert!(jobs > 0.0 && homes == 0.0);
     // A jam on the road down puts both further away.
     engine.travel_time[down as usize] *= 3.0;
+    engine.travel_times_changed();
     let [later_homes, later_jobs] = engine.reach(&[up], 360.0, 1200.0)[0];
     assert!(later_jobs < 0.8 * jobs && later_homes > 0.0);
     // Closed, nothing past it is in reach; sources off the network count nothing.
@@ -4054,4 +4086,61 @@ fn the_hierarchy_finds_routes_as_fast_as_a_star() {
         }
     }
     assert!(compared > 5000, "{compared}");
+}
+
+#[test]
+fn the_engine_routes_on_the_hierarchy_through_edits_and_closures() {
+    let (mut engine, [direct, up, down, last]) = two_ways();
+    engine.build_hierarchy();
+    let t_last = engine.travel_time[last as usize];
+    assert!((engine.route_time(direct, last).unwrap() - t_last).abs() < 1e-3);
+    // A banned turn: no way on from the direct road; the detour still leads there.
+    assert_eq!(
+        engine.set_edits(&[Edit::BanTurn {
+            from: direct,
+            to: last
+        }]),
+        1
+    );
+    assert_eq!(engine.route_time(direct, last), None);
+    assert!(engine.route_time(up, last).is_some());
+    // Lifted again; then the detour's second road closed: the only way runs through it, at
+    // the time a closed road counts.
+    engine.set_edits(&[]);
+    assert!(engine.route_time(direct, last).is_some());
+    engine.set_closed(&[down]);
+    assert!(engine.route_time(up, last).unwrap() >= CLOSED_TIME);
+    engine.set_closed(&[]);
+    assert!(engine.route_time(up, last).unwrap() < CLOSED_TIME);
+    let h = engine.hierarchy().unwrap();
+    assert_eq!(h.searches, 6);
+    // Customised once for each change of the network or the times that a search followed.
+    assert_eq!(h.customisations, 5);
+}
+
+#[test]
+fn an_order_made_elsewhere_gives_the_same_routes() {
+    use crate::cch::{RoutingGraph, order_words};
+    let (net, roads) = grid(6);
+    // The words another worker gets, and the edges in order it sends back (M11c).
+    let words = RoutingGraph::of(&net).to_words();
+    let order = order_words(&words).expect("a graph");
+    assert_eq!(order.len(), roads.len());
+    assert_eq!(order_words(&words[..words.len() - 1]), None);
+    let (mut here, mut there) = (Engine::new(grid(6).0, 3), Engine::new(net, 3));
+    here.build_hierarchy();
+    // Too little of the network ranked: refused.
+    assert!(!there.set_hierarchy_order(&order[..order.len() / 2]));
+    assert!(there.set_hierarchy_order(&order));
+    let pairs = roads
+        .iter()
+        .step_by(7)
+        .flat_map(|&a| roads.iter().step_by(5).map(move |&b| (a, b)));
+    let mut found = 0;
+    for (a, b) in pairs {
+        let t = here.route_time(a, b);
+        assert_eq!(t, there.route_time(a, b), "{a} -> {b}");
+        found += t.is_some() as u32;
+    }
+    assert!(found > 100, "{found}");
 }

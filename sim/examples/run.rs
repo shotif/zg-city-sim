@@ -536,6 +536,24 @@ impl RouteLog {
     }
 }
 
+/// Route searches on a contraction hierarchy (M11), unless `NO_HIERARCHY` is set (A*
+/// throughout, as before M11b).
+pub fn attach_hierarchy(engine: &mut Engine) {
+    if std::env::var("NO_HIERARCHY").is_ok() {
+        println!("routes: A* (NO_HIERARCHY)");
+        return;
+    }
+    let t = Instant::now();
+    engine.build_hierarchy();
+    let h = engine.hierarchy().expect("built");
+    println!(
+        "routes: contraction hierarchy over {} edges, {} arcs, built in {:.1} s",
+        h.cch.len(),
+        h.cch.arcs(),
+        t.elapsed().as_secs_f64()
+    );
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = args
@@ -581,6 +599,7 @@ fn main() {
     }
     attach_pedestrians(&mut engine, &format!("{dir}/../pedestrians"));
     attach_bikes(&mut engine, &format!("{dir}/../cycling"));
+    attach_hierarchy(&mut engine);
     println!(
         "engine with routing landmarks ready in {:.0} ms",
         t0.elapsed().as_secs_f64() * 1e3
@@ -800,10 +819,18 @@ fn main() {
     );
     let [searches, failed, found_settled, failed_settled] = engine.route_counts();
     println!(
-        "route searches: {searches}, {failed} failed; {:.0} edges settled per search found, {:.0} per search failed",
+        "route searches by A*: {searches}, {failed} failed; {:.0} edges settled per search found, {:.0} per search failed",
         found_settled as f64 / (searches - failed).max(1) as f64,
         failed_settled as f64 / failed.max(1) as f64
     );
+    if let Some(h) = engine.hierarchy() {
+        println!(
+            "route searches on the hierarchy: {}, {:.0} ranks visited each; {} customisations",
+            h.searches,
+            h.visited as f64 / h.searches.max(1) as f64,
+            h.customisations
+        );
+    }
     println!(
         "lane changes missed: {} vehicles went another way from a lane with no way on",
         s.lane_reroutes
@@ -1024,10 +1051,15 @@ fn main() {
             .zip(engine.phase_seconds)
             .map(|(n, t)| format!("{n} {:.1} s", t))
             .collect();
+        let (h_search, h_custom) = engine
+            .hierarchy()
+            .map_or((0.0, 0.0), |h| (h.seconds, h.custom_seconds));
         println!(
-            "time by phase: {}; route searches {:.1} s",
+            "time by phase: {}; route searches {:.1} s by A*, {:.1} s on the hierarchy plus {:.1} s customising it",
             parts.join(", "),
-            engine.route_seconds()
+            engine.route_seconds(),
+            h_search,
+            h_custom
         );
     }
 }

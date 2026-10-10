@@ -1,6 +1,7 @@
 """Compare a simulated weekday with traffic counts and write docs/VALIDATION.md.
 
     gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
+    gunzip -kf web/public/data/{pedestrians/crossings,cycling/cycling}.bin.gz
     (cd sim && cargo run --release --example day -- ../web/public/data <run_dir>)
     python -m pipeline.validate <run_dir>
 
@@ -842,6 +843,7 @@ def report(
         "```sh",
         "python -m pipeline all",
         "gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz",
+        "gunzip -kf web/public/data/{pedestrians/crossings,cycling/cycling}.bin.gz",
         "(cd sim && cargo run --release --example day -- ../web/public/data /tmp/day)",
         "python -m pipeline.validate /tmp/day",
         "```",

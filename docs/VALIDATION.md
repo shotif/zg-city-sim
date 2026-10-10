@@ -342,6 +342,7 @@ The City counted bikes at these places in 2014 (daily means over the counting pe
 ```sh
 python -m pipeline all
 gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
+gunzip -kf web/public/data/{pedestrians/crossings,cycling/cycling}.bin.gz
 (cd sim && cargo run --release --example day -- ../web/public/data /tmp/day)
 python -m pipeline.validate /tmp/day
 ```

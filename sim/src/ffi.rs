@@ -8,6 +8,7 @@
 
 use std::sync::Mutex;
 
+use crate::cch::{RoutingGraph, order_words};
 use crate::demand::{Demand, Gateway};
 use crate::edits::Edit;
 use crate::engine::{DT, Engine, LanePiece, RENDER_STRIDE, Trip, stat};
@@ -53,6 +54,8 @@ struct State {
     line_plan: Vec<u32>,
     /// Public transport's riders (`zg_riders`).
     riders: Vec<f32>,
+    /// The routing graph to order, or its order (`zg_hierarchy_graph`, `zg_order`).
+    hierarchy: Vec<u32>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -602,6 +605,64 @@ pub extern "C" fn zg_riders() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_work_riders() -> u32 {
     with_state(|s| s.engine.as_mut().is_some_and(|e| e.work_riders_with(1)) as u32)
+}
+
+/// The engine's routing graph (M11c), for another worker to order (`zg_order`), as words
+/// (`RoutingGraph::to_words`); returns how many, `zg_hierarchy_ptr` points to them.
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_hierarchy_graph() -> u32 {
+    with_state(|s| {
+        s.hierarchy = s
+            .engine
+            .as_ref()
+            .map(|e| RoutingGraph::of(&e.net).to_words())
+            .unwrap_or_default();
+        s.hierarchy.len() as u32
+    })
+}
+
+/// The edges of a routing graph given as `n` words at `words` in nested dissection order
+/// (needs no engine: the worker that orders has none); returns how many (0 if the words are
+/// not a graph), `zg_hierarchy_ptr` points to them.
+///
+/// # Safety
+/// `words` must point to `n` u32 values (or `n` be 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_order(words: *const u32, n: usize) -> u32 {
+    let words: &[u32] = if n == 0 || words.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(words, n) }
+    };
+    let order = order_words(words).unwrap_or_default();
+    with_state(|s| {
+        s.hierarchy = order;
+        s.hierarchy.len() as u32
+    })
+}
+
+/// Route cars, trucks and bikes on a hierarchy in `order` (`zg_order`'s edges, `n` words;
+/// edges drawn since rank above them): 1 if it covers the network, else 0 (A* goes on).
+///
+/// # Safety
+/// `order` must point to `n` u32 values (or `n` be 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_set_order(order: *const u32, n: usize) -> u32 {
+    let order: &[u32] = if n == 0 || order.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(order, n) }
+    };
+    with_state(|s| {
+        s.engine
+            .as_mut()
+            .is_some_and(|e| e.set_hierarchy_order(order)) as u32
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_hierarchy_ptr() -> *const u32 {
+    with_state(|s| s.hierarchy.as_ptr())
 }
 
 #[unsafe(no_mangle)]

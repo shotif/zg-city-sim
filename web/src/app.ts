@@ -2039,6 +2039,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
           rate: sim.rate,
           speed: sim.paused ? 0 : sim.speed,
           vehicles: sim.stats[STAT.running],
+          hierarchyS: sim.hierarchyMs === undefined ? undefined : sim.hierarchyMs / 1000,
         };
       }
       debug.perf = perf;

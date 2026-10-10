@@ -34,8 +34,8 @@ Read these before changing anything:
 | `sim/` | Rust traffic engine, compiled to WebAssembly (C ABI in `ffi.rs`) and run natively. |
 | `sim/src/engine.rs` | Vehicles, IDM/MOBIL, junction right of way, signals (`merge_signal_phases`, `retime_signals`, actuated control), routing calls, re-routing on the way (`reroute_en_route`), closures, statistics. |
 | `sim/src/network.rs` | The network built from the packed arrays: routing successors, toll time, where turns wait inside junctions (`waits_for`). |
-| `sim/src/router.rs` | ALT A* with weighted heuristic; `reach`, the time-limited search behind land value's accessibility (`Engine::reach`). |
-| `sim/src/cch.rs` | Customizable contraction hierarchies (M11): the order by nested dissection (inertial flow), contraction, customisation for a class's travel times (`Metric`), and queries up the elimination tree (`Query`). Measured offline so far (M11a). |
+| `sim/src/router.rs` | ALT A* with weighted heuristic, for transit legs and until a hierarchy is built; `reach`, the time-limited search behind land value's accessibility and the riders' car journeys without one. |
+| `sim/src/cch.rs` | Customizable contraction hierarchies (M11), which car, truck and bike routes are searched on: the order by nested dissection (inertial flow; `order`, run in a worker of its own in the browser), contraction (`Cch`; extended with new edges on top for drawn roads), customisation per class when travel times change (`Metric`, `Hierarchy`), queries up the elimination tree, and searches to every edge at once (PHAST, `Query::one_to_all`) for the riders' car journeys and land value. A* (`router.rs`) is left for transit legs and while no hierarchy is built. |
 | `sim/src/demand.rs` | Trip generation: `HOURLY` profile, gravity model, gateways. |
 | `sim/src/weather.rs` | The weather's factors on desired speed, headway and acceleration (M6b). |
 | `sim/src/transit.rs` | Trams, buses and trains on timetable; lines run more or less often by frequency edits (M9b: trips cancelled, or copies of them appended to the timetable); new lines' trips (M9c). |
@@ -46,7 +46,7 @@ Read these before changing anything:
 | `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
 | `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck; `--features profile` times each phase and the route searches), `day.rs` (a whole weekday, for validation, with the delay queued at each junction by cause), `compare.rs` (one network through the morning peak, for a project's before and after), `routes.rs` (times route searches and how much longer routes get with other heuristic weights; `--replay` replays the searches a run logged, `--cch` measures the contraction hierarchy) and `riders.rs` (public transport's riders today, and the constant calibrated to the Transport Master Plan's split). |
-| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (terrain in tiles coarser with distance, roads, buildings, vehicles and their models, traffic map, closures, news, edits, the sun, daylight and night lights, the weather); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, with tram tracks if asked, roundabouts and signal programs, built into the network the engine runs), the junctions' movements for the signal editor (`signals.ts`) and new public transport lines' stops (`lines.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool, buildings that grow and the homes and jobs they add to the traffic's demand, land value and demand per zone, the budget); `src/ui/` the HUD, panels (stations and level crossings on the traffic map: `railMarkers.ts`; the Public transport panel: `transitPanel.ts`, over the timetable in `src/world/transitLines.ts`), sound and the `?perf` overlay; `src/camera/` the views. |
+| `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, the worker that orders the routing graph (`orderWorker.ts`, M11), protocol and wasm wrapper; `src/world/` the layers (terrain in tiles coarser with distance, roads, buildings, vehicles and their models, traffic map, closures, news, edits, the sun, daylight and night lights, the weather); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, with tram tracks if asked, roundabouts and signal programs, built into the network the engine runs), the junctions' movements for the signal editor (`signals.ts`) and new public transport lines' stops (`lines.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool, buildings that grow and the homes and jobs they add to the traffic's demand, land value and demand per zone, the budget); `src/ui/` the HUD, panels (stations and level crossings on the traffic map: `railMarkers.ts`; the Public transport panel: `transitPanel.ts`, over the timetable in `src/world/transitLines.ts`), sound and the `?perf` overlay; `src/camera/` the views. |
 | `.github/workflows/` | `deploy.yml` (build, test, deploy main) and `live-data.yml` (copies the City's closures feed and DHMZ's weather in Zagreb to the `live-data` branch every 15 minutes). |
 
 ## Commands
@@ -65,11 +65,14 @@ cd web && npm run format:check && npm run typecheck && npm test
 npm run wasm && npm run build && npx playwright test --project=desktop   # smoke tests in headless Chromium
 
 # Native runs on the built data
-gunzip -kf web/public/data/{network/net,demand/demand,transit/transit}.bin.gz
+gunzip -kf web/public/data/{network/net,demand/demand,transit/transit,pedestrians/crossings,cycling/cycling}.bin.gz
 cd sim && cargo run --release --example run -- ../web/public/data/network 6 270   # 06:00 for 270 min
 cargo run --release --example day -- ../web/public/data /tmp/day                 # a whole weekday, about 1 h
 cd .. && python -m pipeline.validate /tmp/day                                     # rewrites docs/VALIDATION.md
 python -m pipeline.peak /tmp/day /tmp/day2                                        # the roads' peak speeds for car journeys (M10d)
+# The engine as WebAssembly in Node (--data: with the demand, timetable, pedestrians and bikes; --hierarchy: routes on it)
+cd sim && cargo build --release --target wasm32-unknown-unknown && cd ..
+node --experimental-strip-types sim/bench/bench.ts --data --hierarchy --start 6 --minutes 150
 # Route searches: log a morning peak's, then replay them with today's router or the hierarchy (M11)
 cd sim && ROUTE_LOG=/tmp/routes ROUTE_LOG_AFTER=60 cargo run --release --example run -- ../web/public/data/network 6 150
 cargo run --release --example routes -- ../web/public/data/network --replay /tmp/routes 60000 --cch
@@ -93,13 +96,14 @@ Environment variables for the native runs:
 - `FREQUENCY_MODES=tram` (or `bus`), with `FREQUENCY`, changes only that mode's lines; `FREQUENCY_ROUTES=5` only those routes (the timetable's indices: tram 6 is 5).
 - `PRIORITY=all` (the `run` and `day` examples) gives trams and buses signal priority at every signal they cross (M10b); `PRIORITY=5` along those routes.
 - `TRAM_HOLDUPS=1` (the `run` example) prints at the end where trams stood still off their stops and why, and how late buses and trams ran; `WATCH_LANES=462508` prints the vehicles on those lanes every 5 simulated minutes.
+- `NO_HIERARCHY=1` (the `run`, `day`, `compare` and `riders` examples) searches routes by A* throughout, as before M11.
 - `ROUTE_LOG=dir` (the `run` example) logs every route search, with what it was for and the travel times it ran on, from `ROUTE_LOG_AFTER` minutes into the run (default 0), for `routes --replay dir [n] [--cch]`.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite
 
 - **Generated data:** `web/public/data/` is generated and gitignored. CI rebuilds it from scratch on every push.
-- **Stale data in native runs:** the native runners read the unpacked `.bin` files. After rebuilding data, unpack again with `gunzip -kf`, or they quietly run on the old network.
+- **Stale data in native runs:** the native runners read the unpacked `.bin` files, the pedestrians' and bikes' too. After rebuilding data, unpack them all again with `gunzip -kf`, or they quietly run on the old network.
 - **Drawn roads keep ids:** the junction builder builds every network from the one loaded, so lanes, edges and junctions loaded keep their ids and drawn ones come after. The engine is told where each lane went (`lanePieces`); keep that invariant when changing either side. Links taken away (a junction made a roundabout, movements closed by the signal editor) are left out of the arrays, so link ids are not stable: the engine matches them again by the lanes they join.
 - **Demand changes at runtime:** buildings grown on zoned lots add homes and jobs: the app sends today's `demand*` arrays merged with them (`zg_set_demand`), so the engine's demand weights can differ from the data loaded. Lots name today's edges; with a project open they are matched by position.
 - **Player-set signals:** programs the player sets carry `tlsFixed`; `merge_signal_phases`, `retime_signals`, actuated extension and phase skipping leave them alone.
@@ -108,6 +112,7 @@ Environment variables for the native runs:
 - **Peak speeds:** car journeys for the riders use the roads' speeds in the morning peak from day runs (`pipeline/data/peak_speeds.json`). After a change that moves traffic a lot, refresh them with `python -m pipeline.peak` on the new day runs, rebuild the network and calibrate `ASC` again with the `riders` example.
 - **Ids change with the network:** rebuilding the network with different netconvert options renumbers edges, lanes and links. Validate a day run against the network it ran on: `validate.py` checks the edge count.
 - **Day runs are slow:** a full simulated day takes about an hour on one core. To compare variants, run them in parallel, each built into its own `CARGO_TARGET_DIR`, so rebuilding never touches a running binary.
+- **Travel times and the hierarchy:** searches on the hierarchy use a metric customised for the travel times as they were when the engine last changed them (`update_edge_times`, `set_closed`, `set_edits`, `replace_network`). Code that changes `travel_time` (or the peak or bike times) directly must call `travel_times_changed` (or mark the metric stale), or routes run on the old times.
 - **Routes are validated too:** a faster route search that picks other routes moves the day's counts (a weighted heuristic cost 3 of 13 stations within ±25 %). Check route changes with a day run against two seeds of today's.
 - **Runs vary:** under congestion, results differ from run to run. Compare whole days, and change one thing at a time where you can.
 - **Process matching:** `pkill -f` and `pgrep -f` with a pattern that also appears in your own command line match your shell and can kill it. Use `pgrep -x day` or PIDs.

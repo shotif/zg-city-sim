@@ -34,6 +34,7 @@ fn main() {
     let data = run::load_transit(&format!("{root}/transit")).expect("timetable");
     engine.transit = Some(Transit::new(data));
     engine.demand = Some(demand);
+    run::attach_hierarchy(&mut engine);
     let t0 = Instant::now();
     engine.start_riders((!districts.is_empty()).then_some(&districts[..]));
     let riders = engine.riders.as_ref().expect("riders");
@@ -44,11 +45,20 @@ fn main() {
         t0.elapsed().as_secs_f64()
     );
     let t1 = Instant::now();
+    // Car journeys first (M10d: a search from each zone), then public transport's.
+    let mut car = 0.0;
     while engine.riders.as_ref().is_some_and(|r| r.busy()) {
+        let cars = engine
+            .riders
+            .as_ref()
+            .is_some_and(|r| r.car_origin().is_some());
         engine.work_riders();
+        if cars {
+            car = t1.elapsed().as_secs_f64();
+        }
     }
     println!(
-        "car and public transport journeys from every zone in {:.1} s",
+        "car and public transport journeys from every zone in {:.1} s (car journeys done after {car:.1} s)",
         t1.elapsed().as_secs_f64()
     );
     let riders = engine.riders.as_ref().expect("riders");
