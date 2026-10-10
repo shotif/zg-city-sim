@@ -296,13 +296,20 @@ fn load_demand(dir: &str) -> Option<DemandData> {
 
 /// Edits running every tram and bus line `factor` times as often (M9b).
 pub fn frequency_edits(engine: &Engine, factor: f32) -> Vec<Edit> {
+    // FREQUENCY_MODES=tram (or bus) changes only that mode's lines.
+    let modes = std::env::var("FREQUENCY_MODES").unwrap_or_default();
+    let changed = |vt: u8| match modes.as_str() {
+        "tram" => vt == vtype::TRAM,
+        "bus" => vt == vtype::BUS,
+        _ => matches!(vt, vtype::TRAM | vtype::BUS),
+    };
     let routes: std::collections::BTreeSet<u16> = engine
         .transit
         .as_ref()
         .map(|tr| {
             let d = &tr.data;
             (0..tr.timetabled)
-                .filter(|&t| matches!(d.trip_type[t], vtype::TRAM | vtype::BUS))
+                .filter(|&t| changed(d.trip_type[t]))
                 .map(|t| d.trip_route[t])
                 .collect()
         })
@@ -469,12 +476,26 @@ fn main() {
     for &j in &watch {
         print!("junction {j}:\n{}", engine.describe_program(j));
     }
+    // TRAM_HOLDUPS=1: where trams stand still off their stops, and why, printed at the end.
+    let tram_holdups = std::env::var("TRAM_HOLDUPS").is_ok();
+    let mut held: HashMap<(u32, Holdup), f32> = HashMap::new();
     let steps_per_minute = (60.0 / DT) as u32;
     let mut total = 0.0;
     for m in 1..=minutes {
         let t = Instant::now();
-        for _ in 0..steps_per_minute {
+        for k in 0..steps_per_minute {
             engine.step();
+            if tram_holdups && k % 10 == 0 {
+                for v in engine.live_vehicles() {
+                    let veh = &engine.vehs[v as usize];
+                    if veh.vtype == vtype::TRAM
+                        && veh.speed < 0.5
+                        && !veh.transit.as_ref().is_some_and(|run| run.dwelling)
+                    {
+                        *held.entry((veh.lane, engine.diagnose(v))).or_default() += 10.0 * DT;
+                    }
+                }
+            }
         }
         total += t.elapsed().as_secs_f64();
         for &j in &watch {
@@ -502,6 +523,35 @@ fn main() {
                 }
                 if engine.diagnose(front) == zg_sim::engine::Holdup::ExitFull {
                     println!("    queue:{}", engine.describe_queue_chain(front));
+                }
+            }
+        }
+        // WATCH_LANES=l1,l2: every 5 simulated minutes, the vehicles on those lanes.
+        if m % 5 == 0 {
+            for lane in std::env::var("WATCH_LANES")
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(|s| s.trim().parse::<u32>().ok())
+            {
+                println!("  lane {lane}:");
+                for &v in engine.vehicles_on(lane).iter().rev() {
+                    let veh = &engine.vehs[v as usize];
+                    let dwell = veh.transit.as_ref().map(|run| {
+                        format!(
+                            " dwelling {} until {:.0} late {:.0}",
+                            run.dwelling,
+                            run.dwell_until - engine.time,
+                            run.late
+                        )
+                    });
+                    println!(
+                        "    {} pos {:.0} speed {:.1} {:?}{}",
+                        veh.vtype,
+                        veh.pos,
+                        veh.speed,
+                        engine.diagnose(v),
+                        dwell.unwrap_or_default()
+                    );
                 }
             }
         }
@@ -748,6 +798,55 @@ fn main() {
             "  junction {j} at ({x:.0}, {z:.0}): {hours:.1} h lost; {}",
             parts.join(", ")
         );
+    }
+    if tram_holdups {
+        // By lane, the tram-hours stood still and the main reasons.
+        let mut by_lane: HashMap<u32, (f32, Vec<(Holdup, f32)>)> = HashMap::new();
+        let mut by_kind: HashMap<Holdup, f32> = HashMap::new();
+        for (&(lane, why), &secs) in &held {
+            let e = by_lane.entry(lane).or_default();
+            e.0 += secs;
+            e.1.push((why, secs));
+            *by_kind.entry(why).or_default() += secs;
+        }
+        let mut kinds: Vec<_> = by_kind.into_iter().collect();
+        kinds.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let parts: Vec<String> = kinds
+            .iter()
+            .map(|(k, s)| format!("{k:?} {:.1}", s / 3600.0))
+            .collect();
+        println!("trams standing off their stops (h): {}", parts.join(", "));
+        if let Some(tr) = &engine.transit {
+            println!(
+                "late on average: buses {:.0} s, trams {:.0} s; trips started {:?}, failed {:?}",
+                tr.late_sum[vtype::BUS as usize] / tr.departures[vtype::BUS as usize].max(1) as f64,
+                tr.late_sum[vtype::TRAM as usize]
+                    / tr.departures[vtype::TRAM as usize].max(1) as f64,
+                tr.started_by,
+                tr.failed_by
+            );
+        }
+        let mut lanes: Vec<_> = by_lane.into_iter().collect();
+        lanes.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+        for (lane, (secs, mut whys)) in lanes.into_iter().take(30) {
+            whys.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let d = &engine.net.d;
+            let edge = d.lane_edge[lane as usize] as usize;
+            let shape = d.lane_shape_offsets[lane as usize + 1] as usize - 1;
+            let parts: Vec<String> = whys
+                .iter()
+                .take(3)
+                .map(|(k, s)| format!("{k:?} {:.1}", s / 3600.0))
+                .collect();
+            println!(
+                "  lane {lane} (edge {edge} to junction {}) at ({:.0}, {:.0}): {:.1} h; {}",
+                d.edge_to[edge],
+                d.lane_shape[shape * 3],
+                d.lane_shape[shape * 3 + 1],
+                secs / 3600.0,
+                parts.join(", ")
+            );
+        }
     }
     if engine.phase_seconds.iter().any(|&t| t > 0.0) {
         let names = [

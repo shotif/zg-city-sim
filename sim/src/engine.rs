@@ -46,6 +46,9 @@ pub const STUCK_TIME: f32 = 300.0;
 const REROUTE_RETRY: f32 = 20.0;
 /// Shortest stop of a bus, tram or train (s), for passengers to get on and off.
 const MIN_DWELL: [f64; 6] = [0.0, 0.0, 15.0, 20.0, 30.0, 0.0];
+/// How far behind its stop (m) a bus or tram held behind another one there serves it: a
+/// stop's platform takes two (an estimate: ZET's tram stops are about 70 m long).
+const PLATFORM: [f32; 6] = [0.0, 0.0, 20.0, 36.0, 0.0, 0.0];
 /// Trips that cannot start within this time (s), for lack of room at the stop, are dropped.
 const MAX_TRANSIT_DELAY: f64 = 300.0;
 /// Trips that cannot be inserted within this time are dropped.
@@ -1327,15 +1330,38 @@ impl Engine {
             if called && lane_len < reach {
                 return true;
             }
-            for &u in self.lane_vehs[from].iter().rev().take(3) {
+            // A queue keeps its green while it moves up gap by gap, as it keeps a detector at
+            // the line occupied: each vehicle is measured to the tail of the one ahead, the
+            // front one to the tail of the last to go through (a tram's 32 m included), and
+            // counts while it waits for room behind one moving off (M10a).
+            let mut line = lane_len;
+            for (k, &u) in self.lane_vehs[from].iter().rev().take(3).enumerate() {
                 let uv = &self.vehs[u as usize];
-                let dist = lane_len - uv.pos;
-                if dist > 3.0 + uv.speed.max(5.0) * MAX_GAP {
+                let reach = 3.0 + uv.speed.max(5.0) * MAX_GAP;
+                let mut dist = line - uv.pos;
+                let mut moving_up = false;
+                if k == 0
+                    && uv.next_link == l
+                    && dist < reach + TRAM_LENGTH
+                    && (dist > reach || !(uv.will_pass || called))
+                    && let Some((tail, speed)) = self.ahead_through(l, uv)
+                {
+                    dist += tail.min(0.0);
+                    moving_up = speed > 1.0 && tail < 40.0;
+                }
+                if dist > reach {
                     break;
                 }
-                if uv.next_link == l && (uv.will_pass || called) {
+                // A bus or tram at its stop before the line waits for its passengers, not
+                // for the light, and those behind it wait for it: controllers see it once it
+                // moves off (M10a).
+                if self.stopping_before(uv) {
+                    break;
+                }
+                if uv.next_link == l && (uv.will_pass || called || moving_up) {
                     return true;
                 }
+                line = uv.pos - uv.params().length;
             }
         }
         self.pedestrians_call(t, phase, except, called)
@@ -1489,6 +1515,9 @@ impl Engine {
 
         // A bus or tram stops at its next stop: on this lane, or further ahead (below).
         let mut stop_ahead = self.next_stop_of(veh);
+        // It stops there before the line, so it does not pass the line yet: drivers crossing
+        // its way need not wait for it, nor actuated signals keep its green (M10a).
+        let mut stopping = false;
         if let Some((route_idx, frac)) = stop_ahead
             && route_idx == veh.route_idx
             && !net.lane_internal[lane as usize]
@@ -1498,7 +1527,15 @@ impl Engine {
                 plan.missed_stop = true;
             } else {
                 acc = acc.min(stop_at(speed, vmax, gap + 0.5, p, self.weather));
-                plan.at_stop = gap < 2.0 && speed < 0.3;
+                // A stop takes two: one held behind another within the platform serves it
+                // there (M10a).
+                let queued = leader.is_some_and(|l| {
+                    let lv = &self.vehs[l as usize];
+                    lv.speed < 0.3 && lv.pos - lv.params().length - veh.pos < 4.0
+                });
+                plan.at_stop =
+                    speed < 0.3 && (gap < 2.0 || queued && gap < PLATFORM[veh.vtype as usize]);
+                stopping = true;
             }
             stop_ahead = None;
         }
@@ -1567,7 +1604,7 @@ impl Engine {
                 let state = self.link_state(link);
                 let go = self.may_pass(v, veh, link, state, dist, own && !have_leader);
                 if own {
-                    plan.pass = Some(go);
+                    plan.pass = Some(go && !stopping);
                 }
                 if !go {
                     acc = acc.min(stop_at(speed, vmax, dist, p, self.weather));
@@ -2144,6 +2181,45 @@ impl Engine {
         true
     }
 
+    /// The first vehicle ahead of `veh` past `link`'s stop line along its way, within 60 m:
+    /// how far past the line its tail is (m, negative while it still sticks out over the
+    /// line) and its speed.
+    fn ahead_through(&self, link: u32, veh: &Vehicle) -> Option<(f32, f32)> {
+        let d = &self.net.d;
+        let p = veh.params();
+        let found = |lane: u32, offset: f32| {
+            self.ahead_of(lane, 0, false).map(|u| {
+                let uv = &self.vehs[u as usize];
+                (offset + uv.pos - uv.params().length, uv.speed)
+            })
+        };
+        let mut offset = 0.0;
+        let mut link = link;
+        for route_i in (veh.route_idx + 1..).take(4) {
+            let mut via = d.link_via[link as usize];
+            while via != NONE && self.net.lane_internal[via as usize] {
+                if let Some(ahead) = found(via, offset) {
+                    return Some(ahead);
+                }
+                offset += d.lane_length[via as usize];
+                via = d.lane_next[via as usize];
+            }
+            let to = d.link_to[link as usize];
+            if let Some(ahead) = found(to, offset) {
+                return Some(ahead);
+            }
+            offset += d.lane_length[to as usize];
+            if offset > 60.0 {
+                return None;
+            }
+            link = self.choose_link_or_detour(to, &veh.route, route_i, p.vclass);
+            if link == NONE {
+                return None;
+            }
+        }
+        None
+    }
+
     /// Whether vehicle `u` has stood still inside a junction for so long it no longer blocks
     /// crossing traffic.
     fn stuck_in_junction(&self, u: u32) -> bool {
@@ -2568,6 +2644,16 @@ impl Engine {
     fn next_stop_of(&self, veh: &Vehicle) -> Option<(u32, f32)> {
         let run = veh.transit.as_ref()?;
         run.target(&self.transit.as_ref()?.data)
+    }
+
+    /// Whether a bus or tram stands at its stop, or stops at one further along its lane,
+    /// before the line at the lane's end.
+    fn stopping_before(&self, veh: &Vehicle) -> bool {
+        veh.transit.as_ref().is_some_and(|run| run.dwelling)
+            || !self.net.lane_internal[veh.lane as usize]
+                && self
+                    .next_stop_of(veh)
+                    .is_some_and(|(route_idx, _)| route_idx == veh.route_idx)
     }
 
     /// A bus or tram at (or past) its next stop: wait for passengers and the timetable.
@@ -3290,6 +3376,16 @@ impl Engine {
                 Err(Some(f)) if urgent => Some(LaneChange::AskToYield(f)),
                 Err(_) => None,
             };
+        }
+
+        // Buses keep to the rightmost lane that suits, a bus lane where there is one, where
+        // their stops are; they do not overtake (M10a).
+        if veh.vtype == vtype::BUS {
+            let target = start + i.checked_sub(1)?;
+            if scores[(i - 1) as usize] != best || self.change_safe(v, target, false).is_err() {
+                return None;
+            }
+            return Some(LaneChange::To(target));
         }
 
         // Tactical (MOBIL), every other step: overtake slower vehicles on lanes that suit.

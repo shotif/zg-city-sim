@@ -2230,6 +2230,206 @@ fn drivers_do_not_enter_a_roundabout_whose_exit_is_full() {
 }
 
 #[test]
+fn a_bus_at_its_stop_before_a_signal_neither_calls_nor_holds_the_green() {
+    use crate::transit::{Transit, TransitData};
+    // Actuated greens: east-west, then north-south, each with its yellow.
+    let mut d = signalled_crossroads_data(&[
+        (30.0, "GGGGrr"),
+        (3.0, "yyyyrr"),
+        (30.0, "rrrrGG"),
+        (3.0, "rrrryy"),
+    ]);
+    for p in [0, 2] {
+        d.phase_min_dur[p] = 5.0;
+        d.phase_max_dur[p] = 50.0;
+    }
+    let mut engine = Engine::new(Network::build(d).unwrap(), 1);
+    // Roads in the order the crossroads builds them.
+    let (nb_in, nb_out) = (4, 5);
+    // A bus from the south waits at a stop 9 m before the line until 60 s, its timetable.
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::BUS],
+        trip_route: vec![0],
+        trip_stops: vec![0, 3],
+        stop_edge: vec![nb_in, nb_in, nb_out],
+        stop_frac: vec![0.5, 0.97, 0.5],
+        stop_time: vec![5.0, 60.0, 120.0],
+    }));
+    engine.set_time(0.0);
+    let mut green_at = None;
+    let mut through_at = None;
+    run_until(&mut engine, 90.0, |e| {
+        if green_at.is_none() && e.tls_phase[0] == 2 {
+            green_at = Some(e.time);
+        }
+        let bus = e.vehs.iter().find(|v| v.alive() && v.vtype == vtype::BUS);
+        if through_at.is_none() && bus.is_some_and(|v| v.route_idx >= 1) {
+            through_at = Some(e.time);
+        }
+    });
+    assert_eq!(engine.transit.as_ref().unwrap().started, 1);
+    // Nobody else waits: the north-south green comes only once the bus has left its stop.
+    let green_at = green_at.expect("the bus never got a green");
+    assert!(
+        green_at >= 60.0,
+        "green for the bus at {green_at} s, while it stood at its stop"
+    );
+    let through_at = through_at.expect("the bus never crossed");
+    assert!(through_at < 75.0, "the bus crossed at {through_at} s");
+}
+
+#[test]
+fn a_queue_of_trams_keeps_its_green_while_it_moves_up() {
+    // Actuated greens: north-south first, then east-west, each with its yellow.
+    let mut d = signalled_crossroads_data(&[
+        (30.0, "rrrrGG"),
+        (3.0, "rrrryy"),
+        (30.0, "GGGGrr"),
+        (3.0, "yyyyrr"),
+    ]);
+    for p in [0, 2] {
+        d.phase_min_dur[p] = 5.0;
+        d.phase_max_dur[p] = 50.0;
+    }
+    let mut engine = Engine::new(Network::build(d).unwrap(), 1);
+    engine.set_time(0.0);
+    // Roads in the order the crossroads builds them.
+    let (eb_in, eb_out, nb_in, nb_out) = (0, 1, 4, 5);
+    // Three trams wait at the red from the west, nose to tail; cars keep coming from the
+    // south, calling their green back as soon as they can.
+    let lane = engine.net.edge_lanes(eb_in).start;
+    let length = engine.net.d.lane_length[lane as usize];
+    let trams: Vec<(u32, u32)> = (0..3)
+        .map(|k| {
+            let pos = length - 1.0 - 34.0 * k as f32;
+            let v = engine.insert_at(vtype::TRAM, vec![eb_in, eb_out], lane, pos, 0.0);
+            (v, engine.vehs[v as usize].serial)
+        })
+        .collect();
+    for k in 0..60 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 3.0,
+            from: nb_in,
+            to: nb_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    let mut greens = 0;
+    let mut last = engine.tls_phase[0];
+    let mut crossed_in = Vec::new();
+    run_until(&mut engine, 180.0, |e| {
+        if e.tls_phase[0] == 2 && last != 2 {
+            greens += 1;
+        }
+        last = e.tls_phase[0];
+        for (i, &(v, serial)) in trams.iter().enumerate() {
+            let veh = &e.vehs[v as usize];
+            let gone = !veh.alive() || veh.serial != serial || veh.route_idx >= 1;
+            if gone && !crossed_in.iter().any(|&(t, _)| t == i) {
+                crossed_in.push((i, greens));
+            }
+        }
+    });
+    assert_eq!(crossed_in.len(), 3, "trams through: {crossed_in:?}");
+    assert!(
+        crossed_in.iter().all(|&(_, g)| g == 1),
+        "the trams needed more than one green: {crossed_in:?}"
+    );
+}
+
+#[test]
+fn a_tram_held_behind_another_at_its_stop_serves_it_there() {
+    use crate::transit::{Transit, TransitData};
+    let (b, e0, e1) = straight_road(500.0, 1);
+    let mut engine = Engine::new(b.build(), 3);
+    // Two trams 5 s apart, both due to leave the stop half way along the first road at 60 s.
+    engine.transit = Some(Transit::new(TransitData {
+        trip_type: vec![vtype::TRAM, vtype::TRAM],
+        trip_route: vec![0, 1],
+        trip_stops: vec![0, 3, 6],
+        stop_edge: vec![e0, e0, e1, e0, e0, e1],
+        stop_frac: vec![0.1, 0.5, 0.5, 0.1, 0.5, 0.5],
+        stop_time: vec![5.0, 60.0, 150.0, 10.0, 60.0, 150.0],
+    }));
+    engine.set_time(0.0);
+    let lane0 = engine.net.edge_lanes(e0).start;
+    let stop = 0.5 * engine.net.d.lane_length[lane0 as usize];
+    let mut past: Vec<f64> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    run_until(&mut engine, 120.0, |e| {
+        for v in e
+            .vehs
+            .iter()
+            .filter(|v| v.alive() && v.vtype == vtype::TRAM)
+        {
+            let beyond = v.lane != lane0 || v.pos > stop + 40.0;
+            if beyond && seen.insert(v.serial) {
+                past.push(e.time);
+            }
+        }
+    });
+    assert_eq!(past.len(), 2, "trams past the stop: {past:?}");
+    // The second served the stop behind the first and followed it out, instead of moving up
+    // and standing there again for its minimum dwell.
+    assert!(past[0] >= 60.0, "the first left early: {past:?}");
+    assert!(past[1] - past[0] < 10.0, "the second left late: {past:?}");
+}
+
+#[test]
+fn buses_keep_to_the_rightmost_lane_a_bus_lane_where_there_is_one() {
+    let (b, e0, e1) = straight_road(600.0, 2);
+    let mut engine = Engine::new(b.build(), 4);
+    // The second road's right lane is for buses.
+    let edit = Edit::LaneClasses {
+        edge: e1,
+        lane: 0,
+        classes: vclass::BUS,
+    };
+    assert_eq!(engine.set_edits(&[edit]), 1);
+    let left = engine.net.edge_lanes(e0).start + 1;
+    let bus = engine.insert_at(vtype::BUS, vec![e0, e1], left, 50.0, 10.0);
+    let bus_lane = engine.net.edge_lanes(e1).start;
+    for k in 0..40 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 2.0,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    let mut moved_right = false;
+    let mut on_bus_lane = false;
+    run_until(&mut engine, 100.0, |e| {
+        let v = &e.vehs[bus as usize];
+        if v.alive() && v.route_idx == 0 && v.lane == left - 1 {
+            moved_right = true;
+        }
+        if v.alive() && v.route_idx == 1 {
+            assert!(
+                moved_right,
+                "the bus reached the second road in the left lane"
+            );
+            on_bus_lane |= v.lane == bus_lane;
+            assert!(
+                !on_bus_lane || v.lane == bus_lane,
+                "the bus left the bus lane at t={}",
+                e.time
+            );
+        }
+        for &u in e.vehicles_on(bus_lane) {
+            assert_eq!(
+                e.vehs[u as usize].vtype,
+                vtype::BUS,
+                "a car in the bus lane"
+            );
+        }
+    });
+    assert!(on_bus_lane, "the bus never drove in the bus lane");
+}
+
+#[test]
 fn a_bus_line_shows_its_path_and_how_late_its_buses_run() {
     use crate::transit::{Transit, TransitData};
     // A bus from a stop on the first road to one on the second, due there 20 s after it

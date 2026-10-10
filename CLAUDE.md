@@ -84,6 +84,8 @@ Environment variables for the native runs:
 - `NO_PEDESTRIANS=1` (the `day`, `run` and `compare` examples) leaves pedestrians out, as before M8c; `PEDESTRIAN_SCALE=0.5` lets half of the estimated pedestrians arrive.
 - `NO_BIKES=1` (the `day`, `run` and `compare` examples) leaves bikes out, as before M8d; `BIKE_SCALE=0.5` runs half of the estimated bike trips.
 - `FREQUENCY=2` (the `run`, `day` and `riders` examples) runs every tram and bus line that many times as often (M9b), moving car trips to public transport (M9d).
+- `FREQUENCY_MODES=tram` (or `bus`), with `FREQUENCY`, changes only that mode's lines.
+- `TRAM_HOLDUPS=1` (the `run` example) prints at the end where trams stood still off their stops and why, and how late buses and trams ran; `WATCH_LANES=462508` prints the vehicles on those lanes every 5 simulated minutes.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite
@@ -124,6 +126,7 @@ Environment variables for the native runs:
 | Room to change lanes: lane choice looks past shorter roads (`LANE_CHANGE_ROOM`, `LANE_CHANGE_SECONDS`) | `sim/src/engine.rs` | 150 m, or 10 s at the speed limit if longer |
 | Re-routing on the way (`REROUTE_CHECK`, `REROUTE_SLOWER`, `REROUTE_LOSS`, `REROUTE_GAIN`, `REROUTE_GAIN_TIME`, `REROUTE_LANE_ROOM`) | `sim/src/engine.rs` | every 60 s, when the rest takes 25 % and 60 s longer than expected; a new way that saves 10 % and 60 s; 100 m to change lanes |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
+| Buses and trams at stops (`MIN_DWELL`, `PLATFORM`) | `sim/src/engine.rs` | at least 15 s (buses) or 20 s (trams) a stop; a second bus within 20 m, or tram within 36 m, behind one at the stop serves it there (estimates) |
 | Pedestrians a day per crossing (`USES_PER_PERSON`, `WALKERS_PER_STOP`, `HOURLY`) | `pipeline/pedestrians.py` | 0.3 uses a day per resident or job beside a crossing, falling to none at 400 m; 6 per bus or tram stopping within 150 m (estimates) |
 | Pedestrians crossing (`WALK_SPEED`, `MIN_WALK`, `OWN_SIGNAL_GAP`) | `sim/src/pedestrians.rs` | 1.2 m/s plus 2 s to step off; at signals at least 5 s of walk before the clearance; own signals red at most once a minute |
 | Public transport's riders (`ZONE`, `PEAK`, `ACCESS`, `TRANSFER`, `WALK_WEIGHT`, `WAIT_WEIGHT`, `BOARDING`, `CAR_SPEED`, `CAR_EXTRA`, `BETA`, `ASC`; `FARE`) | `sim/src/riders.rs`, `web/src/grow/economy.ts` | 1 km zones; 06:30-08:30; stops within 1 km, changes within 250 m; walking and waiting count twice, 3 min a boarding; cars 30 km/h plus 8 min; 0.04 a generalised minute, constant 1.682 (45.8 % of motorised trips in the City); fares €0.21 a boarding |
