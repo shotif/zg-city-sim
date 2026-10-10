@@ -31,6 +31,7 @@ import osmium
 from scipy.spatial import cKDTree
 
 from .config import CACHE_DIR, OUTPUT_DIR, PIPELINE_DIR
+from .cycling import build_cycling
 from .demand import build_demand
 from .network import (
     build_sumo_network,
@@ -551,6 +552,7 @@ def build_project(project: Project) -> dict:
     demand = build_demand(root)
     transit = build_transit(root)
     pedestrians = build_pedestrians(root)
+    cycling = build_cycling(root)
     news = build_news(root)
     added, centre = new_edges(OUTPUT_DIR, root)
     log.info("%s: %d new edges, network %s", project.id, len(added), network["counts"])
@@ -571,6 +573,7 @@ def build_project(project: Project) -> dict:
             "demand": {**demand, "index": prefix + demand["index"]},
             "transit": {**transit, "index": prefix + transit["index"]},
             "pedestrians": {**pedestrians, "index": prefix + pedestrians["index"]},
+            "cycling": {**cycling, "index": prefix + cycling["index"]},
             "news": {**news, "index": prefix + news["index"]},
         },
         "newEdges": added,

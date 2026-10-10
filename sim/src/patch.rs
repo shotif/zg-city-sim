@@ -259,7 +259,7 @@ impl Engine {
         for v in self.live_vehicles().collect::<Vec<_>>() {
             let veh = &self.vehs[v as usize];
             if self.net.lane_internal[veh.lane as usize] {
-                if veh.cur_link != NONE {
+                if veh.cur_link != NONE && veh.vtype != vtype::BIKE {
                     let p = veh.params();
                     let to = self.net.d.link_to[veh.cur_link as usize] as usize;
                     self.lane_reserved[to] += p.length + p.min_gap;
@@ -310,6 +310,10 @@ impl Engine {
         self.edge_speed_n = vec![0; n_edges];
         self.edge_speed_ratio.resize(n_edges, 255);
         self.edge_entered.resize(n_edges, 0);
+        self.edge_bikes.resize(n_edges, 0);
+        if !self.bike_time.is_empty() {
+            self.update_bike_times();
+        }
         self.closed.retain(|&e| (e as usize) < n_edges);
         self.router = Router::new(n_edges);
         self.landmark_job = None;

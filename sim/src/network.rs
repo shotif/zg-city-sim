@@ -11,6 +11,7 @@ pub mod vclass {
     pub const TRAM: u16 = 4;
     pub const TRUCK: u16 = 8;
     pub const RAIL: u16 = 16;
+    pub const BICYCLE: u16 = 32;
 }
 
 /// Edge flag bits (pipeline/simnet.py).

@@ -146,6 +146,25 @@ async function loadCrossings(
   }
 }
 
+/** Roads with a cycle track or lane and bike trip ends (M8d): their arrays, with the trips a
+ * day as `bikeDaily`. */
+async function loadCycling(
+  indexPath: string | undefined,
+): Promise<Record<string, TypedArray> | undefined> {
+  if (!indexPath) return undefined;
+  try {
+    const response = await fetch(DATA_URL + indexPath);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const index = (await response.json()) as PackedIndex & { bikeTripsDaily: number };
+    const folder = indexPath.slice(0, indexPath.lastIndexOf('/') + 1);
+    const arrays = await loadPacked(DATA_URL + folder + index.file, index);
+    return { ...arrays, bikeDaily: Float32Array.of(index.bikeTripsDaily) };
+  } catch (error) {
+    console.warn('Cycle tracks and bike trips could not be loaded', error);
+    return undefined;
+  }
+}
+
 /** What the simulation needs besides the network: where people live and work, timetables. */
 interface TravelData {
   arrays: Record<string, TypedArray>;
@@ -903,17 +922,18 @@ export async function startApp(container: HTMLElement): Promise<void> {
           return Promise.resolve({ net, travel: travelData, index: loadedIndex, toToday });
         }
         todayRoads ??= (async () => {
-          const [todayNet, demand, transit, crossings] = await Promise.all([
+          const [todayNet, demand, transit, crossings, cycling] = await Promise.all([
             loadRoadNetwork(today.network!.index),
             loadLayerArrays(today.demand?.index, 'Travel demand'),
             loadLayerArrays(today.transit?.index, 'The ZET timetable'),
             loadCrossings(today.pedestrians?.index),
+            loadCycling(today.cycling?.index),
           ]);
           const todayIndex = new RoadIndex(todayNet);
           return {
             net: todayNet,
             travel: {
-              arrays: { ...demand, ...transit, ...crossings },
+              arrays: { ...demand, ...transit, ...crossings, ...cycling },
               dailyTrips: today.demand?.dailyCarTrips ?? DAILY_TRIPS,
               demandScale: today.demand?.demandScale ?? 1,
             },
@@ -1084,13 +1104,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
         demand: demandLayer,
         transit: transitLayer,
         pedestrians: pedestriansLayer,
+        cycling: cyclingLayer,
       } = manifest.layers;
       const travel: Promise<TravelData> = Promise.all([
         loadLayerArrays(demandLayer?.index, 'Travel demand'),
         loadLayerArrays(transitLayer?.index, 'The ZET timetable'),
         loadCrossings(pedestriansLayer?.index),
-      ]).then(([demand, transit, crossings]) => ({
-        arrays: { ...demand, ...transit, ...crossings },
+        loadCycling(cyclingLayer?.index),
+      ]).then(([demand, transit, crossings, cycling]) => ({
+        arrays: { ...demand, ...transit, ...crossings, ...cycling },
         dailyTrips: demand && demandLayer ? demandLayer.dailyCarTrips : DAILY_TRIPS,
         demandScale: demandLayer?.demandScale ?? 1,
       }));
@@ -1368,6 +1390,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
             trams: sim.stats[STAT.trams],
             buses: sim.stats[STAT.buses],
             trains: sim.stats[STAT.trains] ?? 0,
+            bikes: sim.stats[STAT.bikes] ?? 0,
             meanSpeed: sim.stats[STAT.meanSpeed] * 3.6,
           });
         }

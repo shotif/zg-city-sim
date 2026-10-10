@@ -27,8 +27,10 @@ pub const TRUCK: u8 = 1;
 pub const BUS: u8 = 2;
 pub const TRAM: u8 = 3;
 pub const TRAIN: u8 = 4;
+/// Cyclists (M8d): 15-20 km/h, apart from other traffic except inside junctions.
+pub const BIKE: u8 = 5;
 
-pub static TYPES: [VType; 5] = [
+pub static TYPES: [VType; 6] = [
     VType {
         length: 4.5,
         min_gap: 2.0,
@@ -80,5 +82,15 @@ pub static TYPES: [VType; 5] = [
         tau: 3.0,
         max_speed: 44.0,
         vclass: vclass::RAIL,
+    },
+    VType {
+        length: 1.8,
+        min_gap: 1.0,
+        accel: 1.0,
+        decel: 2.5,
+        emergency_decel: 4.5,
+        tau: 1.0,
+        max_speed: 5.0,
+        vclass: vclass::BICYCLE,
     },
 ];

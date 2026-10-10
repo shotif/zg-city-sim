@@ -1,0 +1,13 @@
+{
+  "source": "Grad Zagreb, ZG Cycle Unit: Promet biciklista (January 2015), https://www.zagreb.hr/userdocsimages/arhiva/ZG%20CYCLE%20UNIT/Prolasci_biciklista_2014Bike_broja%C4%8Di.pdf",
+  "note": "Daily means both ways. Bike totem at Trg Stjepana Radića from 30 May 2014; portable counters for 7 days at each other site, September to November 2014, rainy days and Sundays included. Positions are read off the presentation's overview map (approximate) and put on the street each counter is named after; `road` is the road the network has there. Sites 07 (Bundek, south Sava embankment, 156 a day) and 08 (Jarun, north Sava embankment, 243 a day) are on paths the network does not have.",
+  "sites": [
+    {"id": "00", "name": "Trg Stjepana Radića", "road": "Ulica grada Vukovara", "lon": 15.9794, "lat": 45.8010, "daily": 1034, "period": "2014-05-30/2014-12-31"},
+    {"id": "01", "name": "Zagrebačka avenija", "road": "Zagrebačka avenija", "lon": 15.9266, "lat": 45.7957, "daily": 1205, "period": "2014-09-16/2014-09-23"},
+    {"id": "02", "name": "Branimirova", "road": "Ulica kneza Branimira", "lon": 16.0600, "lat": 45.8200, "daily": 374, "period": "2014-09-16/2014-09-23"},
+    {"id": "03", "name": "Savski most", "road": "Jadranski most", "lon": 15.9521, "lat": 45.7845, "daily": 2415, "period": "2014-09-26/2014-10-02", "note": "The old Savski most carries only pedestrians and cyclists and is not in the network; bikes cross on Jadranski most beside it."},
+    {"id": "04", "name": "Most slobode", "road": "Avenija Većeslava Holjevca", "lon": 15.9796, "lat": 45.7878, "daily": 1062, "period": "2014-09-26/2014-10-02"},
+    {"id": "05", "name": "SR Njemačke", "road": "Ulica Savezne Republike Njemačke", "lon": 15.9900, "lat": 45.7650, "daily": 300, "period": "2014-10-08/2014-10-14"},
+    {"id": "06", "name": "Božidara Magovca", "road": "Ulica Božidara Magovca", "lon": 15.9966, "lat": 45.7699, "daily": 163, "period": "2014-10-08/2014-10-14"}
+  ]
+}

@@ -55,6 +55,7 @@ fn engine_for(root: &str, seed: u64) -> Engine {
         engine.transit = Some(Transit::new(data));
     }
     run::attach_pedestrians(&mut engine, &format!("{root}/pedestrians"));
+    run::attach_bikes(&mut engine, &format!("{root}/cycling"));
     engine.demand = Some(demand);
     engine.demand_scale = run::demand_scale(&format!("{root}/demand"));
     engine

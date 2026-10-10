@@ -41,7 +41,7 @@ pub const STUCK_TIME: f32 = 300.0;
 /// Seconds before a vehicle whose detour failed tries again.
 const REROUTE_RETRY: f32 = 20.0;
 /// Shortest stop of a bus, tram or train (s), for passengers to get on and off.
-const MIN_DWELL: [f64; 5] = [0.0, 0.0, 15.0, 20.0, 30.0];
+const MIN_DWELL: [f64; 6] = [0.0, 0.0, 15.0, 20.0, 30.0, 0.0];
 /// Trips that cannot start within this time (s), for lack of room at the stop, are dropped.
 const MAX_TRANSIT_DELAY: f64 = 300.0;
 /// Trips that cannot be inserted within this time are dropped.
@@ -58,6 +58,12 @@ const PUSH_IN_WAIT: f32 = 15.0;
 /// may only clear at a red), a driver enters a junction even if the road behind it is full,
 /// so gridlocks can unwind.
 const BLOCK_BOX_WAIT: f32 = 60.0;
+/// Bikes (M8d) route as if roads without a cycle track or lane were this many times as long
+/// (one lane each way; more), and are drawn this far (m) in from the right-hand edge of their
+/// lane.
+const MIXED_ROAD: f32 = 1.15;
+const BUSY_ROAD: f32 = 1.5;
+const BIKE_EDGE: f32 = 0.6;
 /// Level crossings (M8b): the lights start to flash this long (s) before a train gets to
 /// the crossing, the barriers are down `CROSSING_WARN` s later (drivers who can stop in
 /// comfort stop at the lights; at the barriers only those who cannot stop at all go on),
@@ -149,7 +155,9 @@ pub mod stat {
     pub const VEHICLE_KM: usize = 19;
     /// HŽ trains running.
     pub const TRAINS: usize = 20;
-    pub const LEN: usize = 21;
+    /// Cyclists riding (M8d).
+    pub const BIKES: usize = 21;
+    pub const LEN: usize = 22;
 }
 
 /// Trip flags.
@@ -310,6 +318,11 @@ pub struct Stats {
     pub running: u32,
     pub departed: u64,
     pub arrived: u64,
+    /// Bike trips started, finished and removed (M8d), not counted with the rest.
+    pub bike_departed: u64,
+    pub bike_arrived: u64,
+    pub bike_removed: u64,
+    pub bike_km: f64,
     pub teleported: u64,
     pub no_route: u64,
     pub insert_failed: u64,
@@ -335,6 +348,7 @@ pub struct Stats {
     pub teleport_log: Vec<String>,
     pub trams: u32,
     pub trains: u32,
+    pub bikes: u32,
     pub buses: u32,
     /// Running vehicles coming from or going beyond the map.
     pub outside: u32,
@@ -442,6 +456,17 @@ pub struct Engine {
     lane_reserved: Vec<f32>,
     /// Pedestrians at crossings (M8c), when loaded.
     pub pedestrians: Option<Pedestrians>,
+    /// Bike trips (M8d): within the City, run at `bike_scale` of the estimated number
+    /// whatever share of the car trips runs.
+    pub bikes: Option<Demand>,
+    pub bike_scale: f32,
+    /// Seconds a bike takes along each edge, as bikes choose routes: slower than its speed
+    /// on roads without a cycle track or lane (`set_cycleways`). Empty: by distance.
+    bike_time: Vec<f32>,
+    /// Edges with a cycle track or lane, as loaded (`set_cycleways`); drawn roads have none.
+    cycleway: Vec<u8>,
+    /// Bikes that have ridden onto each edge (`edge_entered` counts the rest).
+    pub edge_bikes: Vec<u32>,
     /// Level crossings (M8b), as `net.crossings`: since when each has been closing for a
     /// train (s; NaN while open), and until when a train is due there.
     pub(crate) crossing_since: Vec<f64>,
@@ -939,6 +964,11 @@ impl Engine {
             lane_vehs: vec![Vec::new(); n_lanes],
             lane_reserved: vec![0.0; n_lanes],
             pedestrians: None,
+            bikes: None,
+            bike_scale: 1.0,
+            bike_time: Vec::new(),
+            cycleway: Vec::new(),
+            edge_bikes: vec![0; n_edges],
             crossing_since: Vec::new(),
             crossing_due: Vec::new(),
             crossing_closures: Vec::new(),
@@ -1077,6 +1107,44 @@ impl Engine {
                 pending.push(Pending(trip))
             });
         }
+        if let Some(bikes) = self.bikes.as_mut() {
+            let pending = &mut self.pending;
+            bikes.generate(
+                self.time,
+                DT as f64,
+                self.bike_scale as f64,
+                &mut self.rng,
+                &mut |trip| pending.push(Pending(trip)),
+            );
+        }
+    }
+
+    /// Routes for bikes (M8d): along roads with a cycle track or lane (`cycleway`, per edge)
+    /// at their speed; along others as if `MIXED_ROAD` (one lane) or `BUSY_ROAD` (more)
+    /// times as long, as cyclists keep off busy roads where they can.
+    pub fn set_cycleways(&mut self, cycleway: &[u8]) {
+        self.cycleway = cycleway.to_vec();
+        self.update_bike_times();
+    }
+
+    /// `bike_time` for the network now (again after roads are drawn: edges keep their ids).
+    pub(crate) fn update_bike_times(&mut self) {
+        let net = &self.net;
+        let cycleway = &self.cycleway;
+        let speed = vtype::TYPES[vtype::BIKE as usize].max_speed;
+        self.bike_time = (0..net.edge_count())
+            .map(|e| {
+                let lanes = net.d.edge_lane_count[e];
+                let factor = if cycleway.get(e).is_some_and(|&c| c != 0) {
+                    1.0
+                } else if lanes > 1 {
+                    BUSY_ROAD
+                } else {
+                    MIXED_ROAD
+                };
+                net.edge_length[e] / speed * factor
+            })
+            .collect();
     }
 
     // ---- traffic lights -------------------------------------------------------------------
@@ -1293,9 +1361,37 @@ impl Engine {
     // ---- planning -------------------------------------------------------------------------
 
     fn desired_speed(&self, veh: &Vehicle, lane: u32) -> f32 {
+        let p = veh.params();
+        // Cyclists ride at their own pace (15-20 km/h), not the road's.
+        let top = if veh.vtype == vtype::BIKE {
+            p.max_speed * veh.speed_factor
+        } else {
+            p.max_speed
+        };
         (self.net.d.lane_speed[lane as usize] * veh.speed_factor * self.weather.speed)
-            .min(veh.params().max_speed)
+            .min(top)
             .max(1.0)
+    }
+
+    /// The nearest vehicle at or after index `idx` of `lane`'s list that a vehicle (a bike or
+    /// not) rides with: bikes and other traffic keep apart (drivers pass a cyclist at the
+    /// road's edge; a cycle track is apart, and crosses a junction beside the road), and meet
+    /// only where their ways cross, by the junction's signals and right of way.
+    fn ahead_of(&self, lane: u32, idx: usize, bike: bool) -> Option<u32> {
+        self.lane_vehs[lane as usize]
+            .get(idx..)?
+            .iter()
+            .copied()
+            .find(|&u| (self.vehs[u as usize].vtype == vtype::BIKE) == bike)
+    }
+
+    /// The nearest vehicle before index `idx` of `lane`'s list a vehicle rides with.
+    fn behind_of(&self, lane: u32, idx: usize, bike: bool) -> Option<u32> {
+        self.lane_vehs[lane as usize][..idx]
+            .iter()
+            .rev()
+            .copied()
+            .find(|&u| (self.vehs[u as usize].vtype == vtype::BIKE) == bike)
     }
 
     /// Speed a vehicle can take a link at (the speed limit of its first junction lane).
@@ -1319,11 +1415,8 @@ impl Engine {
             let n = self.lane_vehs[lane].len();
             for k in (0..n).rev() {
                 let v = self.lane_vehs[lane][k];
-                let leader = if k + 1 < n {
-                    Some(self.lane_vehs[lane][k + 1])
-                } else {
-                    None
-                };
+                let bike = self.vehs[v as usize].vtype == vtype::BIKE;
+                let leader = self.ahead_of(lane as u32, k + 1, bike);
                 let plan = self.plan_vehicle(v, leader);
                 if plan.at_stop || plan.missed_stop {
                     self.serve_stop(v, plan.missed_stop);
@@ -1500,7 +1593,10 @@ impl Engine {
                     acc = acc.min(self.pedestrian_acc(ped, c, dist + at, speed, vmax, p));
                 }
             }
-            if let (false, Some(&r)) = (have_leader, self.lane_vehs[next as usize].first()) {
+            if let (false, Some(r)) = (
+                have_leader,
+                self.ahead_of(next, 0, veh.vtype == vtype::BIKE),
+            ) {
                 let rv = &self.vehs[r as usize];
                 let gap = dist + rv.pos - rv.params().length;
                 acc = acc.min(idm::acceleration(
@@ -1942,18 +2038,19 @@ impl Engine {
         let d = &self.net.d;
         let p = veh.params();
         let need = p.length + p.min_gap;
+        let bike = veh.vtype == vtype::BIKE;
         let mut lane = d.link_to[link as usize];
         for idx in (veh.route_idx + 1..).take(16) {
             let l = lane as usize;
             if !self.net.is_roundabout(d.lane_edge[l]) {
                 let room = need.min(d.lane_length[l]);
-                return match self.lane_vehs[l].first() {
-                    Some(&u) => {
+                let reserved = if bike { 0.0 } else { self.lane_reserved[l] };
+                return match self.ahead_of(lane, 0, bike) {
+                    Some(u) => {
                         let uv = &self.vehs[u as usize];
-                        uv.speed > 3.0
-                            || uv.pos - uv.params().length - self.lane_reserved[l] >= room
+                        uv.speed > 3.0 || uv.pos - uv.params().length - reserved >= room
                     }
-                    None => d.lane_length[l] - self.lane_reserved[l] >= room,
+                    None => d.lane_length[l] - reserved >= room,
                 };
             }
             let next = self.choose_link_or_detour(lane, &veh.route, idx, p.vclass);
@@ -1968,17 +2065,19 @@ impl Engine {
     /// Room for a vehicle behind the junction, counting vehicles still inside it. When the
     /// lane behind is too short to hold the vehicle (junction clusters split by sub-metre
     /// edges), the vehicle must also be able to cross the next junction, or it would stop
-    /// inside this one and block it.
+    /// inside this one and block it. Bikes and other traffic keep apart on the road behind,
+    /// so each looks only at its own kind there (bikes reserve no room).
     fn exit_has_room(&self, link: u32, veh: &Vehicle) -> bool {
         let d = &self.net.d;
         let p = veh.params();
         let mut need = p.length + p.min_gap;
+        let bike = veh.vtype == vtype::BIKE;
         let mut link = link;
         for route_i in (veh.route_idx + 1..).take(4) {
             let to = d.link_to[link as usize] as usize;
             let len = d.lane_length[to];
-            let reserved = self.lane_reserved[to];
-            if let Some(&u) = self.lane_vehs[to].first() {
+            let reserved = if bike { 0.0 } else { self.lane_reserved[to] };
+            if let Some(u) = self.ahead_of(to as u32, 0, bike) {
                 let uv = &self.vehs[u as usize];
                 return uv.speed > 3.0 || uv.pos - uv.params().length - reserved >= need.min(len);
             }
@@ -1995,7 +2094,7 @@ impl Engine {
             }
             let mut via = d.link_via[next as usize];
             while via != NONE && self.net.lane_internal[via as usize] {
-                if !self.lane_vehs[via as usize].is_empty() {
+                if self.ahead_of(via, 0, bike).is_some() {
                     return false;
                 }
                 via = d.lane_next[via as usize];
@@ -2333,6 +2432,22 @@ impl Engine {
             || d.edge_lane_count[d.lane_edge[lane as usize] as usize] < 2
     }
 
+    /// For a bike on `lane` with no way on along `route` from it: another lane of the same
+    /// road that has one, nearest first, and its link. Cyclists ride at the road's edge,
+    /// apart from cars, and cross to the lane they need rather than go round the block
+    /// (which, on a short road whose way in leads only into the wrong lane, would bring
+    /// them back to it again and again).
+    fn bike_crossover(&self, lane: u32, route: &[u32], i: u32) -> Option<(u32, u32)> {
+        let d = &self.net.d;
+        let edge = d.lane_edge[lane as usize];
+        let start = d.edge_lane_start[edge as usize];
+        (start..start + d.edge_lane_count[edge as usize] as u32)
+            .filter(|&t| t != lane)
+            .map(|t| (t, self.choose_link(t, route, i, vclass::BICYCLE)))
+            .filter(|&(_, link)| link != NONE)
+            .min_by_key(|&(t, _)| (t as i32 - lane as i32).abs())
+    }
+
     /// `choose_link`, or where a vehicle that must detour from `lane` would go.
     fn choose_link_or_detour(&self, lane: u32, route: &[u32], i: u32, vclass: u16) -> u32 {
         let link = self.choose_link(lane, route, i, vclass);
@@ -2617,6 +2732,26 @@ impl Engine {
             }
         }
 
+        // Bikes and other traffic pass each other on the road (they keep apart): put each
+        // lane's list back in order of position, which the rest relies on.
+        {
+            let Engine {
+                active_lanes,
+                lane_vehs,
+                vehs,
+                ..
+            } = self;
+            for &lane in &active_lanes[..n_active] {
+                let list = &mut lane_vehs[lane as usize];
+                if list
+                    .windows(2)
+                    .any(|w| vehs[w[0] as usize].pos > vehs[w[1] as usize].pos)
+                {
+                    list.sort_by(|&a, &b| vehs[a as usize].pos.total_cmp(&vehs[b as usize].pos));
+                }
+            }
+        }
+
         // Vehicles past the end of their lane move on, front first.
         for i in 0..n_active {
             let lane = self.active_lanes[i];
@@ -2684,7 +2819,9 @@ impl Engine {
                 let link = veh.next_link as usize;
                 let p = veh.params();
                 let to = self.net.d.link_to[link];
-                self.lane_reserved[to as usize] += p.length + p.min_gap;
+                if veh.vtype != vtype::BIKE {
+                    self.lane_reserved[to as usize] += p.length + p.min_gap;
+                }
                 let via = self.net.d.link_via[link];
                 next = if via != NONE { via } else { to };
                 let veh = &mut self.vehs[v as usize];
@@ -2700,19 +2837,40 @@ impl Engine {
             }
             if !self.net.lane_internal[next as usize] {
                 // Through the junction, onto the next road.
-                self.edge_entered[self.net.d.lane_edge[next as usize] as usize] += 1;
+                let e = self.net.d.lane_edge[next as usize] as usize;
+                if self.vehs[v as usize].vtype == vtype::BIKE {
+                    self.edge_bikes[e] += 1;
+                } else {
+                    self.edge_entered[e] += 1;
+                }
                 let veh = &self.vehs[v as usize];
                 let p = veh.params();
-                let reserved = &mut self.lane_reserved[next as usize];
-                *reserved = (*reserved - (p.length + p.min_gap)).max(0.0);
+                if veh.vtype != vtype::BIKE {
+                    let reserved = &mut self.lane_reserved[next as usize];
+                    *reserved = (*reserved - (p.length + p.min_gap)).max(0.0);
+                }
                 let route_idx = veh.route_idx + 1;
                 let next_link = self.choose_link(next, &veh.route, route_idx, p.vclass);
-                let detour = next_link == NONE
+                let mut detour = next_link == NONE
                     && (route_idx as usize + 1) < veh.route.len()
                     && veh.transit.is_none()
                     && self.must_detour(next);
+                let (mut lane_now, mut next_link) = (next, next_link);
+                if detour
+                    && veh.vtype == vtype::BIKE
+                    && let Some((t, link)) = self.bike_crossover(next, &veh.route, route_idx)
+                {
+                    (lane_now, next_link, detour) = (t, link, false);
+                }
                 let will_pass = next_link != NONE && self.signal_allows(next_link, veh.stop_done);
+                let d = &self.net.d;
+                let scale =
+                    d.lane_length[lane_now as usize] / d.lane_length[next as usize].max(0.1);
                 let veh = &mut self.vehs[v as usize];
+                if lane_now != next {
+                    veh.lane = lane_now;
+                    veh.pos *= scale;
+                }
                 veh.route_idx = route_idx;
                 veh.next_link = next_link;
                 veh.will_pass = will_pass;
@@ -2749,11 +2907,19 @@ impl Engine {
     fn finish(&mut self, v: u32, how: Finish) {
         let veh = &mut self.vehs[v as usize];
         let p = &TYPES[veh.vtype as usize];
-        if self.net.lane_internal[veh.lane as usize] && veh.cur_link != NONE {
+        if self.net.lane_internal[veh.lane as usize]
+            && veh.cur_link != NONE
+            && veh.vtype != vtype::BIKE
+        {
             let to = self.net.d.link_to[veh.cur_link as usize] as usize;
             self.lane_reserved[to] = (self.lane_reserved[to] - (p.length + p.min_gap)).max(0.0);
         }
         match how {
+            Finish::Arrived if veh.vtype == vtype::BIKE => {
+                self.stats.bike_arrived += 1;
+                self.stats.bike_km += veh.distance as f64 / 1000.0;
+            }
+            Finish::Teleported if veh.vtype == vtype::BIKE => self.stats.bike_removed += 1,
             Finish::Arrived => {
                 self.stats.arrived += 1;
                 self.stats.trip_time_sum += self.time + DT as f64 - veh.depart;
@@ -2818,6 +2984,17 @@ impl Engine {
             && veh.wait > 20.0
             && veh.reroute_timer <= 0.0
         {
+            // A cyclist crosses over at the line to a lane of the same road that goes its
+            // way (waiting while another bike stands there), rather than going round the
+            // block, which can bring it back to the same lane again and again.
+            if veh.vtype == vtype::BIKE
+                && let Some((t, _)) = self.bike_crossover(lane, &veh.route, veh.route_idx)
+            {
+                return self
+                    .change_safe(v, t, true)
+                    .is_ok()
+                    .then_some(LaneChange::To(t));
+            }
             return Some(LaneChange::Reroute);
         }
         if veh.pos < p.length.min(len * 0.5) {
@@ -2869,7 +3046,8 @@ impl Engine {
         }
 
         // Tactical (MOBIL), every other step: overtake slower vehicles on lanes that suit.
-        if (self.step_no.wrapping_add(v)) & 1 != 0 || dist < 20.0 {
+        // Bikes keep to their lane.
+        if (self.step_no.wrapping_add(v)) & 1 != 0 || dist < 20.0 || veh.vtype == vtype::BIKE {
             return None;
         }
         let mut choice = None;
@@ -2896,8 +3074,9 @@ impl Engine {
             veh.pos * d.lane_length[target as usize] / d.lane_length[veh.lane as usize].max(0.1);
         let list = &self.lane_vehs[target as usize];
         let idx = list.partition_point(|&u| self.vehs[u as usize].pos < pos);
-        let leader = list.get(idx).copied();
-        let follower = if idx > 0 { Some(list[idx - 1]) } else { None };
+        let bike = veh.vtype == vtype::BIKE;
+        let leader = self.ahead_of(target, idx, bike);
+        let follower = self.behind_of(target, idx, bike);
         (pos, leader, follower)
     }
 
@@ -2937,8 +3116,8 @@ impl Engine {
         let list = &self.lane_vehs[veh.lane as usize];
         let me = list.iter().rposition(|&u| u == v).unwrap_or(0);
         let vmax = self.desired_speed(veh, veh.lane);
-        let a_now = match list.get(me + 1) {
-            Some(&l) => {
+        let a_now = match self.ahead_of(veh.lane, me + 1, veh.vtype == vtype::BIKE) {
+            Some(l) => {
                 let lv = &self.vehs[l as usize];
                 idm::acceleration(
                     veh.speed,
@@ -3026,10 +3205,16 @@ impl Engine {
             vehs,
             router,
             travel_time,
+            bike_time,
             ..
         } = self;
         let veh = &mut vehs[v as usize];
         let vclass = TYPES[veh.vtype as usize].vclass;
+        let travel_time: &[f32] = if veh.vtype == vtype::BIKE && !bike_time.is_empty() {
+            bike_time
+        } else {
+            travel_time
+        };
         let Some(&dest) = veh.route.last() else {
             return;
         };
@@ -3083,9 +3268,14 @@ impl Engine {
                 continue;
             }
             self.router.tolls = self.weighs_tolls(&trip);
+            let times = if trip.vtype == vtype::BIKE && !self.bike_time.is_empty() {
+                &self.bike_time
+            } else {
+                &self.travel_time
+            };
             let route = self
                 .router
-                .route(&self.net, &self.travel_time, trip.from, trip.to, vclass);
+                .route(&self.net, times, trip.from, trip.to, vclass);
             self.stats.routes += 1;
             self.stats.route_settled += self.router.last_settled as u64;
             match route {
@@ -3180,7 +3370,8 @@ impl Engine {
 
         let list = &self.lane_vehs[lane as usize];
         let idx = list.partition_point(|&u| self.vehs[u as usize].pos < pos);
-        if let Some(&l) = list.get(idx) {
+        let bike = trip.vtype == vtype::BIKE;
+        if let Some(l) = self.ahead_of(lane, idx, bike) {
             let lv = &self.vehs[l as usize];
             let gap = lv.pos - lv.params().length - pos;
             if gap < p.min_gap {
@@ -3190,8 +3381,8 @@ impl Engine {
             let safe = (bt * bt + lv.speed * lv.speed + 2.0 * p.decel * (gap - p.min_gap)).sqrt();
             speed = speed.min((safe - bt).max(0.0));
         }
-        if idx > 0 {
-            let fv = &self.vehs[list[idx - 1] as usize];
+        if let Some(f) = self.behind_of(lane, idx, bike) {
+            let fv = &self.vehs[f as usize];
             let fp = fv.params();
             let need = fp.min_gap + fv.speed * fp.tau + fv.speed * fv.speed / (2.0 * fp.decel);
             if pos - p.length - fv.pos < need {
@@ -3233,10 +3424,14 @@ impl Engine {
             self.lane_active[lane as usize] = true;
             self.active_lanes.push(lane);
         }
-        if enter {
+        if enter && trip.vtype != vtype::BIKE {
             self.edge_entered[edge as usize] += 1;
         }
-        self.stats.departed += 1;
+        if trip.vtype == vtype::BIKE {
+            self.stats.bike_departed += 1;
+        } else {
+            self.stats.departed += 1;
+        }
         true
     }
 
@@ -3278,12 +3473,13 @@ impl Engine {
         if net.lane_internal[lane as usize] {
             return Holdup::InJunction;
         }
+        // The vehicle ahead of its own kind (bikes and other traffic keep apart on the road).
         let list = &self.lane_vehs[lane as usize];
         let leader = list
             .iter()
             .position(|&u| u == v)
-            .and_then(|i| list.get(i + 1));
-        if let Some(&l) = leader {
+            .and_then(|i| self.ahead_of(lane, i + 1, veh.vtype == vtype::BIKE));
+        if let Some(l) = leader {
             let lv = &self.vehs[l as usize];
             if lv.pos - lv.params().length - veh.pos < 15.0 {
                 return Holdup::Queued;
@@ -3648,7 +3844,8 @@ impl Engine {
         let veh = &self.vehs[v as usize];
         let list = &self.lane_vehs[veh.lane as usize];
         let i = list.iter().position(|&u| u == v)?;
-        if let Some(&l) = list.get(i + 1) {
+        let bike = veh.vtype == vtype::BIKE;
+        if let Some(l) = self.ahead_of(veh.lane, i + 1, bike) {
             return Some(l);
         }
         let mut lane = veh.lane;
@@ -3682,7 +3879,7 @@ impl Engine {
             if !self.net.lane_internal[next as usize] {
                 route_i += 1;
             }
-            if let Some(&r) = self.lane_vehs[next as usize].first() {
+            if let Some(r) = self.ahead_of(next, 0, bike) {
                 return Some(r);
             }
             dist += d.lane_length[next as usize];
@@ -3703,7 +3900,12 @@ impl Engine {
             '-'
         };
         format!(
-            "veh {v} lane {lane}{} edge {} pos {:.1}/{:.1} speed {:.1} wait {:.0} {:?} link {} '{}' pass {} route {}/{}",
+            "{} {v} lane {lane}{} edge {} pos {:.1}/{:.1} speed {:.1} wait {:.0} {:?} link {} '{}' pass {} route {}/{}",
+            if veh.vtype == vtype::BIKE {
+                "bike"
+            } else {
+                "veh"
+            },
             if self.net.lane_internal[lane] {
                 " (junction)"
             } else {
@@ -3805,6 +4007,7 @@ impl Engine {
         let mut running = 0u32;
         let mut stopped = 0u32;
         let (mut trams, mut buses, mut trains, mut outside) = (0u32, 0u32, 0u32, 0u32);
+        let mut bikes = 0u32;
         let (mut driving, mut delay, mut metres) = (0f64, 0f64, 0f64);
         let mut stuck = std::mem::take(&mut self.scratch);
         stuck.clear();
@@ -3814,6 +4017,15 @@ impl Engine {
             let edge = d.lane_edge[lane as usize] as usize;
             for &v in &self.lane_vehs[lane as usize] {
                 let veh = &self.vehs[v as usize];
+                if veh.vtype == vtype::BIKE {
+                    // Counted apart; removed when stuck like any vehicle (inside a junction
+                    // a bike holds up the cars behind it).
+                    bikes += 1;
+                    if veh.speed < 0.1 && veh.wait > STUCK_TIME {
+                        stuck.push((v, veh.serial));
+                    }
+                    continue;
+                }
                 sum += veh.speed as f64;
                 running += 1;
                 match veh.vtype {
@@ -3845,10 +4057,16 @@ impl Engine {
         }
         for &(v, _) in &stuck {
             let reason = self.diagnose(v);
+            // Bikes' reasons apart: "BikeExitFull" and so on.
+            let kind = if self.vehs[v as usize].vtype == vtype::BIKE {
+                "Bike"
+            } else {
+                ""
+            };
             let count = self
                 .stats
                 .teleport_reasons
-                .entry(format!("{reason:?}"))
+                .entry(format!("{kind}{reason:?}"))
                 .or_default();
             *count += 1;
             let edge = self.net.d.lane_edge[self.vehs[v as usize].lane as usize];
@@ -3894,6 +4112,7 @@ impl Engine {
         s.stopped = stopped;
         s.trams = trams;
         s.trains = trains;
+        s.bikes = bikes;
         s.buses = buses;
         s.outside = outside;
         s.mean_speed = if running > 0 {
@@ -4122,10 +4341,12 @@ impl Engine {
         let vclass = veh.params().vclass;
         let here = self.net.d.lane_edge[lane as usize];
         self.router.tolls = veh.weighs_tolls;
-        let Some(route) = self
-            .router
-            .route(&self.net, &self.travel_time, here, dest, vclass)
-        else {
+        let times: &[f32] = if veh.vtype == vtype::BIKE && !self.bike_time.is_empty() {
+            &self.bike_time
+        } else {
+            &self.travel_time
+        };
+        let Some(route) = self.router.route(&self.net, times, here, dest, vclass) else {
             return;
         };
         if route[..] == veh.route[veh.route_idx as usize..] {
@@ -4179,6 +4400,7 @@ impl Engine {
         let veh = &self.vehs[v as usize];
         if !veh.alive()
             || veh.transit.is_some()
+            || veh.vtype == vtype::BIKE
             || veh.lane == NONE
             || self.net.lane_internal[veh.lane as usize]
             || veh.route_idx as usize + 2 >= veh.route.len()
@@ -4288,6 +4510,7 @@ impl Engine {
         out[stat::DELAY_HOURS] = s.delay_seconds / 3600.0;
         out[stat::VEHICLE_KM] = s.vehicle_metres / 1000.0;
         out[stat::TRAINS] = s.trains as f64;
+        out[stat::BIKES] = s.bikes as f64;
         out
     }
 
@@ -4327,11 +4550,19 @@ impl Engine {
             } else {
                 0.0
             };
-            let front = self.net.sample(veh.lane, veh.pos, veh.lat - lean);
+            let edge_side =
+                if veh.vtype == vtype::BIKE && !self.net.lane_internal[veh.lane as usize] {
+                    -(self.net.d.lane_width[veh.lane as usize] * 0.5 - BIKE_EDGE).max(0.0)
+                } else {
+                    0.0
+                };
+            let front = self
+                .net
+                .sample(veh.lane, veh.pos, veh.lat - lean + edge_side);
             let (cl, cs) = self.behind(veh, p.length * 0.5);
-            let center = self.net.sample(cl, cs, veh.lat);
+            let center = self.net.sample(cl, cs, veh.lat + edge_side);
             let (rl, rs) = self.behind(veh, p.length);
-            let rear = self.net.sample(rl, rs, veh.lat + lean);
+            let rear = self.net.sample(rl, rs, veh.lat + lean + edge_side);
             let (dx, dz) = (front[0] - rear[0], front[2] - rear[2]);
             let heading = if dx * dx + dz * dz > 0.25 {
                 dx.atan2(dz)

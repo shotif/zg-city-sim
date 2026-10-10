@@ -66,6 +66,8 @@ export const STAT = {
   vehicleKm: 19,
   /** HŽ trains running. */
   trains: 20,
+  /** Cyclists riding. */
+  bikes: 21,
 } as const;
 
 /** Words per vehicle slot in the render buffer and what they hold (engine::write_render). */
@@ -91,7 +93,7 @@ export const INFO = {
   blinkRight: 1 << 11,
 } as const;
 
-export const VEHICLE_TYPES = ['car', 'truck', 'bus', 'tram', 'train'] as const;
+export const VEHICLE_TYPES = ['car', 'truck', 'bus', 'tram', 'train', 'bike'] as const;
 
 /** The signal programs as the engine runs them: netconvert's guesses re-timed, with edits. */
 export interface SignalPrograms {

@@ -1017,8 +1017,9 @@ test("shows Zagreb's weather, and drives and looks as the weather picked", async
   // Heavy snow: a dimmer sun, snow falling in the 3D view, slower traffic in the engine.
   await picker.selectOption('heavySnow');
   await expect.poll(() => page.evaluate(() => window.__ZG__!.weather!.kind)).toBe('heavySnow');
+  // On the next frame drawn, which takes seconds in headless Chromium on a busy machine.
   await expect
-    .poll(() => page.evaluate(() => window.__ZG__!.light!.intensity))
+    .poll(() => page.evaluate(() => window.__ZG__!.light!.intensity), { timeout: 30_000 })
     .toBeLessThan(clearLight * 0.5);
   await page.evaluate(() => {
     window.__ZG__?.setView('3d');

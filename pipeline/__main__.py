@@ -8,6 +8,7 @@ import time
 
 from . import (
     buildings,
+    cycling,
     demand,
     landcover,
     manifest,
@@ -31,6 +32,8 @@ STEPS = {
     "news": news.build_news,
     # Pedestrian crossings on the drivable roads, with pedestrians a day (needs demand and transit).
     "pedestrians": pedestrians.build_pedestrians,
+    # Roads with a cycle track or lane, and the City's bike trips (needs demand).
+    "cycling": cycling.build_cycling,
     # Lots for zoning along today's streets, and the City's planned land use.
     "zoning": zoning.build_zoning,
     # Planned road projects, each built into a network of its own (all of the above first).

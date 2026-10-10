@@ -29,6 +29,13 @@ struct State {
     transit: TransitData,
     crossings: CrossingData,
     crossing_hourly: Vec<f32>,
+    /// Bikes (M8d): roads with a cycle track or lane, and the City's homes and jobs bike
+    /// trips go between, with the trips a day (one number).
+    edge_cycleway: Vec<u8>,
+    bike_edges: Vec<u32>,
+    bike_home: Vec<f32>,
+    bike_work: Vec<f32>,
+    bike_daily: Vec<f32>,
     engine: Option<Engine>,
     stats: [f64; stat::LEN],
     /// Pedestrians at each crossing, for drawing (`Pedestrians::write_state`).
@@ -102,6 +109,11 @@ fn alloc_extra_array(s: &mut State, name: &str, count: usize, elem_size: usize) 
         "crossingJunction" => (alloc(&mut c.junction, count), 4),
         "crossingDaily" => (alloc(&mut c.daily, count), 4),
         "crossingHourly" => (alloc(&mut s.crossing_hourly, count), 4),
+        "edgeCycleway" => (alloc(&mut s.edge_cycleway, count), 1),
+        "bikeEdge" => (alloc(&mut s.bike_edges, count), 4),
+        "bikeHome" => (alloc(&mut s.bike_home, count), 4),
+        "bikeWork" => (alloc(&mut s.bike_work, count), 4),
+        "bikeDaily" => (alloc(&mut s.bike_daily, count), 4),
         _ => return None,
     };
     (size == elem_size).then_some(ptr)
@@ -199,6 +211,24 @@ pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
         if has_crossings {
             crossings.hourly.copy_from_slice(&s.crossing_hourly);
             engine.pedestrians = Some(Pedestrians::new(crossings, &engine.net));
+        }
+        let n = s.bike_edges.len();
+        if n > 0
+            && s.bike_home.len() == n
+            && s.bike_work.len() == n
+            && s.bike_daily.len() == 1
+            && s.edge_cycleway.len() == engine.net.edge_count()
+        {
+            engine.set_cycleways(&s.edge_cycleway);
+            let edges = std::mem::take(&mut s.bike_edges);
+            let daily = s.bike_daily[0] as f64;
+            engine.bikes = Some(Demand::bikes(
+                &engine.net,
+                edges,
+                &s.bike_home,
+                &s.bike_work,
+                daily,
+            ));
         }
         s.engine = Some(engine);
         0

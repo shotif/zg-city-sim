@@ -232,19 +232,39 @@ fn run_until(engine: &mut Engine, seconds: f32, mut check: impl FnMut(&Engine)) 
     }
 }
 
-/// Bumper-to-bumper gaps between consecutive vehicles on every lane must stay positive.
+/// Bumper-to-bumper gaps between consecutive vehicles on every lane must stay positive (bikes
+/// and other traffic apart: drivers pass cyclists at the road's edge).
 fn assert_no_overlaps(engine: &Engine) {
     for lane in 0..engine.net.lane_count() as u32 {
-        let list = engine.vehicles_on(lane);
-        for w in list.windows(2) {
-            let (f, l) = (&engine.vehs[w[0] as usize], &engine.vehs[w[1] as usize]);
-            let gap = l.pos - TYPES[l.vtype as usize].length - f.pos;
-            assert!(
-                gap > -0.01,
-                "vehicles overlap on lane {lane}: gap {gap} at t={}",
-                engine.time
-            );
+        // Each lane's list stays in order of position, cars that passed bikes included.
+        let all = engine.vehicles_on(lane);
+        assert!(
+            all.windows(2)
+                .all(|w| engine.vehs[w[0] as usize].pos <= engine.vehs[w[1] as usize].pos),
+            "lane {lane} out of order at t={}",
+            engine.time
+        );
+        for bikes in [false, true] {
+            let list: Vec<u32> = engine
+                .vehicles_on(lane)
+                .iter()
+                .copied()
+                .filter(|&v| (engine.vehs[v as usize].vtype == vtype::BIKE) == bikes)
+                .collect();
+            assert_lane_gaps(engine, lane, &list);
         }
+    }
+}
+
+fn assert_lane_gaps(engine: &Engine, lane: u32, list: &[u32]) {
+    for w in list.windows(2) {
+        let (f, l) = (&engine.vehs[w[0] as usize], &engine.vehs[w[1] as usize]);
+        let gap = l.pos - TYPES[l.vtype as usize].length - f.pos;
+        assert!(
+            gap > -0.01,
+            "vehicles overlap on lane {lane}: gap {gap} at t={}",
+            engine.time
+        );
     }
 }
 
@@ -1760,6 +1780,31 @@ fn a_new_road_takes_traffic_while_vehicles_drive() {
     assert!(engine.landmarks_ready());
 }
 
+#[test]
+fn a_cyclist_rides_on_a_network_with_roads_drawn() {
+    // Bike routes and counts grow with the network: a bike sets off after the new road is
+    // built and rides through.
+    let (base, [entry, _, exit, _]) = detour(false);
+    let (patched, [.., across]) = detour(true);
+    let mut engine = Engine::new(Network::build(base).unwrap(), 4);
+    engine.set_cycleways(&[]);
+    engine.set_time(0.0);
+    engine
+        .replace_network(patched, &[])
+        .expect("a consistent network");
+    assert_eq!(engine.edge_bikes.len(), engine.net.edge_count());
+    engine.add_trip(Trip {
+        depart: 1.0,
+        from: entry,
+        to: exit,
+        vtype: vtype::BIKE,
+        flags: 0,
+    });
+    run_until(&mut engine, 400.0, assert_no_overlaps);
+    assert_eq!(engine.stats.bike_arrived, 1, "the bike got through");
+    assert!(engine.edge_bikes[across as usize] + engine.edge_bikes[exit as usize] >= 1);
+}
+
 /// The straight road J0 -> J1 -> J2 with its first road split in the middle by a new
 /// junction J3, as the app builds it: the first half keeps its id and ends 6 m before J3,
 /// the second half is a new edge from 6 m after J3 to J1 that the old links now leave.
@@ -2777,4 +2822,195 @@ fn pedestrians_cross_a_signalled_junction_while_the_traffic_across_has_red() {
         "pedestrians started while traffic across had green"
     );
     assert_eq!(cut_short, 0, "the walk was cut short");
+}
+
+#[test]
+fn drivers_pass_cyclists_and_cyclists_ride_at_their_pace() {
+    // A bike sets off on a 500 m road, then a car every 5 s behind it.
+    let (b, e0, e1) = straight_road(500.0, 1);
+    let mut engine = Engine::new(b.build(), 8);
+    let trip = |depart: f64, vtype: u8| Trip {
+        depart,
+        from: e0,
+        to: e1,
+        vtype,
+        flags: 0,
+    };
+    engine.add_trip(trip(0.0, vtype::BIKE));
+    for k in 1..10 {
+        engine.add_trip(trip(5.0 * k as f64, vtype::CAR));
+    }
+    let (mut bike_top, mut car_slow) = (0.0f32, 0);
+    // Cars that have reached 12 m/s, by serial: none slows below 8 m/s before the junction.
+    let mut cruising = std::collections::HashSet::new();
+    run_until(&mut engine, 250.0, |e| {
+        assert_no_overlaps(e);
+        for v in e.vehs.iter().filter(|v| v.alive()) {
+            if v.vtype == vtype::BIKE {
+                bike_top = bike_top.max(v.speed);
+                continue;
+            }
+            if v.speed > 12.0 {
+                cruising.insert(v.serial);
+            }
+            let len = e.net.d.lane_length[v.lane as usize];
+            if cruising.contains(&v.serial)
+                && v.speed < 8.0
+                && !e.net.lane_internal[v.lane as usize]
+                && v.pos < len - 40.0
+            {
+                car_slow += 1;
+            }
+        }
+    });
+    assert!(
+        (3.5..=6.0).contains(&bike_top),
+        "the bike rode at up to {bike_top} m/s"
+    );
+    assert_eq!(car_slow, 0, "cars slowed behind the bike");
+    let s = &engine.stats;
+    assert_eq!((s.arrived, s.bike_arrived, s.teleported), (9, 1, 0));
+    assert_eq!(engine.edge_bikes[e1 as usize], 1);
+    assert_eq!(engine.edge_entered[e1 as usize], 9);
+}
+
+#[test]
+fn a_cyclist_rides_on_past_a_queue_a_driver_waits_behind() {
+    // The road beyond the junction is full of cars standing (no way on at its end). A bike
+    // rides into it beside them; a car waits for room before the junction.
+    let (b, e0, e1) = straight_road(200.0, 1);
+    let mut engine = Engine::new(b.build(), 3);
+    engine.set_time(0.0);
+    let out = engine.net.edge_lanes(e1).start;
+    let car = &vtype::TYPES[vtype::CAR as usize];
+    // From the end of the lane to its start, as close as drivers stand: no room for another.
+    let mut pos = engine.net.d.lane_length[out as usize] - 0.5;
+    while pos >= car.length {
+        engine.insert_at(vtype::CAR, vec![e1, e0], out, pos, 0.0);
+        pos -= car.length + car.min_gap;
+    }
+    let into = engine.net.edge_lanes(e0).start;
+    let bike = engine.insert_at(vtype::BIKE, vec![e0, e1], into, 150.0, 4.0);
+    let waiting = engine.insert_at(vtype::CAR, vec![e0, e1], into, 100.0, 10.0);
+    let bike_serial = engine.vehs[bike as usize].serial;
+    let mut bike_beyond = false;
+    // Less than `BLOCK_BOX_WAIT` after the car gets to the junction.
+    run_until(&mut engine, 50.0, |e| {
+        let v = &e.vehs[bike as usize];
+        if !v.alive() || v.serial != bike_serial || e.net.d.lane_edge[v.lane as usize] == e1 {
+            bike_beyond = true;
+        }
+    });
+    assert!(bike_beyond, "the bike waited for room behind the cars");
+    let w = &engine.vehs[waiting as usize];
+    assert_eq!(
+        engine.net.d.lane_edge[w.lane as usize], e0,
+        "the car entered a junction with no room beyond"
+    );
+}
+
+#[test]
+fn a_cyclist_gets_into_the_lane_for_its_turn_on_a_short_road() {
+    // A short two-lane road (36 m): only its right lane turns right, and the way in leads
+    // into its left lane. Straight on, a way round the block leads back to the way in.
+    // Bikes cross to the right lane rather than go round, again and again.
+    let mut b = Builder::default();
+    let j0 = b.junction(0.0, 0.0);
+    let j1 = b.junction(200.0, 0.0);
+    let j2 = b.junction(236.0, 0.0);
+    let j3 = b.junction(236.0, 200.0);
+    let j4 = b.junction(436.0, 0.0);
+    let j5 = b.junction(436.0, -200.0);
+    let j6 = b.junction(0.0, -200.0);
+    let into = b.road(j0, j1, 1, 13.9);
+    let short = b.road(j1, j2, 2, 13.9);
+    let right = b.road(j2, j3, 1, 13.9);
+    let ahead = b.road(j2, j4, 1, 13.9);
+    let up = b.road(j4, j5, 1, 13.9);
+    let back = b.road(j5, j6, 1, 13.9);
+    let down = b.road(j6, j0, 1, 13.9);
+    b.connect(b.lane(into, 0), b.lane(short, 1), j1, dir::STRAIGHT, b'M');
+    b.connect(b.lane(short, 0), b.lane(right, 0), j2, dir::RIGHT, b'M');
+    b.connect(b.lane(short, 1), b.lane(ahead, 0), j2, dir::STRAIGHT, b'M');
+    b.connect(b.lane(ahead, 0), b.lane(up, 0), j4, dir::LEFT, b'M');
+    b.connect(b.lane(up, 0), b.lane(back, 0), j5, dir::LEFT, b'M');
+    b.connect(b.lane(back, 0), b.lane(down, 0), j6, dir::LEFT, b'M');
+    b.connect(b.lane(down, 0), b.lane(into, 0), j0, dir::LEFT, b'M');
+    let mut engine = Engine::new(b.build(), 1);
+    engine.set_time(0.0);
+    for k in 0..3 {
+        engine.add_trip(Trip {
+            depart: 10.0 * k as f64,
+            from: into,
+            to: right,
+            vtype: vtype::BIKE,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 300.0, assert_no_overlaps);
+    let s = &engine.stats;
+    assert_eq!(s.bike_arrived, 3, "every bike turned right");
+    assert_eq!(engine.edge_bikes[ahead as usize], 0, "no bike went round");
+}
+
+#[test]
+fn cyclists_take_a_road_with_a_cycle_track_over_a_busy_one() {
+    // Two ways from west to east: straight along a two-lane road (1 km), or 10 % further
+    // round by a one-lane road with a cycle track. Cars take the straight road, bikes the
+    // cycle track.
+    let mut b = Builder::default();
+    let w = b.junction(0.0, 0.0);
+    let e = b.junction(1000.0, 0.0);
+    let n = b.junction(500.0, -230.0);
+    let start = b.junction(-300.0, 0.0);
+    let end = b.junction(1300.0, 0.0);
+    let into = b.road(start, w, 1, 13.9);
+    let main = b.road(w, e, 2, 13.9);
+    let up = b.road(w, n, 1, 13.9);
+    let down = b.road(n, e, 1, 13.9);
+    let out = b.road(e, end, 1, 13.9);
+    let (i0, m0, m1, u0, d0, o0) = (
+        b.lane(into, 0),
+        b.lane(main, 0),
+        b.lane(main, 1),
+        b.lane(up, 0),
+        b.lane(down, 0),
+        b.lane(out, 0),
+    );
+    b.connect(i0, m0, w, dir::STRAIGHT, b'M');
+    b.connect(i0, u0, w, dir::LEFT, b'M');
+    b.connect(m0, o0, e, dir::STRAIGHT, b'M');
+    b.connect(m1, o0, e, dir::STRAIGHT, b'M');
+    b.connect(u0, d0, n, dir::STRAIGHT, b'M');
+    b.connect(d0, o0, e, dir::RIGHT, b'M');
+    let net = b.build();
+    let mut engine = Engine::new(net, 9);
+    let mut cycleway = vec![0u8; engine.net.edge_count()];
+    cycleway[up as usize] = 1;
+    cycleway[down as usize] = 1;
+    engine.set_cycleways(&cycleway);
+    engine.add_trip(Trip {
+        depart: 0.0,
+        from: into,
+        to: out,
+        vtype: vtype::BIKE,
+        flags: 0,
+    });
+    engine.add_trip(Trip {
+        depart: 1.0,
+        from: into,
+        to: out,
+        vtype: vtype::CAR,
+        flags: 0,
+    });
+    run_until(&mut engine, 500.0, assert_no_overlaps);
+    assert_eq!((engine.stats.arrived, engine.stats.bike_arrived), (1, 1));
+    assert_eq!(
+        engine.edge_bikes[up as usize], 1,
+        "the bike took the cycle track"
+    );
+    assert_eq!(
+        engine.edge_entered[main as usize], 1,
+        "the car took the straight road"
+    );
 }

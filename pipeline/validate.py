@@ -23,10 +23,11 @@ from pathlib import Path
 import numpy as np
 import shapely
 
-from .config import OUTPUT_DIR, REPO_ROOT
+from .config import OUTPUT_DIR, PIPELINE_DIR, REPO_ROOT
 from .counts import STATIONS, WORKDAY_FACTOR, Station
 from .gateways import road_refs, to_scene
 from .packed import read_packed
+from .transit import tangent
 
 # The opposite carriageway is at most this much further from the station's point (m).
 OPPOSITE_SLACK = 150.0
@@ -339,6 +340,61 @@ def crossing_rows(
     return rows
 
 
+BIKE_COUNTS = PIPELINE_DIR / "data" / "bike_counts_2014.json"
+# A bike counting site goes on the nearest stretch of its road within this far (m) of where
+# the City's map shows it, with the nearest stretch running the other way (a divided road's
+# other carriageway) within `BIKE_OTHER_WAY` m of that.
+BIKE_SITE_REACH = 1500.0
+BIKE_OTHER_WAY = 60.0
+
+
+def bike_rows(
+    net: dict[str, np.ndarray], index: dict, run_dir: Path
+) -> list[tuple[str, int, float]] | None:
+    """The City's 2014 bike counts (M8d) and the bikes the day ran past each site (both ways):
+    name, counted a day, simulated a day (NaN: not placed)."""
+    path = run_dir / "edge_bikes.bin"
+    if not path.exists() or not BIKE_COUNTS.exists():
+        return None
+    raw = path.read_bytes()
+    n = struct.unpack_from("<I", raw)[0]
+    if n != len(net["edgeFlags"]):
+        return None
+    bikes = np.frombuffer(raw, "<u4", n, 4)
+    names = index["names"]
+    internal = (net["edgeFlags"] & index["flags"]["internal"]) != 0
+    offsets = net["laneShapeOffsets"].astype(np.int64)
+    origin = net["laneShapeOrigin"].reshape(-1, 2).astype(np.int64)
+    delta = net["laneShapeDelta"].reshape(-1, 2).astype(np.int64)
+
+    def shape(edge: int) -> shapely.LineString:
+        lane = int(net["edgeLaneStart"][edge])
+        pts = (origin[lane] + np.cumsum(delta[offsets[lane] : offsets[lane + 1]], axis=0)) / 100
+        return shapely.LineString(pts if len(pts) >= 2 else np.vstack([pts, pts + 0.01]))
+
+    rows = []
+    for site in json.loads(BIKE_COUNTS.read_text())["sites"]:
+        point = shapely.Point(to_scene(site["lon"], site["lat"]))
+        road = names.index(site["road"]) if site["road"] in names else -1
+        edges = np.flatnonzero((net["edgeName"] == road) & ~internal)
+        lines = [shape(int(e)) for e in edges]
+        dist = np.array([line.distance(point) for line in lines])
+        if len(edges) == 0 or dist.min() > BIKE_SITE_REACH:
+            rows.append((site["name"], site["daily"], float("nan")))
+            continue
+        k = int(np.argmin(dist))
+        at = lines[k].interpolate(lines[k].project(point))
+        way = tangent(lines[k], lines[k].project(at))
+        other, other_dist = None, BIKE_OTHER_WAY
+        for j, line in enumerate(lines):
+            d = line.distance(at)
+            if j != k and d < other_dist and np.dot(tangent(line, line.project(at)), way) < -0.5:
+                other, other_dist = j, d
+        total = int(bikes[edges[k]]) + (int(bikes[edges[other]]) if other is not None else 0)
+        rows.append((site["name"], site["daily"], float(total)))
+    return rows
+
+
 def road_group(station: Station) -> str:
     if station.road.startswith("A"):
         return "motorways"
@@ -364,6 +420,7 @@ def report(
     lost: list[tuple[str, str, float, dict[str, float]]] | None = None,
     inputs: set[int] | None = None,
     crossings: list[tuple[str, int, float, float]] | None = None,
+    bikes: list[tuple[str, int, float]] | None = None,
 ) -> str:
     """docs/VALIDATION.md. `inputs`: stations whose counts set traffic across the map's
     edge."""
@@ -747,6 +804,37 @@ def report(
         ]
         for name, n, secs, queued in crossings[:12]:
             lines.append(f"| {name} | {n} | {secs / n:.0f} | {secs / 60:.0f} | {queued:.0f} |")
+    summary_bikes = day.get("bikes")
+    if summary_bikes and summary_bikes.get("departed"):
+        b = summary_bikes
+        lines += [
+            "",
+            "## Cyclists",
+            "",
+            f"{fmt(b['departed'])} bike trips started, {fmt(b['arrived'])} arrived and "
+            f"{fmt(b['removed'])} were removed stuck; bikes rode {fmt(b['km'])} km. Bike "
+            "trips are simulated in full (about 42,000 a weekday, an estimate), not at the "
+            "share of demand cars run at.",
+        ]
+        if bikes:
+            lines += [
+                "",
+                "The City counted bikes at these places in 2014 (daily means over the "
+                "counting period, both ways; the City's ZG Cycle Unit report). Cycling has "
+                "grown since, so the counts are a floor rather than a target. Simulated: "
+                "bikes past the place on the street's nearest road, both ways.",
+                "",
+                "| Place | Counted a day (2014) | Simulated | Simulated / counted |",
+                "|---|---:|---:|---:|",
+            ]
+            for name, counted, simulated in bikes:
+                if math.isnan(simulated):
+                    lines.append(f"| {name} | {fmt(counted)} | not placed | |")
+                else:
+                    lines.append(
+                        f"| {name} | {fmt(counted)} | {fmt(simulated)} | "
+                        f"{simulated / counted:.2f} |"
+                    )
     lines += [
         "",
         "## How to repeat",
@@ -801,6 +889,7 @@ def main(argv: list[str] | None = None) -> None:
     delay = read_delay(args.run_dir)
     lost = lost_time(net, index, delay[1], day["delayKinds"]) if delay is not None else None
     crossings = crossing_rows(net, index, day, delay[0] if delay is not None else None)
+    bikes = bike_rows(net, index, args.run_dir)
     args.out.write_text(
         report(
             placements,
@@ -811,6 +900,7 @@ def main(argv: list[str] | None = None) -> None:
             lost=lost,
             inputs=inputs,
             crossings=crossings,
+            bikes=bikes,
         )
     )
     scale = float(day.get("demandScale", 1.0))

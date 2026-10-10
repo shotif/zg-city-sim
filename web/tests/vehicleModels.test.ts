@@ -38,7 +38,7 @@ describe('vehicle models', () => {
   });
 
   it('gives every type its models, with lamps at the ends', () => {
-    expect(MODELS.map((m) => m.length)).toEqual([5, 2, 1, 1, 1]);
+    expect(MODELS.map((m) => m.length)).toEqual([5, 2, 1, 1, 1, 1]);
     for (const models of MODELS) {
       for (const model of models) {
         expect(model.head.length).toBe(2);

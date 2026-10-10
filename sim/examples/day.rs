@@ -68,6 +68,7 @@ fn main() {
         _ => println!("transit: none"),
     }
     run::attach_pedestrians(&mut engine, &format!("{root}/pedestrians"));
+    run::attach_bikes(&mut engine, &format!("{root}/cycling"));
     engine.demand = Some(demand);
     engine.demand_scale = run::demand_scale(&format!("{root}/demand"));
     println!("demand scale: {}", engine.demand_scale);
@@ -101,6 +102,7 @@ fn main() {
         let delay0 = delay_total(&engine);
         let s0 = engine.stats.clone();
         let (mut running, mut outside, mut speed, mut stopped, mut samples) = (0, 0, 0.0, 0, 0);
+        let mut bikes = 0u64;
         speed_sum.fill(0);
         speed_n.fill(0);
         for i in 0..steps {
@@ -117,6 +119,7 @@ fn main() {
             if i % (60.0 / DT) as u32 == 0 {
                 let s = &engine.stats;
                 running += s.running as u64;
+                bikes += s.bikes as u64;
                 outside += s.outside as u64;
                 stopped += s.stopped as u64;
                 speed += s.mean_speed as f64;
@@ -146,7 +149,8 @@ fn main() {
         let line = format!(
             "{{\"hour\": {hour}, \"running\": {:.0}, \"outside\": {:.0}, \"stopped\": {:.0}, \
              \"meanSpeedKmh\": {:.1}, \"departed\": {}, \"arrived\": {}, \"removed\": {}, \
-             \"noRoute\": {}, \"notInserted\": {}, \"tripMinutes\": {:.1}, \"tripKm\": {:.2}}}",
+             \"noRoute\": {}, \"notInserted\": {}, \"tripMinutes\": {:.1}, \"tripKm\": {:.2}, \
+             \"bikes\": {:.0}, \"bikesDeparted\": {}, \"bikesArrived\": {}, \"bikesRemoved\": {}}}",
             running as f64 / samples as f64,
             outside as f64 / samples as f64,
             stopped as f64 / samples as f64,
@@ -158,6 +162,10 @@ fn main() {
             s.insert_failed - s0.insert_failed,
             (s.trip_time_sum - s0.trip_time_sum) / trips.max(1) as f64 / 60.0,
             (s.trip_km_sum - s0.trip_km_sum) / trips.max(1) as f64,
+            bikes as f64 / samples as f64,
+            s.bike_departed - s0.bike_departed,
+            s.bike_arrived - s0.bike_arrived,
+            s.bike_removed - s0.bike_removed,
         );
         println!("{line}  ({:.0} s)", started.elapsed().as_secs_f64());
         hours.push(line);
@@ -171,6 +179,13 @@ fn main() {
         }
     }
     std::fs::write(format!("{out}/edge_counts.bin"), bytes).expect("write counts");
+    // Bikes over the whole day per edge (M8d): u32 edge count, then u32 per edge.
+    let mut bytes = Vec::with_capacity(4 + engine.edge_bikes.len() * 4);
+    bytes.extend((engine.edge_bikes.len() as u32).to_le_bytes());
+    for &n in &engine.edge_bikes {
+        bytes.extend(n.to_le_bytes());
+    }
+    std::fs::write(format!("{out}/edge_bikes.bin"), bytes).expect("write bikes");
     let mut bytes = Vec::with_capacity(4 + 24 * n);
     bytes.extend((n as u32).to_le_bytes());
     for speeds in &speeds_by_hour {
@@ -229,7 +244,7 @@ fn main() {
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"removedBecause\": {:?}, \
-         \"removedAt\": [{}], \"transit\": {transit}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
+         \"removedAt\": [{}], \"transit\": {transit}, \"bikes\": {{\"departed\": {}, \"arrived\": {}, \"removed\": {}, \"km\": {:.0}}}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
         s.departed,
@@ -240,6 +255,10 @@ fn main() {
         s.en_route_reroutes,
         s.teleport_reasons,
         removed_at.join(", "),
+        s.bike_departed,
+        s.bike_arrived,
+        s.bike_removed,
+        s.bike_km,
         engine.net.crossings.len(),
         crossings.join(", "),
         HOLDUPS,

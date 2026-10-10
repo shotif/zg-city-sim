@@ -44,6 +44,8 @@ export interface HudSim {
   buses: number;
   /** HŽ trains running. */
   trains: number;
+  /** Cyclists riding. */
+  bikes: number;
   /** Mean speed of all traffic, km/h. */
   meanSpeed: number;
 }
@@ -498,7 +500,7 @@ export class Hud {
       ? 'Filling the streets with traffic…'
       : `${sim.vehicles.toLocaleString('en')} vehicles ` +
         `(${sim.outside.toLocaleString('en')} crossing the map's edge) · ` +
-        `${sim.trams} trams · ${sim.buses} buses · ${sim.trains} trains · ` +
+        `${sim.trams} trams · ${sim.buses} buses · ${sim.trains} trains · ${sim.bikes} bikes · ` +
         `${Math.round(sim.meanSpeed)} km/h` +
         (lagging ? ` · running at ${sim.rate.toFixed(sim.rate < 10 ? 1 : 0)}×` : '');
   }

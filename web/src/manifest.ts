@@ -83,6 +83,13 @@ export interface PedestriansLayer {
   attribution?: Attribution | Attribution[];
 }
 
+/** Roads with a cycle track or lane, and bike trips (pipeline/cycling.py). */
+export interface CyclingLayer {
+  index: string;
+  bikeTripsDaily: number;
+  attribution?: Attribution | Attribution[];
+}
+
 /** Places the news reported traffic trouble at (pipeline/news.py). */
 export interface NewsLayerInfo {
   index: string;
@@ -122,6 +129,7 @@ export interface WorldManifest {
     demand?: DemandLayer;
     transit?: TransitLayer;
     pedestrians?: PedestriansLayer;
+    cycling?: CyclingLayer;
     news?: NewsLayerInfo;
     projects?: ProjectsLayerInfo;
     zoning?: ZoningLayerInfo;

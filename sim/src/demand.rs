@@ -59,6 +59,8 @@ const GATEWAY_DECAY: f32 = 12_000.0;
 /// Calibrated against the counts: 8 km cut gridlock by 15 % and brought the counts nearer
 /// on the whole; 4 km left the counted roads with too little traffic.
 pub const LOCAL_GATEWAY_DECAY: f32 = 8_000.0;
+/// Distance decay of bike trips (m): most are under 5 km.
+pub const BIKE_DECAY: f32 = 2_000.0;
 /// Roads at least this fast (m/s, 97 km/h) carry traffic from far away across the map's
 /// edge: motorways and expressways.
 const FAST_ROAD: f32 = 27.0;
@@ -150,6 +152,8 @@ pub struct Demand {
     through_exit: Vec<f32>,
     /// Home and work weights by edge id, made when first asked for.
     by_edge: OnceCell<(Vec<f32>, Vec<f32>)>,
+    /// The vehicle type of every trip made within the map, if not cars and lorries (bikes).
+    pub vtype: Option<u8>,
 }
 
 fn cumulative(w: &[f32]) -> Vec<f64> {
@@ -244,7 +248,17 @@ impl Demand {
             through: Flow::default(),
             through_exit: Vec::new(),
             by_edge: OnceCell::new(),
+            vtype: None,
         }
+    }
+
+    /// Bike trips (M8d): `daily` a day between the edges' homes and jobs, over shorter
+    /// distances than by car.
+    pub fn bikes(net: &Network, edges: Vec<u32>, home: &[f32], work: &[f32], daily: f64) -> Demand {
+        let mut d = Demand::new(net, edges, home, work, daily);
+        d.vtype = Some(vtype::BIKE);
+        d.decay = BIKE_DECAY;
+        d
     }
 
     /// Replace the home and work weights and the trips a day within the map, keeping the
@@ -508,7 +522,9 @@ impl Demand {
                 depart: t + rng.f64() * dt,
                 from: self.edges[o],
                 to: self.edges[d],
-                vtype: if truck { vtype::TRUCK } else { vtype::CAR },
+                vtype: self
+                    .vtype
+                    .unwrap_or(if truck { vtype::TRUCK } else { vtype::CAR }),
                 flags: 0,
             });
         }

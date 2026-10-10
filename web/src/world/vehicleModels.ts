@@ -389,6 +389,56 @@ export const TRAIN: Model = {
   halfWidth: 1.45,
 }; // prettier-ignore
 
+/** A bike's wheel: a thin octagon of radius 0.34 m around (z, 0.34). */
+function bikeWheel(z: number): Part {
+  const r = 0.34;
+  const profile = Array.from({ length: 8 }, (_, k): [number, number] => {
+    const a = ((k + 0.5) * Math.PI) / 4;
+    return [z + r * Math.cos(a), r + r * Math.sin(a)];
+  });
+  return { profile, x: [-0.03, 0.03], color: TYRE };
+}
+
+const SKIN = 0xd2a079;
+
+/** A cyclist (M8d): a bike and its rider, 1.8 m long, the rider's jacket in the paint. */
+export const BIKE: Model = {
+  name: 'bike',
+  parts: [
+    bikeWheel(0.55),
+    bikeWheel(-0.55),
+    // The frame, saddle and handlebars.
+    { min: [-0.03, 0.36, -0.55], max: [0.03, 0.42, 0.55], color: DARK },
+    { min: [-0.03, 0.4, -0.2], max: [0.03, 0.85, -0.12], color: DARK },
+    { min: [-0.03, 0.4, 0.42], max: [0.03, 0.95, 0.48], color: DARK },
+    { min: [-0.25, 0.92, 0.38], max: [0.25, 0.97, 0.46], color: DARK },
+    // The rider: legs, jacket, head.
+    { min: [-0.14, 0.45, -0.25], max: [0.14, 0.95, 0.0], color: DARK },
+    { min: [-0.2, 0.95, -0.3], max: [0.2, 1.45, 0.15], color: PAINT },
+    { min: [-0.1, 1.45, -0.15], max: [0.1, 1.68, 0.05], color: SKIN },
+  ],
+  // A lamp front and back (drawn as pairs, as on every model), and no indicators: the
+  // instanced indicator boxes sit hidden inside the frame.
+  head: [
+    { min: [-0.04, 0.88, 0.82], max: [0.0, 0.93, 0.9], color: HEAD },
+    { min: [0.0, 0.88, 0.82], max: [0.04, 0.93, 0.9], color: HEAD },
+  ],
+  tail: [
+    { min: [-0.04, 0.6, -0.9], max: [0.0, 0.65, -0.82], color: TAIL },
+    { min: [0.0, 0.6, -0.9], max: [0.04, 0.65, -0.82], color: TAIL },
+  ],
+  left: [
+    { min: [-0.01, 0.38, 0.1], max: [0.0, 0.39, 0.11], color: AMBER },
+    { min: [-0.01, 0.38, -0.1], max: [0.0, 0.39, -0.09], color: AMBER },
+  ],
+  right: [
+    { min: [0.0, 0.38, 0.1], max: [0.01, 0.39, 0.11], color: AMBER },
+    { min: [0.0, 0.38, -0.1], max: [0.01, 0.39, -0.09], color: AMBER },
+  ],
+  front: 0.9,
+  halfWidth: 0.3,
+};
+
 /** A part's extent: [x0, y0, z0, x1, y1, z1]. */
 function extent(parts: Part[]): number[] {
   const e = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
@@ -456,7 +506,14 @@ export function farModel(model: Model): Model {
 }
 
 /** The models for each engine vehicle type (car, lorry, bus, tram, train). */
-export const MODELS: Model[][] = [CARS.map((c) => c.model), LORRIES, [BUS], [TRAM], [TRAIN]];
+export const MODELS: Model[][] = [
+  CARS.map((c) => c.model),
+  LORRIES,
+  [BUS],
+  [TRAM],
+  [TRAIN],
+  [BIKE],
+];
 
 const CAR_TOTAL = CARS.reduce((n, c) => n + c.weight, 0);
 

@@ -195,6 +195,58 @@ pub fn attach_pedestrians(engine: &mut Engine, dir: &str) {
     }
 }
 
+/// Bike trips and cycle tracks from `dir/cycling.*` (M8d) for `engine`, unless NO_BIKES is
+/// set; BIKE_SCALE=0.5 runs half of the estimated bike trips.
+pub fn attach_bikes(engine: &mut Engine, dir: &str) {
+    if std::env::var("NO_BIKES").is_ok() {
+        println!("bikes: none (NO_BIKES)");
+        return;
+    }
+    let Some((arrays, blob)) = read_packed(dir, "cycling") else {
+        println!("bikes: none (no cycling/cycling.bin)");
+        return;
+    };
+    let bytes = |name: &str, size: usize| -> Vec<u8> {
+        let (_, offset, length) = &arrays[name];
+        blob[*offset..*offset + length * size].to_vec()
+    };
+    let words = |name: &str| -> Vec<[u8; 4]> { bytes(name, 4).as_chunks::<4>().0.to_vec() };
+    let cycleway = bytes("edgeCycleway", 1);
+    if cycleway.len() != engine.net.edge_count() {
+        println!("bikes: cycle tracks do not match the network");
+        return;
+    }
+    let edges: Vec<u32> = words("bikeEdge")
+        .into_iter()
+        .map(u32::from_le_bytes)
+        .collect();
+    let home: Vec<f32> = words("bikeHome")
+        .into_iter()
+        .map(f32::from_le_bytes)
+        .collect();
+    let work: Vec<f32> = words("bikeWork")
+        .into_iter()
+        .map(f32::from_le_bytes)
+        .collect();
+    let index = std::fs::read_to_string(format!("{dir}/cycling.json")).unwrap_or_default();
+    let daily: f64 = index
+        .find("\"bikeTripsDaily\": ")
+        .and_then(|i| {
+            let rest = &index[i + 18..];
+            rest[..rest.find([',', '}'])?].trim().parse().ok()
+        })
+        .unwrap_or(0.0);
+    engine.set_cycleways(&cycleway);
+    engine.bikes = Some(Demand::bikes(&engine.net, edges, &home, &work, daily));
+    if let Some(scale) = std::env::var("BIKE_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        engine.bike_scale = scale;
+    }
+    println!("bikes: {daily} trips a day");
+}
+
 /// Building-based demand from `dir/demand.*`: edges, residents and jobs per edge.
 struct DemandData {
     edges: Vec<u32>,
@@ -349,6 +401,7 @@ fn main() {
         None => println!("transit: none (no transit/transit.bin)"),
     }
     attach_pedestrians(&mut engine, &format!("{dir}/../pedestrians"));
+    attach_bikes(&mut engine, &format!("{dir}/../cycling"));
     println!(
         "engine with routing landmarks ready in {:.0} ms",
         t0.elapsed().as_secs_f64() * 1e3
@@ -509,6 +562,24 @@ fn main() {
         .map(|(n, e)| format!("e{e}:{n}"))
         .collect();
     println!("removed most often on: {}", top.join(" "));
+    // DEBUG_LOOPS: bikes riding round in circles (an edge twice on their route).
+    if std::env::var("DEBUG_LOOPS").is_ok() {
+        let mut shown = 0;
+        for (v, veh) in engine.vehs.iter().enumerate() {
+            if !veh.alive() || veh.vtype != zg_sim::vtype::BIKE {
+                continue;
+            }
+            let mut seen = std::collections::HashSet::new();
+            if veh.route.iter().all(|e| seen.insert(*e)) {
+                continue;
+            }
+            if shown < 6 {
+                println!("loop: {} route {:?}", engine.describe(v as u32), veh.route);
+            }
+            shown += 1;
+        }
+        println!("bikes with a loop in their route: {shown}");
+    }
     // Where vehicles stand in queues: vehicles stopped over 30 s per edge (DUMP_QUEUES=file).
     if let Ok(path) = std::env::var("DUMP_QUEUES") {
         let mut stopped = vec![0u32; engine.net.edge_count()];
@@ -553,6 +624,12 @@ fn main() {
                 .map(|x| x.round())
                 .collect::<Vec<_>>(),
             s.trains
+        );
+    }
+    if engine.bikes.is_some() {
+        println!(
+            "bikes: {} trips started, {} arrived, {} removed, {:.0} km ridden; now {} riding",
+            s.bike_departed, s.bike_arrived, s.bike_removed, s.bike_km, s.bikes
         );
     }
     // Level crossings (M8b): how often and how long the barriers were down.

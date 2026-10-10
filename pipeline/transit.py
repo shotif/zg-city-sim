@@ -444,7 +444,18 @@ def train_trips(
     graph = TrackGraph(net, index, VCLASS[TRAIN])
     tracks: dict[tuple[str, int], list[tuple[int, float, float]]] = {}
 
-    def choices(stop_id: str, direction: np.ndarray) -> list[tuple[int, float, float]]:
+    def choices(
+        stop_id: str, direction: np.ndarray, either: bool
+    ) -> list[tuple[int, float, float]]:
+        # At a train's first or last station its way is judged from one neighbour only, and
+        # the line may curve into the station (from Zagreb Klara, trains run north into
+        # Glavni kolodvor's east-west platforms): there, tracks running either way.
+        if either:
+            key = (stop_id, -1)
+            if key not in tracks:
+                point = shapely.Point(xy[stop_id])
+                tracks[key] = station_tracks(point, None, tree, lanes, STOP_RADIUS[TRAIN])
+            return tracks[key]
         n = np.hypot(*direction)
         if n == 0:
             return []
@@ -467,7 +478,11 @@ def train_trips(
         seq = sorted(times.get(trip["trip_id"], []))
         pts = [xy[s[1]] for s in seq]
         options = [
-            choices(seq[i][1], pts[min(i + 1, len(pts) - 1)] - pts[max(i - 1, 0)])
+            choices(
+                seq[i][1],
+                pts[min(i + 1, len(pts) - 1)] - pts[max(i - 1, 0)],
+                i in (0, len(seq) - 1),
+            )
             for i in range(len(seq))
         ]
         inside = [i for i, c in enumerate(options) if c]
