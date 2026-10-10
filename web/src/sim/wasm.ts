@@ -43,6 +43,8 @@ export interface EngineExports {
   zg_transit_state_ptr(): number;
   zg_transit_service(): number;
   zg_transit_service_ptr(): number;
+  zg_plan_line(words: number, count: number): number;
+  zg_line_plan_ptr(): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
 }
@@ -306,6 +308,25 @@ export class TrafficEngine {
     return len > 0
       ? new Float32Array(this.memory, ex.zg_transit_state_ptr(), len).slice()
       : new Float32Array(0);
+  }
+
+  /** A new line's way (M9c): `words` are the vehicle type, then edge and fraction (f32
+   * bits) per stop; the answer `[roads, roads..., stops served, (stop, time after the
+   * first as f32 bits) per stop, metres as f32 bits]`, empty if it cannot run. */
+  planLine(words: Uint32Array): Uint32Array {
+    const ex = this.exports;
+    const bytes = words.byteLength;
+    const ptr = bytes > 0 ? ex.zg_alloc(bytes) : 0;
+    if (bytes > 0) {
+      new Uint8Array(this.memory, ptr, bytes).set(
+        new Uint8Array(words.buffer, words.byteOffset, bytes),
+      );
+    }
+    const len = ex.zg_plan_line(ptr, words.length);
+    if (bytes > 0) ex.zg_free(ptr, bytes);
+    return len > 0
+      ? new Uint32Array(this.memory, ex.zg_line_plan_ptr(), len).slice()
+      : new Uint32Array(0);
   }
 
   /** The trips that run with the frequency edits in force (M9b; `Timetable.setService`). */

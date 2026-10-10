@@ -27,6 +27,9 @@
  *   a kilometre of four lanes, with pavements, cycle paths and four junctions with
  *   lights); motorways €2.7 million (the A11 from Jakuševec to Velika Gorica: 780 million
  *   kuna for 9.5 km of four lanes);
+ * - tram tracks along a new road (M9c): €4.2 million a km both ways (ZET's first phase of
+ *   modernising its tram infrastructure: €34.46 million for 8.19 km of track and three
+ *   substations; new track is taken to cost the same, an estimate), half one way;
  * - bridges: €5,600 per m² of deck (Jarunski most: €140 million estimated for 625 m by
  *   40 m), 3.5 m a lane and 4 m of pavements;
  * - roundabouts: €950,000 with one lane (Pavlovac in Rijeka, contracted in 2025), twice
@@ -48,7 +51,8 @@
  * bus-km; they are shared by the hours each ran (trams averaged 12.49 km/h, buses 17.96),
  * as drivers' pay is most of them (an estimate: ZET does not split its costs by mode). A
  * weekday's timetable is about 1/244 of a year's tram-km and 1/308 of its bus-km (ZET's
- * 2024 km over the weekday timetable's). Fares from riders gained or lost are left out.
+ * 2024 km over the weekday timetable's). A new line (M9c) costs the same per vehicle-km it
+ * runs; building its stops is left out. Fares from riders gained or lost are left out.
  */
 import type { Point } from '../edit/builder';
 import type { Edit } from '../edit/edits';
@@ -71,6 +75,7 @@ export const CITY_ZONES = [
 ] as const;
 
 export const LANE_KM = { motorway: 2_700_000, other: 1_100_000 } as const;
+export const TRAM_TRACK_KM = 4_200_000;
 export const BRIDGE_M2 = 5_600;
 export const LANE_WIDTH = 3.5;
 export const PAVEMENTS = 4;
@@ -127,8 +132,9 @@ const length = (points: Point[]) =>
 /** Whether the junction near a point has traffic lights on the network loaded. */
 export type HasLights = (x: number, z: number) => boolean;
 
-/** A line's vehicle-km a weekday, as timetabled (undefined: not known). */
-export type LineKm = (line: string, mode: Mode) => number | undefined;
+/** A line's vehicle-km a weekday, as timetabled, or as a new line (`isNew`) runs
+ * (undefined: not known). */
+export type LineKm = (line: string, mode: Mode, isNew: boolean) => number | undefined;
 
 /** What an edit costs (€): to build, its upkeep a year, and what it adds to public
  * transport's running costs a year (less where it runs less). */
@@ -150,19 +156,24 @@ function buildAndUpkeep(
 ): { build: number; upkeep: number; service?: number } {
   switch (edit.kind) {
     case 'frequency': {
-      const km = lineKm?.(edit.line, edit.mode) ?? 0;
+      const km = lineKm?.(edit.line, edit.mode, false) ?? 0;
       const service = (edit.factor - 1) * km * SERVICE_DAYS[edit.mode] * VEHICLE_KM[edit.mode];
       return { build: 0, upkeep: 0, service };
+    }
+    case 'line': {
+      const km = lineKm?.(edit.name, edit.mode, true) ?? 0;
+      return { build: 0, upkeep: 0, service: km * SERVICE_DAYS[edit.mode] * VEHICLE_KM[edit.mode] };
     }
     case 'road': {
       const km = length(edit.points) / 1000;
       const lanes = edit.lanes * (edit.oneway ? 1 : 2);
+      const tracks = edit.tram ? km * TRAM_TRACK_KM * (edit.oneway ? 0.5 : 1) : 0;
       if (edit.bridge) {
-        const build = km * 1000 * (lanes * LANE_WIDTH + PAVEMENTS) * BRIDGE_M2;
-        return { build, upkeep: build * BRIDGE_UPKEEP };
+        const deck = km * 1000 * (lanes * LANE_WIDTH + PAVEMENTS) * BRIDGE_M2;
+        return { build: deck + tracks, upkeep: deck * BRIDGE_UPKEEP };
       }
       const rate = edit.type === 'motorway' ? LANE_KM.motorway : LANE_KM.other;
-      return { build: km * lanes * rate, upkeep: km * lanes * UPKEEP_LANE_KM };
+      return { build: km * lanes * rate + tracks, upkeep: km * lanes * UPKEEP_LANE_KM };
     }
     case 'roundabout':
       return { build: ROUNDABOUT[Math.min(edit.lanes, 2) - 1] ?? ROUNDABOUT[0], upkeep: 0 };

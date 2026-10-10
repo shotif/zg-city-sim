@@ -22,7 +22,10 @@ use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::pedestrians::{self, MIN_WALK, OWN_SIGNAL_GAP, OWN_SIGNAL_YELLOW, Pedestrians};
 use crate::rng::Rng;
 use crate::router::{LandmarkBuild, Landmarks, Router};
-use crate::transit::{FREQUENCY_RANGE, PendingRun, Transit, TransitRun};
+use crate::transit::{
+    FREQUENCY_RANGE, LINE_DWELL, LINE_HEADWAY, LINE_PACE, LINE_TRIPS, LinePlan, PendingRun,
+    Transit, TransitRun,
+};
 use crate::vtype::{self, TYPES, VType};
 use crate::weather::Weather;
 
@@ -2619,6 +2622,95 @@ impl Engine {
         path
     }
 
+    /// New line `line`'s trips (made once for each edit); `NONE` if it does not fit: not a
+    /// bus or a tram, a headway or hours out of range, or fewer than two stops it can serve.
+    fn make_line(&mut self, tr: &mut Transit, line: &crate::edits::Line) -> u32 {
+        let key = Edit::Line(line.clone()).encode();
+        if let Some(&id) = tr.made_by.get(&key) {
+            return id;
+        }
+        let trips = ((line.last - line.first) / line.headway.max(1.0)) as usize + 1;
+        let fits = matches!(line.vtype, vtype::BUS | vtype::TRAM)
+            && line.route <= u16::MAX as u32
+            && (LINE_HEADWAY.0..=LINE_HEADWAY.1).contains(&line.headway)
+            && line.first >= 0.0
+            && line.first <= line.last
+            && line.last <= 30.0 * 3600.0
+            && trips <= LINE_TRIPS;
+        if !fits {
+            return NONE;
+        }
+        match self.plan_line_with(tr, line.vtype, &line.stops) {
+            Some(plan) => tr.add_line(key, line, plan),
+            None => NONE,
+        }
+    }
+
+    /// A new line's way for vehicle type `vtype` through `stops` (road, fraction along it):
+    /// the stops it can serve with when it leaves each (the time at the speed limit times
+    /// `LINE_PACE`, and `LINE_DWELL` at each stop), the roads it takes and how far it runs.
+    /// A stop the network cannot reach from the last, or behind it on the same road, is
+    /// left out. None with fewer than two stops served (M9c: the app draws a line as its
+    /// stops are picked).
+    pub fn plan_line(&mut self, vtype: u8, stops: &[(u32, f32)]) -> Option<LinePlan> {
+        let mut tr = self.transit.take()?;
+        let plan = self.plan_line_with(&mut tr, vtype, stops);
+        self.transit = Some(tr);
+        plan
+    }
+
+    fn plan_line_with(
+        &mut self,
+        tr: &mut Transit,
+        vtype: u8,
+        stops: &[(u32, f32)],
+    ) -> Option<LinePlan> {
+        let n_edges = self.net.edge_count() as u32;
+        let vclass = TYPES.get(vtype as usize)?.vclass;
+        let first = stops.iter().position(|&(e, _)| e < n_edges)?;
+        let (mut at_edge, mut at_frac) = stops[first];
+        let mut plan = LinePlan {
+            served: vec![(first as u32, 0.0)],
+            path: vec![at_edge],
+            metres: 0.0,
+        };
+        let mut time = 0.0;
+        for (k, &(edge, frac)) in stops.iter().enumerate().skip(first + 1) {
+            if edge >= n_edges {
+                continue;
+            }
+            let (seconds, metres) = if edge == at_edge {
+                if frac < at_frac {
+                    continue;
+                }
+                let part = frac - at_frac;
+                (
+                    part * self.free_time[edge as usize],
+                    part * self.net.edge_length[edge as usize],
+                )
+            } else {
+                let Some(leg) = self.transit_leg(tr, at_edge, edge, vclass) else {
+                    continue;
+                };
+                let (e0, e1) = (at_edge as usize, edge as usize);
+                let mut seconds = (1.0 - at_frac) * self.free_time[e0] + frac * self.free_time[e1];
+                let mut metres =
+                    (1.0 - at_frac) * self.net.edge_length[e0] + frac * self.net.edge_length[e1];
+                for &e in &leg[1..leg.len() - 1] {
+                    seconds += self.free_time[e as usize];
+                    metres += self.net.edge_length[e as usize];
+                }
+                plan.path.extend_from_slice(&leg[1..]);
+                (seconds, metres)
+            };
+            time += seconds * LINE_PACE + LINE_DWELL;
+            plan.metres += metres;
+            plan.served.push((k as u32, time));
+            (at_edge, at_frac) = (edge, frac);
+        }
+        (plan.served.len() >= 2).then_some(plan)
+    }
+
     /// For the app, two numbers per bus, tram or train running: its trip, and how late it
     /// is (s): past its scheduled departure while it stands at a stop, else how late it left
     /// the last one.
@@ -4283,6 +4375,7 @@ impl Engine {
         self.loaded.restore(&mut self.net);
         let mut applied = Vec::with_capacity(edits.len());
         let mut frequencies = Vec::new();
+        let mut lines = Vec::new();
         for edit in edits {
             if let Edit::Frequency { route, factor } = *edit {
                 // Lines the timetable runs, as often as edits may set.
@@ -4292,14 +4385,13 @@ impl Engine {
                 let (lo, hi) = FREQUENCY_RANGE;
                 if runs && route <= u16::MAX as u32 && (lo..=hi).contains(&factor) {
                     frequencies.push((route as u16, factor));
-                    applied.push(*edit);
+                    applied.push(edit.clone());
                 }
+            } else if let Edit::Line(line) = edit {
+                lines.push(line);
             } else if edits::apply(&mut self.net, edit) {
-                applied.push(*edit);
+                applied.push(edit.clone());
             }
-        }
-        if let Some(tr) = self.transit.as_mut() {
-            tr.set_frequencies(&frequencies, self.time - tr.day_start);
         }
         self.net.refresh_speeds();
         self.net.refresh_links();
@@ -4312,6 +4404,19 @@ impl Engine {
         }
         for &e in &self.closed {
             self.travel_time[e as usize] = CLOSED_TIME;
+        }
+        // The timetable with the frequencies and new lines in force, on the network now.
+        if let Some(mut tr) = self.transit.take() {
+            let mut made = Vec::with_capacity(lines.len());
+            for line in lines {
+                let id = self.make_line(&mut tr, line);
+                if id != NONE {
+                    applied.push(Edit::Line(line.clone()));
+                }
+                made.push(id);
+            }
+            tr.set_service(&frequencies, &made, self.time - tr.day_start);
+            self.transit = Some(tr);
         }
         let valid = self
             .router

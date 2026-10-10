@@ -36,7 +36,7 @@ export function headingOf(dx: number, dz: number): number {
   return ((Math.atan2(dx, -dz) * 180) / Math.PI + 360) % 360;
 }
 
-function angleBetween(a: number, b: number): number {
+export function angleBetween(a: number, b: number): number {
   return Math.abs(((a - b + 540) % 360) - 180);
 }
 
@@ -54,7 +54,12 @@ export class RoadIndex {
   /** Edges each signal program controls turns from. */
   private readonly tlsEdges = new Map<number, number[]>();
 
-  constructor(readonly net: RoadNetwork) {
+  /** `include`: the edges to index (default: those the player can edit). */
+  constructor(
+    readonly net: RoadNetwork,
+    include?: (edge: number) => boolean,
+  ) {
+    const keep = include ?? ((e: number) => this.editable(e));
     const shape = net.laneShape;
     let minX = Infinity;
     let minZ = Infinity;
@@ -68,7 +73,7 @@ export class RoadIndex {
     this.minZ = minZ;
     this.cols = Math.max(1, Math.ceil((maxX - minX) / CELL) + 1);
     for (let e = 0; e < net.edgeCount; e++) {
-      if (!this.editable(e)) continue;
+      if (!keep(e)) continue;
       const { start, count } = net.lanePoints(net.edgeLaneStart[e]);
       const seen = new Set<number>();
       for (let k = 0; k + 1 < count; k++) {
@@ -145,7 +150,28 @@ export class RoadIndex {
     return best;
   }
 
-  /** Editable edges with a lane within `radius` of (x, z), nearest first. */
+  /** How far along an edge's rightmost lane (as a fraction of it) the point nearest
+   * (x, z) is. */
+  along(edge: number, x: number, z: number): number {
+    const net = this.net;
+    const shape = net.laneShape;
+    const { start, count } = net.lanePoints(net.edgeLaneStart[edge]);
+    let total = 0;
+    let best = { distance: Infinity, at: 0 };
+    for (let k = 0; k + 1 < count; k++) {
+      const [ax, az] = [shape[(start + k) * 3], shape[(start + k) * 3 + 1]];
+      const vx = shape[(start + k + 1) * 3] - ax;
+      const vz = shape[(start + k + 1) * 3 + 1] - az;
+      const len = Math.hypot(vx, vz);
+      const t = len > 0 ? Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / len ** 2)) : 0;
+      const d = Math.hypot(x - (ax + t * vx), z - (az + t * vz));
+      if (d < best.distance) best = { distance: d, at: total + t * len };
+      total += len;
+    }
+    return total > 0 ? best.at / total : 0;
+  }
+
+  /** Indexed edges with a lane within `radius` of (x, z), nearest first. */
   near(
     x: number,
     z: number,

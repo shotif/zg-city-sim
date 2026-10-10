@@ -7,14 +7,50 @@
 //!
 //! Frequency edits (M9b) run a line more or less often: trips cancelled are not started, and
 //! trips added are copies of the timetabled ones, appended to the arrays, so a trip's index
-//! names the same trip for as long as the engine runs.
+//! names the same trip for as long as the engine runs. New lines (M9c) append their trips
+//! the same way.
 
 use std::collections::HashMap;
+
+use crate::edits::Line;
 
 /// How many times as often edits may run a line (M9b): from not at all to three times.
 pub const FREQUENCY_RANGE: (f32, f32) = (0.0, 3.0);
 /// Trips are added only between trips this close (s): longer gaps are breaks in service.
 pub const MAX_GAP: f32 = 7_200.0;
+/// A new line's timetable (M9c, estimated): the time between stops is this many times the
+/// time at the speed limit, and each stop takes `LINE_DWELL` seconds.
+pub const LINE_PACE: f32 = 1.5;
+pub const LINE_DWELL: f32 = 20.0;
+/// Headways (s) and trips a day a new line may have.
+pub const LINE_HEADWAY: (f32, f32) = (120.0, 7_200.0);
+pub const LINE_TRIPS: usize = 1_000;
+/// Marks a new line's trips in `Transit::write_service`.
+pub const LINE_TAG: u32 = 0x8000_0000;
+
+/// A trip added after the timetable's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Added {
+    /// A copy of a timetabled trip, running `shift` seconds later (M9b).
+    Copy { trip: u32, shift: f32 },
+    /// A trip of new line `line` (`Transit::made`), leaving its first stop at `start` (M9c).
+    Line { line: u32, start: f32 },
+}
+
+/// A new line's way, stop to stop: the stops it serves (index into its stops, and when it
+/// leaves each, s after leaving the first), the roads it takes and how far it runs (m).
+#[derive(Clone, Debug, Default)]
+pub struct LinePlan {
+    pub served: Vec<(u32, f32)>,
+    pub path: Vec<u32>,
+    pub metres: f32,
+}
+
+/// A new line as made: its plan and its trips.
+pub struct LineMade {
+    pub plan: LinePlan,
+    pub trips: Vec<u32>,
+}
 
 /// Timetable arrays (names as in the packed file).
 #[derive(Default, Clone)]
@@ -99,12 +135,18 @@ pub struct Transit {
     pub data: TransitData,
     /// Trips in the timetable as loaded.
     pub timetabled: usize,
-    /// For each copy (trip `timetabled + k`): the timetabled trip it copies and how much
-    /// later it runs (s).
-    pub copy_of: Vec<(u32, f32)>,
+    /// What each trip after them is (trip `timetabled + k`).
+    pub added: Vec<Added>,
     /// Copies made, by route and how many times as often (f32 bits): an edit set again
     /// runs the same ones.
     copies: HashMap<(u16, u32), Vec<u32>>,
+    /// New lines made, and which by their edit's records: an edit set again runs the same
+    /// trips.
+    pub made: Vec<LineMade>,
+    pub made_by: HashMap<Vec<u32>, u32>,
+    /// The new line each line edit in force runs (`NONE` where it could not be made), in
+    /// the order of the edits.
+    pub lines: Vec<u32>,
     /// Trips that run, by first departure: the timetable's less those cancelled, and the
     /// copies in force.
     pub order: Vec<u32>,
@@ -135,8 +177,11 @@ impl Transit {
         let mut tr = Transit {
             data,
             timetabled,
-            copy_of: Vec::new(),
+            added: Vec::new(),
             copies: HashMap::new(),
+            made: Vec::new(),
+            made_by: HashMap::new(),
+            lines: Vec::new(),
             order: Vec::new(),
             next_trip: 0,
             day_start: 0.0,
@@ -170,9 +215,11 @@ impl Transit {
     /// the timetable does, the rest as timetabled; the last edit of a route counts. Each of
     /// a line's stop patterns keeps its share: fewer trips keep an even spread of its trips;
     /// more add copies spread evenly between its trips, f - 1 to each gap between two (of
-    /// at most `MAX_GAP`), so its first and last trips stay as they are. Trips due by `tod` (s since the service day's midnight) are not started
-    /// again; vehicles on the road finish their trips.
-    pub fn set_frequencies(&mut self, edits: &[(u16, f32)], tod: f64) {
+    /// at most `MAX_GAP`), so its first and last trips stay as they are. New lines' trips
+    /// (`lines`, made with `add_line`; `NONE` for none) run too. Trips due by `tod` (s since
+    /// the service day's midnight) are not started again; vehicles on the road finish their
+    /// trips.
+    pub fn set_service(&mut self, edits: &[(u16, f32)], lines: &[u32], tod: f64) {
         let mut factor: HashMap<u16, f32> = HashMap::new();
         for &(route, f) in edits {
             factor.insert(route, f);
@@ -194,6 +241,12 @@ impl Transit {
                 }
             } else if f > 1.0 {
                 added.extend(self.copies_for(route, f, &patterns));
+            }
+        }
+        self.lines = lines.to_vec();
+        for &line in lines {
+            if let Some(made) = self.made.get(line as usize) {
+                added.extend_from_slice(&made.trips);
             }
         }
         self.order = (0..self.timetabled as u32)
@@ -278,24 +331,68 @@ impl Transit {
             *time += shift;
         }
         d.trip_stops.push(d.stop_edge.len() as u32);
-        self.copy_of.push((trip, shift));
+        self.added.push(Added::Copy { trip, shift });
         (d.trips() - 1) as u32
     }
 
-    /// For the app (M9b): the timetabled trips, the copies (each its trip and shift as f32
-    /// bits), then the trips that run (`order`): `[timetabled, copies, running, (trip,
-    /// shift) per copy, running trips]`.
+    /// Make new line `edit` on `plan` (`Engine::plan_line`), remembered by `key` (its
+    /// edit's records): a trip from its first stop every `headway` seconds from `first` to
+    /// `last`. The new line's index.
+    pub fn add_line(&mut self, key: Vec<u32>, edit: &Line, plan: LinePlan) -> u32 {
+        let id = self.made.len() as u32;
+        let mut trips = Vec::new();
+        let mut start = edit.first;
+        while start <= edit.last + 0.5 && trips.len() < LINE_TRIPS {
+            let d = &mut self.data;
+            d.trip_type.push(edit.vtype);
+            d.trip_route.push(edit.route as u16);
+            for &(stop, offset) in &plan.served {
+                let (edge, frac) = edit.stops[stop as usize];
+                d.stop_edge.push(edge);
+                d.stop_frac.push(frac);
+                d.stop_time.push(start + offset);
+            }
+            d.trip_stops.push(d.stop_edge.len() as u32);
+            self.added.push(Added::Line { line: id, start });
+            trips.push((d.trips() - 1) as u32);
+            start += edit.headway;
+        }
+        self.made.push(LineMade { plan, trips });
+        self.made_by.insert(key, id);
+        id
+    }
+
+    /// For the app (M9b, M9c): `[timetabled, added, running, lines]`; then two words per
+    /// trip added: a copy's trip and shift, or a new line's `LINE_TAG | line` and start (f32
+    /// bits); the trips that run (`order`); and for each line edit in force, in order, its
+    /// line (`NONE`: not made), how far it runs (m, f32 bits), how many stops it serves and
+    /// each one's index and time after the first (f32 bits).
     pub fn write_service(&self, out: &mut Vec<u32>) {
         out.clear();
         out.extend([
             self.timetabled as u32,
-            self.copy_of.len() as u32,
+            self.added.len() as u32,
             self.order.len() as u32,
+            self.lines.len() as u32,
         ]);
-        for &(trip, shift) in &self.copy_of {
-            out.extend([trip, shift.to_bits()]);
+        for added in &self.added {
+            out.extend(match *added {
+                Added::Copy { trip, shift } => [trip, shift.to_bits()],
+                Added::Line { line, start } => [LINE_TAG | line, start.to_bits()],
+            });
         }
         out.extend_from_slice(&self.order);
+        for &line in &self.lines {
+            let Some(made) = self.made.get(line as usize) else {
+                out.extend([u32::MAX, 0, 0]);
+                continue;
+            };
+            let plan = &made.plan;
+            out.extend([line, plan.metres.to_bits(), plan.served.len() as u32]);
+            for &(stop, offset) in &plan.served {
+                out.extend([stop, offset.to_bits()]);
+            }
+        }
     }
 
     /// First departure of a trip (s after the service day's midnight).

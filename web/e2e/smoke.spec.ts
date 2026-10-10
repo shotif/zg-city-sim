@@ -227,6 +227,83 @@ test("shows ZET's lines, their stops and departures", async ({ page }, testInfo)
   expect(errors).toEqual([]);
 });
 
+test('draws a new bus line that runs on the roads', async ({ page }, testInfo) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('./?speed=16');
+  await page.waitForFunction(
+    () => window.__ZG__?.sim?.ready === true && window.__ZG__?.timetable !== undefined,
+    null,
+    { timeout: 150_000 },
+  );
+  // Three stops in a row of a long bus line, one way.
+  const stops = await page.evaluate(() => {
+    const t = window.__ZG__!.timetable!;
+    const line = t.lines.find(
+      (l) => t.routes[l.route].mode === 'bus' && (l.patterns[0]?.stops.length ?? 0) > 12,
+    )!;
+    return line.patterns[0].stops.slice(4, 7).map((s) => t.stop(s));
+  });
+  expect(stops).toHaveLength(3);
+
+  // New line (M9c): tap its stops on the map; they take the bus stops there.
+  await page.getByRole('button', { name: 'Public transport' }).click();
+  const panel = page.locator('.transit-panel');
+  await panel.getByRole('button', { name: 'New line' }).click();
+  const canvas = page.locator('canvas').first();
+  for (const s of stops) {
+    await page.evaluate(({ x, z }) => {
+      window.__ZG__?.setView('map');
+      window.__ZG__?.lookAt(x, z, 800);
+    }, s);
+    await page.waitForTimeout(500);
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  }
+  await expect(panel.locator('.transit-draft-stop')).toHaveCount(3);
+  await expect(panel.locator('.transit-draft-stop').first()).toContainText(stops[0].name);
+  await expect(panel.locator('.transit-stats')).toContainText('3 of 3 stops served', {
+    timeout: 30_000,
+  });
+  await expect(panel.locator('.budget-note').last()).toContainText('a year to run');
+  await page.screenshot({ path: testInfo.outputPath('new-line.png') });
+  const name = await panel.locator('input[name="line-name"]').inputValue();
+  expect(name).toMatch(/^\d+$/);
+  await panel.getByRole('button', { name: 'Add line' }).click();
+
+  // The engine runs it both ways from 05:00 to 23:00 every 10 min: 109 trips each way.
+  const routeOf = (n: string) =>
+    page.evaluate((n) => {
+      const t = window.__ZG__!.timetable!;
+      return t.routes.findIndex((q, i) => t.isNew(i) && q.name === n && q.mode === 'bus');
+    }, n);
+  const line = () =>
+    page.evaluate((n) => {
+      const t = window.__ZG__!.timetable!;
+      const r = t.routes.findIndex((q, i) => t.isNew(i) && q.name === n && q.mode === 'bus');
+      return r < 0 || !t.line(r) ? 0 : t.tripsToday(r);
+    }, name);
+  await expect.poll(line, { timeout: 30_000 }).toBe(218);
+  expect(await page.evaluate(() => localStorage.getItem('zg-city-sim:edits'))).toContain('"line"');
+  const route = await routeOf(name);
+  await panel.locator(`.transit-item[data-action="line"][data-value="${route}"]`).click();
+  await expect(panel.locator('.transit-stats')).toHaveText(/^218 trips today; \d+ running now/);
+  // Its first bus leaves within ten simulated minutes.
+  await expect(panel.locator('.transit-stats')).toHaveText(/; [1-9]\d* running now/, {
+    timeout: 120_000,
+  });
+  await page.screenshot({ path: testInfo.outputPath('new-line-running.png') });
+
+  // Taken away again.
+  await panel.getByRole('button', { name: 'Remove this line' }).click();
+  await expect.poll(line, { timeout: 30_000 }).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test('shows news hotspots and live road closures', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('console', (message) => {

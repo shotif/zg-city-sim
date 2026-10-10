@@ -25,6 +25,7 @@ export class RoadDrawer {
   private readonly speed: HTMLSelectElement;
   private readonly oneway: HTMLInputElement;
   private readonly bridge: HTMLInputElement;
+  private readonly tram: HTMLInputElement;
   private points: Point[] = [];
   private drawing = false;
 
@@ -75,6 +76,7 @@ export class RoadDrawer {
     };
     this.oneway = check('One way');
     this.bridge = check('Bridge');
+    this.tram = check('Tram tracks');
     const row = el('div', 'build-row', this.element);
     this.drawButton = button('Draw a road', row, () =>
       this.drawing ? this.cancel() : this.start(),
@@ -156,6 +158,7 @@ export class RoadDrawer {
       oneway: this.oneway.checked,
       kmh: Number(this.speed.value),
       bridge: this.bridge.checked,
+      ...(this.tram.checked ? { tram: true } : {}),
     };
     const problem = this.callbacks.onRoad(road);
     if (problem) {

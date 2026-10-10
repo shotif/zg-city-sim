@@ -87,8 +87,8 @@ describe('Timetable', () => {
 
   it('runs the trips the engine runs: copies added, trips cancelled', () => {
     // A copy of the 07:00 to Sopot 35 min later; the 07:30 back cancelled.
-    const words = new Uint32Array([4, 1, 4, 0, 0, 0, 2, 3, 4]);
-    new Float32Array(words.buffer)[4] = 2100;
+    const words = new Uint32Array([4, 1, 4, 0, 0, 0, 0, 2, 3, 4]);
+    new Float32Array(words.buffer)[5] = 2100;
     const t = new Timetable(routes, file, {
       transitTripRoute: [0, 0, 1, 0],
       transitTripStops: [0, 3, 6, 8, 11],
@@ -108,9 +108,82 @@ describe('Timetable', () => {
       [h(7, 10), 0, 'Sopot'],
     ]);
     // Words for another timetable, or none: as timetabled.
-    t.setService(new Uint32Array([9, 0, 0]));
+    t.setService(new Uint32Array([9, 0, 0, 0]));
     expect(t.tripsToday(0)).toBe(3);
     expect(t.departures(t.platforms(1), h(7, 15), 1)[0].time).toBe(h(7, 40));
+  });
+
+  it('runs new lines: their trips, stops and departures', () => {
+    const t = new Timetable(routes, file, timetable['a']);
+    const route = t.newRoute('400', 'bus');
+    expect(route).toBe(2);
+    expect(t.newRoute('400', 'bus')).toBe(2);
+    expect(t.routeIndex('400', 'bus')).toBeUndefined();
+    // Bus 400 from Črnomerec (a timetabled stop) to a stop of its own, at 07:00 and 07:30.
+    const tag = 0x80000000;
+    const words = new Uint32Array([
+      4,
+      2,
+      6,
+      1,
+      tag,
+      0,
+      tag,
+      0,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      0,
+      0,
+      2,
+      0,
+      0,
+      1,
+      0,
+    ]);
+    const floats = new Float32Array(words.buffer);
+    floats[5] = h(7, 0);
+    floats[7] = h(7, 30);
+    floats[15] = 1500;
+    floats[20] = 240;
+    t.setService(words, [
+      {
+        route,
+        name: '400',
+        mode: 'bus',
+        stops: [
+          { name: 'Črnomerec', x: 10, z: 5 },
+          { name: 'Gajnice', x: -900, z: -300 },
+        ],
+      },
+    ]);
+    expect(t.waysInForce).toBe(1);
+    expect(t.newLineCount).toBe(1);
+    expect(t.isNew(route)).toBe(true);
+    expect(t.tripsToday(route)).toBe(2);
+    expect(t.routeOf(5)).toBe(route);
+    expect(t.km(route)).toBeCloseTo(3);
+    const line = t.line(route)!;
+    expect(line.patterns[0].stops).toEqual([0, 5]);
+    expect(t.stop(5)).toEqual({ name: 'Gajnice', x: -900, z: -300 });
+    expect(t.routes[route].longName).toBe('Črnomerec - Gajnice');
+    expect(t.patternTrips(route, line.patterns[0])).toEqual([4, 5]);
+    expect(t.tripStops(4)).toEqual([0, 5]);
+    expect(t.tripsByHour(route)[7]).toBe(2);
+    expect(t.search('400').lines.map((l) => l.route)).toEqual([route]);
+    // Departures at Črnomerec, the bus's first stop (tram 6 leaves at 07:00 too); none at
+    // its last.
+    const next = t.departures([0], h(6, 50), 2, new Set([4, 5]));
+    expect(next.map((d) => [d.time, d.route, d.headsign])).toEqual([
+      [h(7, 0), route, 'Gajnice'],
+      [h(7, 30), route, 'Gajnice'],
+    ]);
+    expect(t.departures([5], h(6, 50), 2)).toEqual([]);
+    expect(t.nearestStop(-890, -300, 'bus', 60)).toBe(5);
+    expect(t.nearestStop(-890, -300, 'tram', 60)).toBeUndefined();
   });
 
   it('adds up a line’s vehicle-km a weekday', () => {

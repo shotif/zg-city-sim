@@ -54,6 +54,8 @@ export interface RoadEdit {
   kmh: number;
   /** A bridge: its deck runs straight between its ends instead of following the ground. */
   bridge: boolean;
+  /** Tram tracks in its inner lane each way (M9c), joined to the tracks at its ends. */
+  tram?: boolean;
 }
 
 /** A junction, by its position (scene x, z), with a name to show. */
@@ -137,9 +139,10 @@ const LANE_WIDTH = 3.2;
 /** A road end this close (m) to a junction joins it; this close to a road, it cuts it. */
 export const SNAP_JUNCTION = 25;
 export const SNAP_ROAD = 15;
-/** Cars, buses, trucks, deliveries, taxis and emergency vehicles. */
+/** Cars, buses, trucks, deliveries, taxis and emergency vehicles; trams. */
 const ROAD_ALLOW = 1 | 2 | 8 | 128 | 256 | 512;
 const PASSENGER = 1;
+const TRAM = 4;
 
 type Shape = number[]; // x, z, elevation per point
 
@@ -891,7 +894,9 @@ function addRoadEdges(
     const offset = road.oneway ? ((n - 1) / 2 - k) * LANE_WIDTH : (n - k - 0.5) * LANE_WIDTH;
     const pts = offsetLine(path, offset);
     const shape = pts.flatMap((p) => [p.x, p.z, 0]);
-    d.addLane(edge, shape, road.kmh / 3.6, ROAD_ALLOW, {
+    // Tram tracks run in the inner lane.
+    const allow = road.tram && k === n - 1 ? ROAD_ALLOW | TRAM : ROAD_ALLOW;
+    d.addLane(edge, shape, road.kmh / 3.6, allow, {
       key: `${key}:${reverse ? 'b' : 'f'}${k}`,
       start: 0,
       end: pathLength(shape),
@@ -920,19 +925,43 @@ function connectJunction(d: Draft, j: number, added: Set<number>): number[] {
       if (d.toOf(o) === d.fromOf(i)) continue; // back the way it came
       const inLanes = d.lanesOf(i).filter((l) => (d.allowOf(l) & PASSENGER) !== 0);
       const outLanes = d.lanesOf(o).filter((l) => (d.allowOf(l) & PASSENGER) !== 0);
-      if (!inLanes.length || !outLanes.length) continue;
-      const way = turn(
-        direction(d.shapeOf(inLanes[0]), true),
-        direction(d.shapeOf(outLanes[0]), false),
-      );
-      if (way === 't') continue;
-      const pairs: [number, number][] =
-        way === 's'
-          ? inLanes.map((l, k) => [l, outLanes[Math.min(k, outLanes.length - 1)]])
-          : way === 'r'
-            ? [[inLanes[0], outLanes[0]]]
-            : [[inLanes[inLanes.length - 1], outLanes[outLanes.length - 1]]];
-      for (const [f, t] of pairs) made.push(d.connect(f, t, j, way, 'M'));
+      const pairs: [number, number][] = [];
+      const way = (from: number, to: number) =>
+        turn(direction(d.shapeOf(from), true), direction(d.shapeOf(to), false));
+      if (inLanes.length && outLanes.length) {
+        const w = way(inLanes[0], outLanes[0]);
+        if (w !== 't') {
+          pairs.push(
+            ...(w === 's'
+              ? inLanes.map((l, k): [number, number] => [
+                  l,
+                  outLanes[Math.min(k, outLanes.length - 1)],
+                ])
+              : w === 'r'
+                ? [[inLanes[0], outLanes[0]] as [number, number]]
+                : [
+                    [inLanes[inLanes.length - 1], outLanes[outLanes.length - 1]] as [
+                      number,
+                      number,
+                    ],
+                  ]),
+          );
+          for (const [f, t] of pairs) made.push(d.connect(f, t, j, w, 'M'));
+        }
+      }
+      // Tram tracks (M9c): from the inner track in to the inner track out.
+      const inTrack = d
+        .lanesOf(i)
+        .filter((l) => (d.allowOf(l) & TRAM) !== 0)
+        .at(-1);
+      const outTrack = d
+        .lanesOf(o)
+        .filter((l) => (d.allowOf(l) & TRAM) !== 0)
+        .at(-1);
+      if (inTrack === undefined || outTrack === undefined) continue;
+      if (pairs.some(([f, t]) => f === inTrack && t === outTrack)) continue;
+      const w = way(inTrack, outTrack);
+      if (w !== 't') made.push(d.connect(inTrack, outTrack, j, w, 'M'));
     }
   }
   return made;

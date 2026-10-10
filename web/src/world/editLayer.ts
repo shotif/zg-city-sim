@@ -8,20 +8,21 @@ import type { RoadNetwork } from './roadNetwork';
 
 const LIFT = 9;
 
-/** Colours of edited roads by kind of edit (frequency edits change no road), and of the
- * road being edited. */
-export const EDIT_COLORS: Record<Exclude<Edit['kind'], 'frequency'> | 'selected', number> = {
-  selected: 0x4da3ff,
-  close: 0xe0102f,
-  closeLane: 0xf07c22,
-  speed: 0xa070ff,
-  busLane: 0xd6336c,
-  ban: 0xf2c12e,
-  green: 0x2fbf71,
-  road: 0x12a4a0,
-  roundabout: 0x12a4a0,
-  signal: 0x2fbf71,
-};
+/** Colours of edited roads by kind of edit (public transport edits change no road), and
+ * of the road being edited. */
+export const EDIT_COLORS: Record<Exclude<Edit['kind'], 'frequency' | 'line'> | 'selected', number> =
+  {
+    selected: 0x4da3ff,
+    close: 0xe0102f,
+    closeLane: 0xf07c22,
+    speed: 0xa070ff,
+    busLane: 0xd6336c,
+    ban: 0xf2c12e,
+    green: 0x2fbf71,
+    road: 0x12a4a0,
+    roundabout: 0x12a4a0,
+    signal: 0x2fbf71,
+  };
 
 /** Roads changed by edits, and the road being edited, drawn over the map. */
 export class EditLayer {

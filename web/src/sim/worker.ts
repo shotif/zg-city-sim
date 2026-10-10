@@ -287,6 +287,11 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
       ]);
       break;
     }
+    case 'planLine': {
+      const plan = engine ? engine.planLine(message.words) : new Uint32Array(0);
+      post({ type: 'linePlan', id: message.id, plan }, [plan.buffer]);
+      break;
+    }
     case 'reach':
       reachJob = {
         ...message,

@@ -47,6 +47,8 @@ struct State {
     transit_state: Vec<f32>,
     /// The trips that run with the frequency edits in force (`Transit::write_service`).
     transit_service: Vec<u32>,
+    /// A new line's way as its stops are picked (`zg_plan_line`).
+    line_plan: Vec<u32>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -506,6 +508,53 @@ pub extern "C" fn zg_transit_service() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_transit_service_ptr() -> *const u32 {
     with_state(|s| s.transit_service.as_ptr())
+}
+
+/// A new line's way (`Engine::plan_line`, M9c): `n` u32 words at `words`, the vehicle type
+/// then two words per stop (edge, fraction along it as f32 bits). Writes `[roads, the roads
+/// in order, stops served, (stop index, time after the first as f32 bits) per stop served,
+/// metres as f32 bits]`, or nothing if it cannot run; returns how many words,
+/// `zg_line_plan_ptr` points to them.
+///
+/// # Safety
+/// `words` must point to `n` u32 values (or `n` be 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_plan_line(words: *const u32, n: usize) -> u32 {
+    let list: &[u32] = if n == 0 || words.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(words, n) }
+    };
+    with_state(|s| {
+        s.line_plan.clear();
+        let Some((&vtype, rest)) = list.split_first() else {
+            return 0;
+        };
+        let stops: Vec<(u32, f32)> = rest
+            .chunks_exact(2)
+            .map(|w| (w[0], f32::from_bits(w[1])))
+            .collect();
+        let plan = s
+            .engine
+            .as_mut()
+            .and_then(|e| e.plan_line(vtype.min(255) as u8, &stops));
+        if let Some(plan) = plan {
+            let out = &mut s.line_plan;
+            out.push(plan.path.len() as u32);
+            out.extend_from_slice(&plan.path);
+            out.push(plan.served.len() as u32);
+            for &(stop, offset) in &plan.served {
+                out.extend([stop, offset.to_bits()]);
+            }
+            out.push(plan.metres.to_bits());
+        }
+        s.line_plan.len() as u32
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zg_line_plan_ptr() -> *const u32 {
+    with_state(|s| s.line_plan.as_ptr())
 }
 
 #[unsafe(no_mangle)]

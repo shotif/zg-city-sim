@@ -49,7 +49,9 @@ export type ToWorker =
    * weighted by exp(-time / decay) up to `max` seconds (engine `reach`). */
   | { type: 'reach'; id: number; sources: Uint32Array; decay: number; max: number }
   /** The buses, trams and trains running, and (if `trip` is not -1) that trip's path. */
-  | { type: 'transit'; id: number; trip: number };
+  | { type: 'transit'; id: number; trip: number }
+  /** Plan a new line's way (M9c, `TrafficEngine.planLine`). */
+  | { type: 'planLine'; id: number; words: Uint32Array };
 
 export interface FrameMessage {
   type: 'frame';
@@ -94,4 +96,5 @@ export type FromWorker =
   /** The edges of the trip asked for, and two numbers per vehicle running: its trip and
    * how late it is (s), at simulated time `time`. */
   | { type: 'transit'; id: number; time: number; path: Uint32Array; running: Float32Array }
+  | { type: 'linePlan'; id: number; plan: Uint32Array }
   | { type: 'error'; message: string };

@@ -1464,11 +1464,22 @@ fn edits_survive_encoding_for_the_app() {
             route: 12,
             factor: 1.5,
         },
+        Edit::Line(crate::edits::Line {
+            route: 300,
+            vtype: vtype::BUS,
+            headway: 600.0,
+            first: 18_000.0,
+            last: 82_800.0,
+            stops: vec![(4, 0.25), (9, 0.5), (2, 0.75)],
+        }),
+        Edit::CloseRoad { edge: 8 },
     ];
     let words: Vec<u32> = all.iter().flat_map(|e| e.encode()).collect();
     assert_eq!(Edit::decode(&words), all);
-    // Unknown kinds and a trailing partial record are skipped.
+    // Unknown kinds and a trailing partial record are skipped, and a line missing a stop.
     assert_eq!(Edit::decode(&[99, 1, 2, 3, 1, 5]), vec![]);
+    let line_words = all[7].encode();
+    assert_eq!(Edit::decode(&line_words[..line_words.len() - 4]), vec![]);
 }
 
 #[test]
@@ -2248,6 +2259,8 @@ fn a_bus_line_shows_its_path_and_how_late_its_buses_run() {
     assert!(late_seen > 5.0, "the bus ran {late_seen} s late");
 }
 
+use crate::transit::{Added, LINE_DWELL, LINE_PACE, LINE_TAG};
+
 /// A bus line on a 400 m road both ways: `per_way` trips each way every 600 s from 06:00,
 /// and one trip of another line.
 fn bus_line(per_way: usize) -> (Engine, u32, u32) {
@@ -2296,7 +2309,7 @@ fn a_line_run_twice_as_often_gets_trips_between_its_own() {
         route: 0,
         factor: 2.0,
     };
-    assert_eq!(engine.set_edits(&[twice]), 1);
+    assert_eq!(engine.set_edits(std::slice::from_ref(&twice)), 1);
     // Four trips each way become seven: a copy halfway between each two of the
     // timetable's, none past its last trip; the other line's trip runs as before.
     let east_times = departures(&engine, east);
@@ -2306,18 +2319,24 @@ fn a_line_run_twice_as_often_gets_trips_between_its_own() {
     assert_eq!(departures(&engine, west).len(), 7);
     let tr = engine.transit.as_ref().unwrap();
     assert_eq!(tr.timetabled, 9);
-    assert_eq!(tr.copy_of.len(), 6);
-    assert_eq!(tr.copy_of[0], (0, 300.0));
+    assert_eq!(tr.added.len(), 6);
+    assert_eq!(
+        tr.added[0],
+        Added::Copy {
+            trip: 0,
+            shift: 300.0
+        }
+    );
     // Set again, the same copies run: the arrays do not grow.
-    engine.set_edits(&[twice]);
-    assert_eq!(engine.transit.as_ref().unwrap().copy_of.len(), 6);
+    engine.set_edits(std::slice::from_ref(&twice));
+    assert_eq!(engine.transit.as_ref().unwrap().added.len(), 6);
     // Taken back, the timetable runs as loaded.
     engine.set_edits(&[]);
     assert_eq!(departures(&engine, east).len(), 5);
     let mut service = Vec::new();
     engine.transit.as_ref().unwrap().write_service(&mut service);
-    assert_eq!(service[..3], [9, 6, 9]);
-    assert_eq!(service[3..5], [0, 300f32.to_bits()]);
+    assert_eq!(service[..4], [9, 6, 9, 0]);
+    assert_eq!(service[4..6], [0, 300f32.to_bits()]);
 
     // The copies drive: buses start every 300 s eastbound from 06:00 to its last trip.
     engine.set_edits(&[twice]);
@@ -2374,7 +2393,7 @@ fn a_line_run_less_often_keeps_an_even_spread_and_buses_on_the_road_finish() {
         route: 9,
         factor: 2.0,
     };
-    assert_eq!(engine.set_edits(&[none, too_many, unknown]), 1);
+    assert_eq!(engine.set_edits(&[none.clone(), too_many, unknown]), 1);
     assert_eq!(departures(&engine, east), [21_700.0]);
     assert!(departures(&engine, west).is_empty());
 
@@ -2390,12 +2409,97 @@ fn a_line_run_less_often_keeps_an_even_spread_and_buses_on_the_road_finish() {
             .count()
     };
     assert_eq!(on_road(&engine), 1);
-    engine.set_edits(&[none]);
+    engine.set_edits(std::slice::from_ref(&none));
     assert_eq!(on_road(&engine), 1);
     let started = engine.transit.as_ref().unwrap().started;
     engine.set_edits(&[]);
     run_until(&mut engine, 10.0, |_| {});
     assert_eq!(engine.transit.as_ref().unwrap().started, started);
+}
+
+#[test]
+fn a_new_bus_line_runs_from_stop_to_stop_every_headway() {
+    // The road both ways with one timetabled trip (another line's), and a new line on the
+    // eastbound road: three stops, every 10 min from 06:00 to 06:30.
+    let (mut engine, east, west) = bus_line(0);
+    engine.set_time(21_000.0);
+    let line = crate::edits::Line {
+        route: 2,
+        vtype: vtype::BUS,
+        headway: 600.0,
+        first: 21_600.0,
+        last: 23_400.0,
+        stops: vec![(east, 0.1), (east, 0.5), (east, 0.9)],
+    };
+    assert_eq!(engine.set_edits(&[Edit::Line(line.clone())]), 1);
+    assert_eq!(
+        departures(&engine, east),
+        [21_600.0, 21_700.0, 22_200.0, 22_800.0, 23_400.0]
+    );
+    // Timed at the speed limit times LINE_PACE, with LINE_DWELL at each stop.
+    let free = engine.net.edge_length[east as usize] / engine.net.edge_speed[east as usize];
+    let leg = 0.4 * free * LINE_PACE + LINE_DWELL;
+    let tr = engine.transit.as_ref().unwrap();
+    let plan = &tr.made[0].plan;
+    assert_eq!(plan.path, [east]);
+    assert_eq!(plan.served.len(), 3);
+    assert!((plan.served[2].1 - 2.0 * leg).abs() < 0.01);
+    assert!((plan.metres - 0.8 * engine.net.edge_length[east as usize]).abs() < 0.01);
+    let first = tr.made[0].trips[0] as usize;
+    assert_eq!(tr.data.trip_route[first], 2);
+    assert!(
+        (tr.data.stop_time[tr.data.trip_stops[first] as usize + 1] - 21_600.0 - leg).abs() < 0.01
+    );
+
+    // The app hears of it: four trips of line 0, and its stops' times.
+    let mut service = Vec::new();
+    tr.write_service(&mut service);
+    assert_eq!(service[..4], [1, 4, 5, 1]);
+    assert_eq!(service[4..6], [LINE_TAG, 21_600f32.to_bits()]);
+    let section = &service[4 + 2 * 4 + 5..];
+    assert_eq!(section[0], 0);
+    assert_eq!(section[2], 3);
+    assert_eq!(section[3..5], [0, 0]);
+
+    // Set again, the same trips run.
+    engine.set_edits(&[Edit::Line(line.clone())]);
+    assert_eq!(engine.transit.as_ref().unwrap().added.len(), 4);
+
+    // A stop behind the last on its road, or on a road it cannot reach, is left out; with
+    // one stop left the line does not run.
+    let back = crate::edits::Line {
+        stops: vec![(east, 0.9), (east, 0.1), (west, 0.5)],
+        ..line.clone()
+    };
+    assert_eq!(engine.set_edits(&[Edit::Line(back.clone())]), 0);
+    assert!(engine.plan_line(vtype::BUS, &back.stops).is_none());
+    assert_eq!(departures(&engine, east), [21_700.0]);
+    // Neither does a train, nor a headway out of range.
+    let train = crate::edits::Line {
+        vtype: vtype::TRAIN,
+        ..line.clone()
+    };
+    let often = crate::edits::Line {
+        headway: 30.0,
+        ..line.clone()
+    };
+    assert_eq!(engine.set_edits(&[Edit::Line(train), Edit::Line(often)]), 0);
+
+    // Its buses drive the line: four start and serve all three stops.
+    engine.set_edits(&[Edit::Line(line)]);
+    let mut served = std::collections::HashMap::new();
+    run_until(&mut engine, 2_500.0, |e| {
+        for v in e.vehs.iter().filter(|v| v.alive()) {
+            if let Some(run) = &v.transit
+                && e.transit.as_ref().unwrap().data.trip_route[run.trip as usize] == 2
+            {
+                let n = served.entry(run.trip).or_insert(0);
+                *n = (*n).max(run.next);
+            }
+        }
+    });
+    assert_eq!(served.len(), 4, "{served:?}");
+    assert!(served.values().all(|&n| n >= 2), "{served:?}");
 }
 
 #[test]

@@ -1,6 +1,6 @@
 /**
- * The edit model: changes to the road network the player makes (M4a), and to how often
- * public transport lines run (M9b), kept as a list.
+ * The edit model: changes to the road network the player makes (M4a), to how often public
+ * transport lines run (M9b) and new lines (M9c), kept as a list.
  *
  * Edits name roads by a point on them and their heading, not by edge id: CI rebuilds the
  * network from newer OpenStreetMap data on every deploy, and ids change with it. A saved or
@@ -16,6 +16,7 @@ import {
   type WayRef,
 } from './builder';
 import { FREQUENCIES, MODE_NAME, type Mode, frequencyLabel } from '../world/transitLines';
+import { type LineMode, type LineStop, lineWords, placeStops } from './lines';
 import type { RoadIndex } from './roadIndex';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
@@ -63,6 +64,8 @@ export type Edit =
   /** A public transport line, by its name and mode, run `factor` times as often as
    * timetabled (0: not at all). */
   | FrequencyEdit
+  /** A new public transport line. */
+  | LineEdit
   /** A new road, a junction made a roundabout, a junction's traffic lights as the player
    * sets them (edit/builder.ts): built into the network before the other edits apply. */
   | RoadEdit
@@ -76,8 +79,32 @@ export interface FrequencyEdit {
   factor: number;
 }
 
+/** A new bus or tram line: its stops in order, and back again in reverse where `both`; a
+ * trip from the first stop every `headway` seconds from `first` to `last` (s after
+ * midnight). */
+export interface LineEdit {
+  kind: 'line';
+  name: string;
+  mode: LineMode;
+  stops: LineStop[];
+  both: boolean;
+  headway: number;
+  first: number;
+  last: number;
+}
+
 /** The timetable's route of a line by name and mode (none if it does not run it). */
 export type LineIndex = (line: string, mode: Mode) => number | undefined;
+
+/** What public transport edits are matched with. */
+export interface TransitMatch {
+  /** The timetable's lines. */
+  route: LineIndex;
+  /** A new line's route: the same for the same name and mode, never a timetabled one's. */
+  newRoute(name: string, mode: LineMode): number;
+  /** The roads (buses) or tracks (trams) stops go on, on the network the edits apply to. */
+  stopRoads(mode: LineMode): RoadIndex;
+}
 
 /** Edits built into the network (`buildNetwork`), not applied by the engine. */
 export function isNetworkEdit(edit: Edit): edit is NetworkEdit {
@@ -94,6 +121,8 @@ const KIND = {
   green: 6,
   frequency: 7,
 } as const;
+/** Headways (s) and hours a new line may have (sim/src/transit.rs `LINE_HEADWAY`). */
+export const LINE_HEADWAY = [120, 7200] as const;
 
 /** An edit matched to the network it is loaded on. */
 export interface ResolvedEdit {
@@ -102,8 +131,10 @@ export interface ResolvedEdit {
   edges: number[];
   /** Signal program, for green-time edits. */
   tls?: number;
-  /** The engine's four-word record. */
-  record: [number, number, number, number];
+  /** The engine's records, four words each (a new line's several: one way, then back). */
+  record: number[];
+  /** A new line's stops each way, those placed on a road (the engine's stop indices). */
+  ways?: LineStop[][];
 }
 
 const f32 = new Float32Array(1);
@@ -119,13 +150,13 @@ function floatBits(value: number): number {
 export function resolveEdits(
   index: RoadIndex,
   edits: readonly Edit[],
-  lines?: LineIndex,
+  transit?: TransitMatch,
 ): { resolved: ResolvedEdit[]; missing: Edit[] } {
   const resolved: ResolvedEdit[] = [];
   const missing: Edit[] = [];
   for (const edit of edits) {
     if (isNetworkEdit(edit)) continue;
-    const r = resolveEdit(index, edit, lines);
+    const r = resolveEdit(index, edit, transit);
     if (r) resolved.push(r);
     else missing.push(edit);
   }
@@ -135,11 +166,27 @@ export function resolveEdits(
 function resolveEdit(
   index: RoadIndex,
   edit: Exclude<Edit, NetworkEdit>,
-  lines?: LineIndex,
+  transit?: TransitMatch,
 ): ResolvedEdit | undefined {
   switch (edit.kind) {
+    case 'line': {
+      if (!transit) return undefined;
+      const route = transit.newRoute(edit.name, edit.mode);
+      const roads = transit.stopRoads(edit.mode);
+      const ways = (edit.both ? [edit.stops, [...edit.stops].reverse()] : [edit.stops]).map(
+        (stops) => {
+          const placed = placeStops(roads, stops);
+          return {
+            stops: stops.filter((_, i) => placed[i]),
+            placed: placed.filter((p): p is [number, number] => p !== undefined),
+          };
+        },
+      );
+      const record = ways.flatMap((w) => lineWords(route, edit.mode, edit, w.placed));
+      return { edit, edges: [], record, ways: ways.map((w) => w.stops) };
+    }
     case 'frequency': {
-      const route = lines?.(edit.line, edit.mode);
+      const route = transit?.route(edit.line, edit.mode);
       if (route === undefined) return undefined;
       return { edit, edges: [], record: [KIND.frequency, route, 0, floatBits(edit.factor)] };
     }
@@ -217,6 +264,8 @@ export function sameTarget(a: Edit, b: Edit): boolean {
       return near(a.junction, (b as typeof a).junction) && a.phase === (b as typeof a).phase;
     case 'frequency':
       return a.line === (b as typeof a).line && a.mode === (b as typeof a).mode;
+    case 'line':
+      return a.name === (b as typeof a).name && a.mode === (b as typeof a).mode;
     case 'road': {
       const q = (b as typeof a).points;
       return a.points.length === q.length && a.points.every((p, i) => near(p, q[i]));
@@ -252,6 +301,11 @@ export function describeEdit(edit: Edit): string {
       return `${edit.junction.name ?? 'Signals'}: phase ${edit.phase + 1} green ${edit.seconds} s`;
     case 'frequency':
       return `${MODE_NAME[edit.mode]} ${edit.line}: ${frequencyLabel(edit.factor).toLowerCase()}`;
+    case 'line': {
+      const ends = `${edit.stops[0]?.name ?? ''} - ${edit.stops.at(-1)?.name ?? ''}`;
+      const every = Math.round((edit.headway / 60) * 10) / 10;
+      return `New ${edit.mode} line ${edit.name}, ${ends}${edit.both ? ' and back' : ''}, every ${every} min`;
+    }
     case 'road': {
       let metres = 0;
       for (let i = 1; i < edit.points.length; i++) {
@@ -262,7 +316,8 @@ export function describeEdit(edit: Edit): string {
       const what = edit.bridge
         ? 'New bridge'
         : `New ${NEW_ROAD_TYPES[edit.type].label.toLowerCase()}`;
-      return `${what}, ${(metres / 1000).toFixed(1)} km, ${lanes}, ${edit.kmh} km/h`;
+      const tracks = edit.tram ? ', with tram tracks' : '';
+      return `${what}, ${(metres / 1000).toFixed(1)} km, ${lanes}, ${edit.kmh} km/h${tracks}`;
     }
     case 'roundabout':
       return `Roundabout at ${edit.junction.name ?? 'a junction'}, ${edit.lanes} lane${edit.lanes === 1 ? '' : 's'}`;
@@ -318,6 +373,11 @@ function compact(edit: Edit): Edit {
       return { ...edit, points: edit.points.map((p) => ({ x: round(p.x), z: round(p.z) })) };
     case 'frequency':
       return edit;
+    case 'line':
+      return {
+        ...edit,
+        stops: edit.stops.map((s) => ({ x: round(s.x), z: round(s.z), name: s.name })),
+      };
     default:
       return { ...edit, road: road(edit.road) };
   }
@@ -339,6 +399,7 @@ const KINDS = new Set([
   'roundabout',
   'signal',
   'frequency',
+  'line',
 ]);
 
 /** Edits from a saved list; throws if it is not one. Unknown kinds are dropped. */
@@ -386,10 +447,30 @@ export function parseEdits(text: string): Edit[] {
           e.lanes <= 4 &&
           typeof e.oneway === 'boolean' &&
           Number.isFinite(e.kmh) &&
-          typeof e.bridge === 'boolean'
+          typeof e.bridge === 'boolean' &&
+          (e.tram === undefined || typeof e.tram === 'boolean')
         );
       case 'roundabout':
         return isJunction(e.junction) && (e.lanes === 1 || e.lanes === 2);
+      case 'line':
+        return (
+          typeof e.name === 'string' &&
+          (e.mode === 'bus' || e.mode === 'tram') &&
+          Array.isArray(e.stops) &&
+          e.stops.length >= 2 &&
+          e.stops.every(
+            (s) => Number.isFinite(s?.x) && Number.isFinite(s?.z) && typeof s.name === 'string',
+          ) &&
+          typeof e.both === 'boolean' &&
+          Number.isFinite(e.headway) &&
+          e.headway >= LINE_HEADWAY[0] &&
+          e.headway <= LINE_HEADWAY[1] &&
+          Number.isFinite(e.first) &&
+          Number.isFinite(e.last) &&
+          e.first >= 0 &&
+          e.first <= e.last &&
+          e.last <= 30 * 3600
+        );
       case 'frequency':
         return (
           typeof e.line === 'string' &&

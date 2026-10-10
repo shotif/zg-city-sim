@@ -95,6 +95,7 @@ export class SimClient {
       case 'routeTimes':
       case 'volumes':
       case 'transit':
+      case 'linePlan':
       case 'reach': {
         const resolve = this.waiting.get(message.id);
         this.waiting.delete(message.id);
@@ -230,6 +231,15 @@ export class SimClient {
       id: ++this.requestId,
       trip,
     });
+  }
+
+  /** A new line's way through its stops (M9c; see `TrafficEngine.planLine`). */
+  planLine(words: Uint32Array): Promise<Uint32Array> {
+    return this.ask<Extract<FromWorker, { type: 'linePlan' }>>({
+      type: 'planLine',
+      id: ++this.requestId,
+      words,
+    }).then((m) => m.plan);
   }
 
   /** Statistics as of each simulated minute (the first frame at or past it), recent ones. */

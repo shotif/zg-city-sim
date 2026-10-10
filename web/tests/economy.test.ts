@@ -12,6 +12,7 @@ import {
   RETIMING,
   ROUNDABOUT,
   SERVICE_DAYS,
+  TRAM_TRACK_KM,
   UPKEEP_LANE_KM,
   VEHICLE_KM,
   buildingIncome,
@@ -81,6 +82,11 @@ describe('what building costs', () => {
     });
     expect(editCost(road({ oneway: true, lanes: 2 })).build).toBeCloseTo(2 * LANE_KM.other);
     expect(editCost(road({ type: 'motorway', lanes: 2 })).build).toBeCloseTo(4 * LANE_KM.motorway);
+    // Tram tracks along it: both ways, or one.
+    expect(editCost(road({ tram: true })).build).toBeCloseTo(2 * LANE_KM.other + TRAM_TRACK_KM);
+    expect(editCost(road({ tram: true, oneway: true })).build).toBeCloseTo(
+      LANE_KM.other + TRAM_TRACK_KM / 2,
+    );
     // A bridge: 1 km of deck 3.5 m a lane and 4 m of pavements, 0.5 % a year to keep.
     const bridge = editCost(road({ bridge: true }));
     expect(bridge.build).toBeCloseTo(1000 * 11 * BRIDGE_M2);
@@ -123,6 +129,22 @@ describe('what building costs', () => {
       km,
     );
     expect(half.service).toBeCloseTo(-twice.service / 2);
+    // A new line costs what it runs.
+    const line = editCost(
+      {
+        kind: 'line',
+        name: '400',
+        mode: 'bus',
+        stops: [],
+        both: true,
+        headway: 600,
+        first: 18_000,
+        last: 82_800,
+      },
+      undefined,
+      (name, _mode, isNew) => (isNew && name === '400' ? 500 : undefined),
+    );
+    expect(line.service).toBeCloseTo(500 * SERVICE_DAYS.bus * VEHICLE_KM.bus);
     // A line the timetable does not run costs nothing.
     expect(
       editCost({ kind: 'frequency', line: '99', mode: 'bus', factor: 2 }, undefined, km).service,

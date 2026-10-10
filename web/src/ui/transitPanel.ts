@@ -2,8 +2,9 @@
  * The Public transport panel (M9a): ZET's tram and bus lines and HŽ's trains, each with its
  * stops, trips by hour and the next departures, the vehicles running now and how late they
  * run in the simulation; the line picked is drawn on the map, its stops marked. ZET's lines
- * can be run more or less often (M9b).
+ * can be run more or less often (M9b), and new bus and tram lines drawn (M9c).
  */
+import type { LineMode, LineStop } from '../edit/lines';
 import {
   type Departure,
   FREQUENCIES,
@@ -21,6 +22,30 @@ import { formatClock } from './hud';
 /** Departures listed at a stop, and lines listed at once. */
 const STOP_DEPARTURES = 10;
 const LIST_LIMIT = 80;
+/** A new line's headways (min) and hours (first departures from, last up to). */
+const HEADWAYS = [5, 6, 7.5, 10, 12, 15, 20, 30, 60];
+const FIRST_HOURS = [4, 5, 6, 7, 8, 9, 10, 12, 14, 16];
+const LAST_HOURS = [9, 10, 12, 14, 16, 18, 19, 20, 21, 22, 23, 24];
+
+/** A new line as it is drawn (M9c). */
+export interface LineDraft {
+  mode: LineMode;
+  name: string;
+  stops: LineStop[];
+  both: boolean;
+  /** s, and first and last departures (s after midnight). */
+  headway: number;
+  first: number;
+  last: number;
+}
+
+/** What the engine makes of a draft one way: the stops it serves, how far (m) and how long
+ * (s) it runs. */
+export interface DraftPlan {
+  served: number;
+  metres: number;
+  seconds: number;
+}
 
 /** What the app does for the panel. */
 export interface TransitPanelHost {
@@ -33,12 +58,24 @@ export interface TransitPanelHost {
   onFrequency?(route: number, factor: number): void;
   /** What running line `route` `factor` times as often comes to, in a sentence. */
   frequencyNote?(route: number, factor: number): string;
+  /** A new line's draft changed (undefined: no longer drawn): plan it, draw it on the map
+   * and `setPlan`. */
+  onDraft?(draft: LineDraft | undefined): void;
+  /** Add the line drawn; take new line `route` away. */
+  onAddLine?(draft: LineDraft): void;
+  onRemoveLine?(route: number): void;
+  /** A name no line of `mode` has. */
+  lineName?(mode: LineMode): string;
+  /** What a draft costs a year, in a sentence. */
+  draftNote?(draft: LineDraft, plan: DraftPlan): string;
 }
 
 type View =
   | { kind: 'list' }
   | { kind: 'line'; line: Line; pattern: number }
-  | { kind: 'stop'; stop: number; from?: { line: Line; pattern: number } };
+  | { kind: 'stop'; stop: number; from?: { line: Line; pattern: number } }
+  /** A new line being drawn; its plan: undefined while planned, null if it cannot run. */
+  | { kind: 'new'; draft: LineDraft; plan?: DraftPlan | null };
 
 const hex = (color: number) => `#${color.toString(16).padStart(6, '0')}`;
 
@@ -83,6 +120,9 @@ export class TransitPanel {
       if (target.name === 'transit-search') {
         this.query = target.value;
         this.render(true);
+      } else if (target.name === 'line-name' && this.view.kind === 'new') {
+        this.view.draft.name = target.value.trim();
+        this.render(false);
       }
     });
     this.body.addEventListener('change', (event) => {
@@ -91,6 +131,15 @@ export class TransitPanel {
         this.openLine(this.view.line, Number(target.value));
       } else if (target.name === 'transit-frequency' && this.view.kind === 'line') {
         host.onFrequency?.(this.view.line.route, Number(target.value));
+      } else if (this.view.kind === 'new') {
+        const draft = this.view.draft;
+        if (target.name === 'line-headway') draft.headway = Number(target.value) * 60;
+        else if (target.name === 'line-first') draft.first = Number(target.value) * 3600;
+        else if (target.name === 'line-last') draft.last = Number(target.value) * 3600;
+        else if (target.name === 'line-both')
+          draft.both = (target as unknown as HTMLInputElement).checked;
+        else return;
+        this.render(false);
       }
     });
   }
@@ -130,6 +179,49 @@ export class TransitPanel {
       this.trips = new Set(p ? this.timetable.patternTrips(this.view.line.route, p) : []);
     }
     if (this.shown) this.render(true);
+  }
+
+  /** The mode of the line being drawn, if one is. */
+  get drawing(): LineMode | undefined {
+    return this.shown && this.view.kind === 'new' ? this.view.draft.mode : undefined;
+  }
+
+  /** Start drawing a new line. */
+  newLine(mode: LineMode = 'bus'): void {
+    const draft: LineDraft = {
+      mode,
+      name: this.host.lineName?.(mode) ?? '',
+      stops: [],
+      both: true,
+      headway: 600,
+      first: 5 * 3600,
+      last: 23 * 3600,
+    };
+    this.view = { kind: 'new', draft, plan: null };
+    this.host.onShow(undefined);
+    this.host.onDraft?.(draft);
+    this.render(true);
+  }
+
+  /** A stop added to the line drawn (a tap on the map). */
+  addStop(stop: LineStop): void {
+    if (this.view.kind !== 'new') return;
+    this.view.draft.stops.push(stop);
+    this.changed();
+  }
+
+  /** What the engine made of the draft (see `DraftPlan`; null: it cannot run). */
+  setPlan(plan: DraftPlan | null): void {
+    if (this.view.kind !== 'new') return;
+    this.view.plan = plan;
+    this.render(false);
+  }
+
+  private changed(): void {
+    if (this.view.kind !== 'new') return;
+    this.view.plan = this.view.draft.stops.length >= 2 ? undefined : null;
+    this.host.onDraft?.(this.view.draft);
+    this.render(true);
   }
 
   /** Open a stop's departures (a stop marker tapped). */
@@ -172,7 +264,33 @@ export class TransitPanel {
       if (this.modes.has(mode)) this.modes.delete(mode);
       else this.modes.add(mode);
       this.render(true);
+    } else if (action === 'new-line') {
+      this.newLine();
+    } else if (action === 'line-mode' && this.view.kind === 'new') {
+      const mode = value as LineMode;
+      if (mode !== this.view.draft.mode) {
+        this.view.draft.mode = mode;
+        this.view.draft.stops = [];
+        this.view.draft.name = this.host.lineName?.(mode) ?? this.view.draft.name;
+        this.changed();
+      }
+    } else if (action === 'remove-stop' && this.view.kind === 'new') {
+      this.view.draft.stops.splice(n, 1);
+      this.changed();
+    } else if (action === 'add-line' && this.view.kind === 'new') {
+      const draft = this.view.draft;
+      this.view = { kind: 'list' };
+      this.query = draft.name;
+      this.host.onDraft?.(undefined);
+      this.host.onAddLine?.(draft);
+      this.render(true);
+    } else if (action === 'remove-line') {
+      this.view = { kind: 'list' };
+      this.host.onShow(undefined);
+      this.host.onRemoveLine?.(n);
+      this.render(true);
     } else if (action === 'back') {
+      if (this.view.kind === 'new') this.host.onDraft?.(undefined);
       if (this.view.kind === 'stop' && this.view.from) {
         this.openLine(this.view.from.line, this.view.from.pattern);
       } else {
@@ -191,7 +309,11 @@ export class TransitPanel {
       return;
     }
     const { head, live } =
-      this.view.kind === 'line' ? this.lineHtml(this.view) : this.stopHtml(this.view);
+      this.view.kind === 'line'
+        ? this.lineHtml(this.view)
+        : this.view.kind === 'new'
+          ? this.newLineHtml(this.view)
+          : this.stopHtml(this.view);
     let headEl = this.body.querySelector<HTMLElement>(':scope > .transit-head');
     let liveEl = this.body.querySelector<HTMLElement>(':scope > .transit-live');
     if (!headEl || !liveEl) {
@@ -200,7 +322,12 @@ export class TransitPanel {
       liveEl = this.body.querySelector<HTMLElement>('.transit-live')!;
       force = true;
     }
-    if (force || head !== this.lastHead) headEl.innerHTML = head;
+    if (force || head !== this.lastHead) {
+      headEl.innerHTML = head;
+      // The name is typed into: kept out of the HTML compared, so typing does not rebuild it.
+      const name = headEl.querySelector<HTMLInputElement>('input[name="line-name"]');
+      if (name && this.view.kind === 'new') name.value = this.view.draft.name;
+    }
     if (force || live !== this.lastLive) liveEl.innerHTML = live;
     this.lastHead = head;
     this.lastLive = live;
@@ -241,13 +368,16 @@ export class TransitPanel {
     // Keep the search box (and its focus) when only the list changes.
     let search = this.body.querySelector<HTMLInputElement>('input[name="transit-search"]');
     if (!search) {
+      const draw = this.host.onAddLine
+        ? '<button type="button" class="hud-button transit-new" data-action="new-line">New line</button>'
+        : '';
       this.body.innerHTML =
-        '<input class="build-select transit-search" name="transit-search" type="search" ' +
-        'placeholder="Line or stop" aria-label="Find a line or stop" autocomplete="off">' +
+        `<div class="transit-find"><input class="build-select transit-search" name="transit-search" type="search" ` +
+        `placeholder="Line or stop" aria-label="Find a line or stop" autocomplete="off">${draw}</div>` +
         '<div class="transit-modes"></div><ul class="transit-list"></ul>';
       search = this.body.querySelector<HTMLInputElement>('input[name="transit-search"]')!;
-      search.value = this.query;
     }
+    if (search.value !== this.query) search.value = this.query;
     this.body.querySelector('.transit-modes')!.innerHTML = chips;
     this.body.querySelector('.transit-list')!.innerHTML =
       stopItems + lineItems + (stopItems || lineItems ? '' : '<li>Nothing found.</li>');
@@ -297,8 +427,9 @@ export class TransitPanel {
       (f) =>
         `<option value="${f.factor}"${f.factor === factor ? ' selected' : ''}>${f.label}</option>`,
     ).join('');
-    const service =
-      SET_FREQUENCY.has(r.mode) && this.host.onFrequency
+    const service = this.timetable.isNew(line.route)
+      ? `<button type="button" class="hud-button transit-remove" data-action="remove-line" data-value="${line.route}">Remove this line</button>`
+      : SET_FREQUENCY.has(r.mode) && this.host.onFrequency
         ? `<label class="transit-service">Service <select class="build-select" name="transit-frequency">${frequencies}</select></label>` +
           `<p class="budget-note">${escape(this.host.frequencyNote?.(line.route, factor) ?? '')}</p>`
         : r.mode === 'train'
@@ -323,6 +454,62 @@ export class TransitPanel {
         `<h4 class="build-count">Stops, and the next departure from each</h4>` +
         `<ol class="transit-list transit-stops">${stops}</ol>`,
     };
+  }
+
+  private newLineHtml(view: { draft: LineDraft; plan?: DraftPlan | null }): {
+    head: string;
+    live: string;
+  } {
+    const { draft, plan } = view;
+    const color = hex(MODE_COLOR[draft.mode]);
+    const chips = (['bus', 'tram'] as LineMode[])
+      .map(
+        (m) =>
+          `<button type="button" class="hud-button hud-speed" data-action="line-mode" data-value="${m}" aria-pressed="${m === draft.mode}">${MODE_NAME[m]}</button>`,
+      )
+      .join('');
+    const stops = draft.stops
+      .map(
+        (s, i) =>
+          `<li class="transit-draft-stop"><span class="transit-stop-dot" style="border-color:${color}"></span><span>${escape(s.name)}</span>` +
+          `<button type="button" class="hud-button hud-icon" data-action="remove-stop" data-value="${i}" aria-label="Remove ${escape(s.name)}">✕</button></li>`,
+      )
+      .join('');
+    const options = (values: number[], selected: number, label: (v: number) => string) =>
+      values
+        .map((v) => `<option value="${v}"${v === selected ? ' selected' : ''}>${label(v)}</option>`)
+        .join('');
+    const clock = (h: number) => `${String(h).padStart(2, '0')}:00`;
+    const head =
+      `<button type="button" class="hud-button hud-speed transit-back" data-action="back">‹ Cancel</button>` +
+      `<h3 class="transit-title">New line</h3>` +
+      `<div class="transit-modes">${chips}</div>` +
+      `<label class="transit-service">Name <input class="build-select" name="line-name" maxlength="12" autocomplete="off"></label>` +
+      `<p class="budget-note">Tap the map to add stops in order: each goes to the ${draft.mode} stop nearby, or onto the nearest ${draft.mode === 'tram' ? 'tram track' : 'road'}.</p>` +
+      (stops ? `<ol class="transit-list transit-stops">${stops}</ol>` : '') +
+      `<label class="transit-service">Every <select class="build-select" name="line-headway">${options(HEADWAYS, draft.headway / 60, (m) => `${m} min`)}</select></label>` +
+      `<label class="transit-service">From <select class="build-select" name="line-first">${options(FIRST_HOURS, draft.first / 3600, clock)}</select>` +
+      ` to <select class="build-select" name="line-last">${options(LAST_HOURS, draft.last / 3600, clock)}</select></label>` +
+      `<label class="transit-check"><input type="checkbox" name="line-both"${draft.both ? ' checked' : ''}> Back the same way</label>`;
+    const trips =
+      draft.last < draft.first ? 0 : Math.floor((draft.last - draft.first) / draft.headway) + 1;
+    const named = draft.name !== '';
+    let summary: string;
+    if (draft.stops.length < 2) summary = 'Add at least two stops.';
+    else if (plan === undefined) summary = 'Finding its way…';
+    else if (plan === null) summary = 'It cannot run between these stops: try others.';
+    else
+      summary =
+        `${plan.served} of ${draft.stops.length} stops served, ${(plan.metres / 1000).toFixed(1)} km and about ` +
+        `${Math.round(plan.seconds / 60)} min one way; ${trips} trips a day${draft.both ? ' each way' : ''}.`;
+    const note = plan ? (this.host.draftNote?.(draft, plan) ?? '') : '';
+    const ready = !!plan && named && trips > 0;
+    const live =
+      `<p class="transit-stats">${summary}</p>` +
+      (note ? `<p class="budget-note">${escape(note)}</p>` : '') +
+      (named ? '' : '<p class="budget-note">Give it a name.</p>') +
+      `<button type="button" class="hud-button transit-add" data-action="add-line"${ready ? '' : ' disabled'}>Add line</button>`;
+    return { head, live };
   }
 
   private stopHtml(view: { stop: number; from?: { line: Line; pattern: number } }): {
@@ -373,16 +560,23 @@ export class StopMarkers {
 
   /** Mark `stops` in `color` (none: clear). */
   set(stops: number[], color: number): void {
+    this.setPoints(
+      stops.map((stop) => ({ ...this.timetable.stop(stop), stop })),
+      color,
+    );
+  }
+
+  /** Mark places (a new line's stops as drawn; `stop`: a timetabled stop to open). */
+  setPoints(points: { name: string; x: number; z: number; stop?: number }[], color: number): void {
     this.layer.replaceChildren();
-    this.buttons = stops.map((stop) => {
-      const { name, x, z } = this.timetable.stop(stop);
+    this.buttons = points.map(({ name, x, z, stop }) => {
       const button = el('button', 'transit-marker', this.layer);
       button.type = 'button';
       button.title = name;
       button.setAttribute('aria-label', `${name} stop`);
       button.style.borderColor = hex(color);
-      button.addEventListener('click', () => this.onStop(stop));
-      return { stop, x, z, button };
+      if (stop !== undefined) button.addEventListener('click', () => this.onStop(stop));
+      return { stop: stop ?? -1, x, z, button };
     });
   }
 

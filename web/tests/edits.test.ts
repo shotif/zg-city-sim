@@ -117,10 +117,15 @@ describe('edits', () => {
     );
   });
 
+  const transit = (route: (line: string, mode: string) => number | undefined) => ({
+    route,
+    newRoute: () => 200,
+    stopRoads: () => index,
+  });
+
   it('run public transport lines more or less often', () => {
     const tram6: Edit = { kind: 'frequency', line: '6', mode: 'tram', factor: 2 };
-    const lines = (line: string, mode: string) =>
-      line === '6' && mode === 'tram' ? 11 : undefined;
+    const lines = transit((line, mode) => (line === '6' && mode === 'tram' ? 11 : undefined));
     const { resolved, missing } = resolveEdits(index, [tram6, { ...tram6, line: '99' }], lines);
     expect(missing).toHaveLength(1);
     expect(resolved[0].edges).toEqual([]);
@@ -146,6 +151,55 @@ describe('edits', () => {
         ]),
       ),
     ).toEqual([]);
+  });
+
+  it('add new lines, their stops on the roads they run along', () => {
+    const line: Edit = {
+      kind: 'line',
+      name: '400',
+      mode: 'bus',
+      stops: [
+        { x: 30, z: 0.4, name: 'Ilica' },
+        { x: 150, z: 0, name: 'Ilica' },
+        { x: 900, z: 900, name: 'Nowhere' },
+      ],
+      both: false,
+      headway: 600,
+      first: 5 * 3600,
+      last: 23 * 3600,
+    };
+    const { resolved } = resolveEdits(
+      index,
+      [line],
+      transit(() => undefined),
+    );
+    const words = editWords(resolved);
+    const floats = new Float32Array(words.buffer);
+    // A line record, its hours, then the two stops on a road (the third has none near).
+    expect(Array.from(words.slice(0, 3))).toEqual([8, 200, 2 | (2 << 8)]);
+    expect(floats[3]).toBe(600);
+    expect([words[4], floats[5], floats[6]]).toEqual([9, 5 * 3600, 23 * 3600]);
+    expect(Array.from(words.slice(8, 11))).toEqual([10, 0, 0]);
+    expect(floats[11]).toBeCloseTo(25 / 90, 2);
+    expect(Array.from(words.slice(12, 15))).toEqual([10, 1, 0]);
+    expect(floats[15]).toBeCloseTo(45 / 90, 2);
+    expect(words.length).toBe(16);
+    expect(resolved[0].ways).toEqual([line.stops.slice(0, 2)]);
+    // Both ways: the stops again in reverse.
+    const both = resolveEdits(
+      index,
+      [{ ...line, both: true }],
+      transit(() => undefined),
+    );
+    expect(both.resolved[0].ways?.[1].map((s) => s.x)).toEqual([150, 30]);
+    expect(describeEdit({ ...line, both: true })).toBe(
+      'New bus line 400, Ilica - Nowhere and back, every 10 min',
+    );
+    // One line by name and mode; kept and read back.
+    expect(withEdit([line], { ...line, headway: 300 })).toHaveLength(1);
+    expect(parseEdits(serializeEdits([line]))).toEqual([line]);
+    expect(parseEdits(serializeEdits([{ ...line, headway: 30 }]))).toEqual([]);
+    expect(parseEdits(serializeEdits([{ ...line, stops: line.stops.slice(0, 1) }]))).toEqual([]);
   });
 
   it('save, load and share', async () => {

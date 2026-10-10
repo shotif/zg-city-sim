@@ -5,8 +5,9 @@ import { type PackedIndex, type TypedArray, loadPacked } from './data/packed';
 import {
   type Edit,
   type FrequencyEdit,
-  type LineIndex,
+  type LineEdit,
   type ResolvedEdit,
+  type TransitMatch,
   decodeEditsFromUrl,
   editWords,
   encodeEditsForUrl,
@@ -37,6 +38,18 @@ import {
 } from './edit/builder';
 import { type ProjectInfo, edgeMap, loadProjects, projectUrl, pullCounts } from './edit/projects';
 import { RoadIndex } from './edit/roadIndex';
+import {
+  LINE_VTYPE,
+  type LineMode,
+  type LineStop,
+  SNAP_STOP,
+  STOP_REACH,
+  placeStops,
+  planWords,
+  readPlan,
+  stopIndex,
+  tripsADay,
+} from './edit/lines';
 import { type DemandArrays, type EdgeDemand, mergeDemand } from './grow/demand';
 import { loadLots } from './grow/lots';
 import { BudgetTool } from './grow/budgetTool';
@@ -52,7 +65,14 @@ import { Hud, type HudCallbacks, type Shown } from './ui/hud';
 import { NewsPanel } from './ui/newsPanel';
 import { RailMarkers, type Station } from './ui/railMarkers';
 import { StopMarkers, TransitPanel } from './ui/transitPanel';
-import { type LinesFile, type Route, Timetable, type TimetableArrays } from './world/transitLines';
+import {
+  type LinesFile,
+  MODE_COLOR,
+  type NewWay,
+  type Route,
+  Timetable,
+  type TimetableArrays,
+} from './world/transitLines';
 import { ProjectsSection } from './ui/projectsSection';
 import { junctionName } from './edit/signals';
 import { RoadDrawer } from './ui/roadDrawer';
@@ -374,8 +394,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let timetable: Timetable | undefined;
   let serviceNow: Uint32Array | undefined;
   let frequenciesNow = new Map<number, number>();
-  /** Change the edits in force (set up with the Build tools). */
+  /** New lines' ways sent to the engine with the edits, in order (M9c). */
+  let newWaysNow: NewWay[] = [];
+  /** Change the edits in force (set up with the Build tools); cost them again once the
+   * engine says how far new lines run; the roads (tracks) new lines' stops go on. */
   let changeEdits: (change: (list: Edit[]) => Edit[]) => void = () => {};
+  let refreshCosts = () => {};
+  let stopRoadsNow: ((mode: LineMode) => RoadIndex) | undefined;
   /** Trains, pedestrians and cyclists drawn (M8e). */
   const shown = new Set<Shown>(['trains', 'pedestrians', 'bikes']);
   let closureLayer: ClosureLayer | undefined;
@@ -748,13 +773,36 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const loaded = { net, index: new RoadIndex(net) };
       /** Whether a junction had traffic lights before any edit (new lights cost more). */
       const hasLights = (x: number, z: number) => loaded.index.findSignal({ x, z }) !== undefined;
-      /** Lines by name and mode, and their vehicle-km a weekday, once the timetable is in. */
-      const lineIndex: LineIndex = (line, mode) => timetable?.routeIndex(line, mode);
-      const lineKm: LineKm = (line, mode) => {
-        const route = lineIndex(line, mode);
-        return route === undefined ? undefined : timetable?.km(route);
+      /** Lines by name and mode, and their vehicle-km a weekday, once the timetable is in;
+       * the roads and tracks new lines' stops go on, on the network now. */
+      const lineKm: LineKm = (line, mode, isNew) => {
+        if (!timetable) return undefined;
+        const route = isNew ? timetable.newRoute(line, mode) : timetable.routeIndex(line, mode);
+        return route === undefined ? undefined : timetable.km(route);
       };
       const costs = (list: readonly Edit[]) => editsCost(list, hasLights, lineKm);
+      const stopIndexes = new WeakMap<RoadNetwork, Map<LineMode, RoadIndex>>();
+      const stopRoads = (mode: LineMode): RoadIndex => {
+        const byMode = stopIndexes.get(current.net) ?? new Map<LineMode, RoadIndex>();
+        stopIndexes.set(current.net, byMode);
+        let index = byMode.get(mode);
+        if (!index) {
+          index = stopIndex(current.net, mode);
+          byMode.set(mode, index);
+        }
+        return index;
+      };
+      stopRoadsNow = stopRoads;
+      const transitMatch = (): TransitMatch | undefined => {
+        const t = timetable;
+        return t
+          ? {
+              route: (line, mode) => t.routeIndex(line, mode),
+              newRoute: (name, mode) => t.newRoute(name, mode),
+              stopRoads,
+            }
+          : undefined;
+      };
       let missing = 0;
       /** The network with the roads drawn, and where its lanes lie on the one loaded. */
       let current = {
@@ -872,7 +920,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const apply = (list: Edit[]) => {
         useRoads(list);
         edits = list;
-        const matched = resolveEdits(current.index, list, lineIndex);
+        const matched = resolveEdits(current.index, list, transitMatch());
         resolved = matched.resolved;
         missing = matched.missing.length;
         debug.edits = resolved;
@@ -881,6 +929,16 @@ export async function startApp(container: HTMLElement): Promise<void> {
         budgetTool.setEdits(costs(list), list.length);
         editWordsNow = editWords(resolved);
         sim?.setEdits(editWordsNow);
+        newWaysNow = resolved.flatMap((r) =>
+          r.edit.kind === 'line'
+            ? (r.ways ?? []).map((stops) => ({
+                route: r.record[1],
+                name: (r.edit as LineEdit).name,
+                mode: (r.edit as LineEdit).mode,
+                stops,
+              }))
+            : [],
+        );
         frequenciesNow = new Map(
           resolved.flatMap((r) =>
             r.edit.kind === 'frequency' ? [[r.record[1], r.edit.factor] as [number, number]] : [],
@@ -901,7 +959,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         },
         costOf: (edit) => {
           const cost = costs([edit]);
-          if (edit.kind !== 'frequency') return euros(cost.build);
+          if (edit.kind !== 'frequency' && edit.kind !== 'line') return euros(cost.build);
           if (!cost.service) return '';
           return `${euros(Math.abs(cost.service))} a year ${cost.service > 0 ? 'more' : 'less'}`;
         },
@@ -932,6 +990,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
         const unpaid = budgetTool.afford(costs(list).build);
         if (unpaid) panel.setStatus(unpaid);
         else apply(list);
+      };
+      refreshCosts = () => {
+        budgetTool.setEdits(costs(edits), edits.length);
+        panel.setEdits(edits, resolved, missing);
       };
       hud.enableBuild();
       if (project) panel.setScenario(project.name);
@@ -1365,10 +1427,11 @@ export async function startApp(container: HTMLElement): Promise<void> {
                 lines.file,
                 travelData.arrays as unknown as TimetableArrays,
               );
-              loaded.setService(serviceNow);
+              loaded.setService(serviceNow, newWaysNow);
               timetable = loaded;
               debug.timetable = loaded;
-              if (edits.some((e) => e.kind === 'frequency')) changeEdits((list) => list);
+              if (edits.some((e) => e.kind === 'frequency' || e.kind === 'line'))
+                changeEdits((list) => list);
               return loaded;
             });
             openTransit = () => {
@@ -1379,20 +1442,74 @@ export async function startApp(container: HTMLElement): Promise<void> {
                   transitPanel?.openStop(s),
                 );
                 let routeLayer: EditLayer | undefined;
+                /** A fresh layer for a route drawn on the map. */
+                const newRouteLayer = (): EditLayer => {
+                  if (routeLayer) scene.remove(routeLayer.object);
+                  routeLayer = new EditLayer(networkNow?.net ?? net, surface);
+                  scene.add(routeLayer.object);
+                  return routeLayer;
+                };
+                let planned = 0;
                 transitPanel = new TransitPanel(hud.element, timetable, {
                   onClose: () => hud.setTransit(false, hudCallbacks),
                   onShow: (line) => {
-                    if (routeLayer) scene.remove(routeLayer.object);
-                    routeLayer = new EditLayer(networkNow?.net ?? net, surface);
-                    scene.add(routeLayer.object);
+                    const layer = newRouteLayer();
                     markers.set(line?.stops ?? [], line?.color ?? 0);
                     invalidateView();
-                    const layer = routeLayer;
                     if (!line || !sim) return;
                     void sim.transit(line.trip).then(({ path }) => {
                       layer.show([{ edges: Array.from(path), color: line.color, width: 6 }]);
                       invalidateView();
                     });
+                  },
+                  // A new line as it is drawn (M9c): its stops marked, its way planned.
+                  onDraft: (draft) => {
+                    const layer = newRouteLayer();
+                    const color = draft ? MODE_COLOR[draft.mode] : 0;
+                    markers.setPoints(draft?.stops ?? [], color);
+                    invalidateView();
+                    const run = ++planned;
+                    const roads = stopRoadsNow;
+                    if (!draft || !sim || !roads || draft.stops.length < 2) return;
+                    const placed = placeStops(roads(draft.mode), draft.stops).filter(
+                      (p): p is [number, number] => p !== undefined,
+                    );
+                    const words = planWords(LINE_VTYPE[draft.mode], placed);
+                    void sim.planLine(words).then((answer) => {
+                      if (run !== planned) return;
+                      const plan = readPlan(answer);
+                      transitPanel?.setPlan(plan);
+                      if (plan) layer.show([{ edges: plan.path, color, width: 6 }]);
+                      invalidateView();
+                    });
+                  },
+                  onAddLine: (draft) => {
+                    const edit: LineEdit = { kind: 'line', ...draft };
+                    changeEdits((list) => withEdit(list, edit));
+                  },
+                  onRemoveLine: (route) => {
+                    const r = timetable.routes[route];
+                    changeEdits((list) =>
+                      list.filter(
+                        (e) => !(e.kind === 'line' && e.name === r.name && e.mode === r.mode),
+                      ),
+                    );
+                  },
+                  lineName: (mode) => {
+                    const taken = new Set(
+                      timetable.routes.filter((r) => r.mode === mode).map((r) => r.name),
+                    );
+                    for (const e of edits)
+                      if (e.kind === 'line' && e.mode === mode) taken.add(e.name);
+                    let n = mode === 'tram' ? 18 : 400;
+                    while (taken.has(String(n))) n++;
+                    return String(n);
+                  },
+                  draftNote: (draft, plan) => {
+                    const ways = draft.both ? 2 : 1;
+                    const km = (plan.metres / 1000) * tripsADay(draft) * ways;
+                    const { service } = editCost({ kind: 'line', ...draft }, undefined, () => km);
+                    return `About ${Math.round(km).toLocaleString('en-GB')} vehicle-km a weekday; it costs about ${euros(service)} a year to run.`;
                   },
                   onStop: (x, z) => rig?.jumpTo(x, z, 900),
                   onFrequency: (route, factor) => {
@@ -1426,6 +1543,30 @@ export async function startApp(container: HTMLElement): Promise<void> {
                 transitMarkers = markers;
                 debug.transit = transitPanel;
                 transitPanel.setVisible(transitWanted);
+
+                // A tap on the map adds a stop to the line drawn: the stop of its mode
+                // nearby, else a stop of its own on the nearest road (track).
+                let down: { x: number; y: number; t: number } | undefined;
+                renderer.domElement.addEventListener('pointerdown', (event) => {
+                  down = { x: event.offsetX, y: event.offsetY, t: performance.now() };
+                });
+                renderer.domElement.addEventListener('pointerup', (event) => {
+                  const mode = transitPanel?.drawing;
+                  if (!mode || !down || event.button !== 0) return;
+                  const moved = Math.hypot(event.offsetX - down.x, event.offsetY - down.y);
+                  if (moved > 6 || performance.now() - down.t > 600) return;
+                  const p = groundAt(event.offsetX, event.offsetY);
+                  const stop = p && snapStop(p.x, p.z, mode);
+                  if (stop) transitPanel?.addStop(stop);
+                });
+                const snapStop = (x: number, z: number, mode: LineMode): LineStop | undefined => {
+                  const s = timetable.nearestStop(x, z, mode, SNAP_STOP);
+                  if (s !== undefined) return timetable.stop(s);
+                  const road = stopRoadsNow?.(mode).near(x, z, STOP_REACH)[0];
+                  if (!road) return undefined;
+                  const now = networkNow?.net ?? net;
+                  return { x, z, name: now.nameOf(road.edge) ?? 'New stop' };
+                };
               });
             };
             if (transitWanted) openTransit();
@@ -1446,12 +1587,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
               if (running.signals) buildPanel?.setSignals(running.signals);
             };
             running.onEdited = (applied, signals, service) => {
-              buildPanel?.setSignals(signals);
-              buildPanel?.setInForce(applied);
-              // The trips that run with the frequency edits in force.
+              // The trips that run with the frequency edits and new lines in force.
               serviceNow = service;
-              timetable?.setService(service);
+              timetable?.setService(service, newWaysNow);
               transitPanel?.refresh();
+              refreshCosts();
+              buildPanel?.setSignals(signals);
+              // A new line both ways is one edit, two ways in the engine.
+              const ways = timetable ? timetable.waysInForce - timetable.newLineCount : 0;
+              buildPanel?.setInForce(applied - ways);
             };
             running.onNetwork = (signals, error) => {
               buildPanel?.setSignals(signals);

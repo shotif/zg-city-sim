@@ -18,7 +18,7 @@ const NONE = 0xffffffff;
  * Ilica runs west-east through junction C (0, 0), one lane each way; Ulica runs west-east
  * 200 m south of it, from S1 to S2. `signals`: C has traffic lights (east-west green).
  */
-function town(signals = false) {
+function town(signals = false, tramsOnIlica = false) {
   const m = new NetMaker();
   const w = m.junction(-200, 0);
   const c = m.junction(0, 0);
@@ -31,6 +31,8 @@ function town(signals = false) {
   const cw = m.road(c, w, 1, 'Ilica');
   const s12 = m.road(s1, s2, 1, 'Ulica', 2);
   const s21 = m.road(s2, s1, 1, 'Ulica', 2);
+  // Tram tracks in Ilica's carriageway.
+  if (tramsOnIlica) for (const e of [we, ce, ec, cw]) m.lanes[m.lane(e, 0)].allow |= 4;
   const east = m.connect(m.lane(we, 0), m.lane(ce, 0), c, 's');
   const west = m.connect(m.lane(ec, 0), m.lane(cw, 0), c, 's');
   if (signals)
@@ -171,6 +173,41 @@ describe('the junction builder', () => {
     const second = next.edgeLaneStart[ulicaOn[0][1]];
     expect(built.origins.get(second)!.key).toBe(`b${lane}`);
     expect(built.origins.get(second)!.start).toBeGreaterThan(first.end);
+  });
+
+  it('lays tram tracks along a drawn road and joins them to the tracks at its ends', () => {
+    const { net, ids } = town(false, true);
+    const { built, next } = rebuilt(net, [{ ...ROAD, lanes: 2, tram: true }]);
+    expect(built.problems).toEqual([]);
+    expectConsistent(next);
+    const [south, north] = built.roads[0];
+    // Trams run in the inner lane each way.
+    const allow = (e: number) =>
+      Array.from(
+        { length: next.edgeLaneCount[e] },
+        (_, k) => next.laneAllow[next.edgeLaneStart[e] + k],
+      );
+    expect(allow(south).map((a) => (a & 4) !== 0)).toEqual([false, true]);
+    // At C the tracks along Ilica turn into the new road's inner lane and out of it.
+    const a = next.arrays as unknown as Record<string, Uint32Array>;
+    const trams: [number, number][] = [];
+    for (let l = 0; l < a.linkFrom.length; l++) {
+      if (a.linkJunction[l] !== ids.c || (next.laneAllow[a.linkVia[l]] & 4) === 0) continue;
+      trams.push([next.laneEdge[a.linkFrom[l]], next.laneEdge[a.linkTo[l]]]);
+    }
+    expect(trams).toEqual(
+      expect.arrayContaining([
+        [ids.we, south],
+        [ids.ec, south],
+        [north, ids.ce],
+        [north, ids.cw],
+      ]),
+    );
+    // Ulica has no tracks: none join there.
+    const j = net.junctionCount;
+    for (let l = 0; l < a.linkFrom.length; l++) {
+      if (a.linkJunction[l] === j) expect(next.laneAllow[a.linkVia[l]] & 4).toBe(0);
+    }
   });
 
   it('says where every lane went, from build to build, both ways', () => {

@@ -665,9 +665,42 @@ a.news-headline:hover {
 }
 
 /* The Public transport panel (M9a): lines, a line's stops, a stop's departures. */
-.transit-search {
-  width: 100%;
+.transit-find {
+  display: flex;
+  gap: 6px;
+  align-items: center;
   margin: 2px 0 6px;
+}
+
+.transit-search {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+/* A new line being drawn (M9c). */
+.transit-draft-stop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.transit-draft-stop span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.transit-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.transit-add,
+.transit-remove {
+  margin-top: 8px;
 }
 
 .transit-modes {

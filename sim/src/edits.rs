@@ -1,6 +1,6 @@
 //! Network edits applied to the running simulation: closed roads and lanes, speed limits,
 //! lanes reserved for some vehicle classes (bus lanes), banned turns and signal timings,
-//! and how often a public transport line runs (M9b).
+//! how often a public transport line runs (M9b) and new lines (M9c).
 //!
 //! Edits always apply to the network as loaded: `Engine::set_edits` restores the loaded lane
 //! speeds, permissions and signal timings, applies the whole list, and rebuilds what depends
@@ -18,7 +18,7 @@ pub const GREEN_RANGE: (f32, f32) = (3.0, 180.0);
 
 /// One change to the network. Roads are edges, lanes count from the right (0), signal
 /// phases from the start of their program.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
     /// Closed to cars and trucks.
     CloseRoad { edge: u32 },
@@ -35,6 +35,21 @@ pub enum Edit {
     /// A line (the timetable's route index) run `factor` times as often as timetabled
     /// (`transit::FREQUENCY_RANGE`; 0 is no service).
     Frequency { route: u32, factor: f32 },
+    /// A new line, one way (M9c): vehicles of type `vtype` (bus or tram) from stop to stop
+    /// (road, and how far along its lanes as a fraction), leaving the first every `headway`
+    /// seconds from `first` to `last` (s after midnight). Its route index comes after the
+    /// timetable's; both ways of a line share one.
+    Line(Line),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Line {
+    pub route: u32,
+    pub vtype: u8,
+    pub headway: f32,
+    pub first: f32,
+    pub last: f32,
+    pub stops: Vec<(u32, f32)>,
 }
 
 /// Edit kinds in the four-word records the app sends (`Edit::decode`).
@@ -46,53 +61,90 @@ pub mod kind {
     pub const BAN_TURN: u32 = 5;
     pub const GREEN: u32 = 6;
     pub const FREQUENCY: u32 = 7;
+    /// A new line takes several records: LINE (route, vehicle type and number of stops as
+    /// `vtype | stops << 8`, headway), LINE_HOURS (first and last departure as f32 bits),
+    /// then a LINE_STOP (edge, 0, fraction) for each stop.
+    pub const LINE: u32 = 8;
+    pub const LINE_HOURS: u32 = 9;
+    pub const LINE_STOP: u32 = 10;
 }
 
 impl Edit {
     /// Edits from records of four words: kind, two arguments and a value (f32 bits).
-    /// Records of unknown kinds are skipped.
+    /// Records of unknown kinds, and lines whose records are not all there, are skipped.
     pub fn decode(words: &[u32]) -> Vec<Edit> {
-        words
-            .chunks_exact(4)
-            .filter_map(|r| {
-                let value = f32::from_bits(r[3]);
-                Some(match r[0] {
-                    kind::CLOSE_ROAD => Edit::CloseRoad { edge: r[1] },
-                    kind::CLOSE_LANE => Edit::CloseLane {
-                        edge: r[1],
-                        lane: r[2].min(255) as u8,
-                    },
-                    kind::SPEED_LIMIT => Edit::SpeedLimit {
-                        edge: r[1],
-                        speed: value,
-                    },
-                    kind::LANE_CLASSES => Edit::LaneClasses {
-                        edge: r[1],
-                        lane: r[2].min(255) as u8,
-                        classes: value as u16,
-                    },
-                    kind::BAN_TURN => Edit::BanTurn {
-                        from: r[1],
-                        to: r[2],
-                    },
-                    kind::GREEN => Edit::Green {
-                        tls: r[1],
-                        phase: r[2].min(u16::MAX as u32) as u16,
-                        seconds: value,
-                    },
-                    kind::FREQUENCY => Edit::Frequency {
+        let records: Vec<&[u32]> = words.chunks_exact(4).collect();
+        let mut out = Vec::new();
+        let mut k = 0;
+        while k < records.len() {
+            let r = records[k];
+            k += 1;
+            if r[0] == kind::LINE {
+                let n = (r[2] >> 8) as usize;
+                let rest = &records[k..];
+                if rest.len() > n
+                    && rest[0][0] == kind::LINE_HOURS
+                    && rest[1..=n].iter().all(|s| s[0] == kind::LINE_STOP)
+                {
+                    out.push(Edit::Line(Line {
                         route: r[1],
-                        factor: value,
-                    },
-                    _ => return None,
-                })
-            })
-            .collect()
+                        vtype: (r[2] & 0xff) as u8,
+                        headway: f32::from_bits(r[3]),
+                        first: f32::from_bits(rest[0][1]),
+                        last: f32::from_bits(rest[0][2]),
+                        stops: rest[1..=n]
+                            .iter()
+                            .map(|s| (s[1], f32::from_bits(s[3])))
+                            .collect(),
+                    }));
+                    k += n + 1;
+                }
+                continue;
+            }
+            if let Some(edit) = Edit::decode_one(r) {
+                out.push(edit);
+            }
+        }
+        out
     }
 
-    /// The four-word record of this edit.
-    pub fn encode(&self) -> [u32; 4] {
-        match *self {
+    fn decode_one(r: &[u32]) -> Option<Edit> {
+        let value = f32::from_bits(r[3]);
+        Some(match r[0] {
+            kind::CLOSE_ROAD => Edit::CloseRoad { edge: r[1] },
+            kind::CLOSE_LANE => Edit::CloseLane {
+                edge: r[1],
+                lane: r[2].min(255) as u8,
+            },
+            kind::SPEED_LIMIT => Edit::SpeedLimit {
+                edge: r[1],
+                speed: value,
+            },
+            kind::LANE_CLASSES => Edit::LaneClasses {
+                edge: r[1],
+                lane: r[2].min(255) as u8,
+                classes: value as u16,
+            },
+            kind::BAN_TURN => Edit::BanTurn {
+                from: r[1],
+                to: r[2],
+            },
+            kind::GREEN => Edit::Green {
+                tls: r[1],
+                phase: r[2].min(u16::MAX as u32) as u16,
+                seconds: value,
+            },
+            kind::FREQUENCY => Edit::Frequency {
+                route: r[1],
+                factor: value,
+            },
+            _ => return None,
+        })
+    }
+
+    /// The four-word records of this edit (one, or a line's several).
+    pub fn encode(&self) -> Vec<u32> {
+        let one = match *self {
             Edit::CloseRoad { edge } => [kind::CLOSE_ROAD, edge, 0, 0],
             Edit::CloseLane { edge, lane } => [kind::CLOSE_LANE, edge, lane as u32, 0],
             Edit::SpeedLimit { edge, speed } => [kind::SPEED_LIMIT, edge, 0, speed.to_bits()],
@@ -113,7 +165,24 @@ impl Edit {
                 seconds,
             } => [kind::GREEN, tls, phase as u32, seconds.to_bits()],
             Edit::Frequency { route, factor } => [kind::FREQUENCY, route, 0, factor.to_bits()],
-        }
+            Edit::Line(ref line) => {
+                let mut out = vec![
+                    kind::LINE,
+                    line.route,
+                    line.vtype as u32 | (line.stops.len() as u32) << 8,
+                    line.headway.to_bits(),
+                    kind::LINE_HOURS,
+                    line.first.to_bits(),
+                    line.last.to_bits(),
+                    0,
+                ];
+                for &(edge, frac) in &line.stops {
+                    out.extend([kind::LINE_STOP, edge, 0, frac.to_bits()]);
+                }
+                return out;
+            }
+        };
+        one.to_vec()
     }
 }
 
@@ -151,7 +220,7 @@ impl Loaded {
 /// Apply one edit to the lane and signal arrays (the caller rebuilds links and routing).
 /// False if it does not fit the network: an unknown or junction-internal road, a lane or
 /// phase the road or program does not have, a value out of range, or a turn no link makes.
-/// Frequency edits change the timetable, not the network (`Engine::set_edits`).
+/// Frequency edits and lines change the timetable, not the network (`Engine::set_edits`).
 pub fn apply(net: &mut Network, edit: &Edit) -> bool {
     let n_edges = net.edge_count() as u32;
     let road = |e: u32| e < n_edges && !net.is_internal_edge(e);
@@ -229,7 +298,7 @@ pub fn apply(net: &mut Network, edit: &Edit) -> bool {
             d.phase_min_dur[p] = d.phase_min_dur[p].min(seconds);
             d.phase_max_dur[p] = d.phase_max_dur[p].max(seconds);
         }
-        Edit::Frequency { .. } => return false,
+        Edit::Frequency { .. } | Edit::Line(_) => return false,
     }
     true
 }
