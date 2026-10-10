@@ -154,6 +154,7 @@ describe('what building costs', () => {
       today: 0,
       now: 0,
       moved: 0,
+      carToday: 0,
       boardingsToday: Float32Array.from([1000, 500, 300]),
       boardingsNow: Float32Array.from([1200, 400, 900]),
     };

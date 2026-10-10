@@ -53,7 +53,9 @@ export type ToWorker =
   /** Plan a new line's way (M9c, `TrafficEngine.planLine`). */
   | { type: 'planLine'; id: number; words: Uint32Array }
   /** Public transport's riders (M9d, `TrafficEngine.riders`). */
-  | { type: 'riders'; id: number };
+  | { type: 'riders'; id: number }
+  /** Journey times by public transport between places (M9e, `TrafficEngine.ptJourneys`). */
+  | { type: 'journeys'; id: number; points: Float32Array };
 
 export interface FrameMessage {
   type: 'frame';
@@ -100,4 +102,5 @@ export type FromWorker =
   | { type: 'transit'; id: number; time: number; path: Uint32Array; running: Float32Array }
   | { type: 'linePlan'; id: number; plan: Uint32Array }
   | { type: 'riders'; id: number; riders: Float32Array }
+  | { type: 'journeys'; id: number; times: Float32Array }
   | { type: 'error'; message: string };

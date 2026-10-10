@@ -567,9 +567,9 @@ pub extern "C" fn zg_line_plan_ptr() -> *const u32 {
 }
 
 /// Public transport's riders (M9d): `[worked out (0 or 1), still working (0 or 1), trips a
-/// weekday today, now, car trips moved to public transport, routes, boardings by route
-/// today..., now...]`; returns how many numbers, `zg_riders_ptr` points to them (none
-/// without riders).
+/// weekday today, now, car trips moved to public transport, car trips today, routes,
+/// boardings by route today..., now...]`; returns how many numbers, `zg_riders_ptr` points
+/// to them (none without riders).
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_riders() -> u32 {
     with_state(|s| {
@@ -583,6 +583,7 @@ pub extern "C" fn zg_riders() -> u32 {
                 m.trips_today as f32,
                 m.trips_now as f32,
                 m.car_moved as f32,
+                m.car_today as f32,
                 routes as f32,
             ]);
             for list in [&m.boardings_today, &m.boardings_now] {
@@ -597,6 +598,36 @@ pub extern "C" fn zg_riders() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zg_riders_ptr() -> *const f32 {
     with_state(|s| s.riders.as_ptr())
+}
+
+/// Journey times by public transport (M9e) between every two of `n` places at `points` (x,
+/// z pairs): `n * n` today, then as many with the edits in force (s; -1 where there is no
+/// way); returns how many numbers (none until today's riders are worked out),
+/// `zg_riders_ptr` points to them.
+///
+/// # Safety
+/// `points` must point to `2 * n` f32 values (or `n` be 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_pt_journeys(points: *const f32, n: usize) -> u32 {
+    let list: &[f32] = if n == 0 || points.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(points, 2 * n) }
+    };
+    let places: Vec<(f32, f32)> = list.chunks_exact(2).map(|p| (p[0], p[1])).collect();
+    with_state(|s| {
+        s.riders.clear();
+        let times = s
+            .engine
+            .as_ref()
+            .and_then(|e| e.riders.as_ref())
+            .and_then(|r| r.journeys(&places));
+        if let Some((today, now)) = times {
+            let finite = |t: f32| if t.is_finite() { t } else { -1.0 };
+            s.riders.extend(today.into_iter().chain(now).map(finite));
+        }
+        s.riders.len() as u32
+    })
 }
 
 #[unsafe(no_mangle)]

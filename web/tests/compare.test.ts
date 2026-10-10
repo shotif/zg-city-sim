@@ -7,6 +7,8 @@ import {
   commonMinute,
   compareStats,
   diffBands,
+  pairTimes,
+  ridersRows,
   summariseTravelTimes,
 } from '../src/edit/compare';
 import { STAT } from '../src/sim/wasm';
@@ -68,5 +70,35 @@ describe('commonMinute', () => {
     const b = new Map([399, 400, 401].map((m) => [m, stats]));
     expect(commonMinute(a, b)).toBe(401);
     expect(commonMinute(a, new Map())).toBeUndefined();
+  });
+});
+
+describe('public transport in the comparison', () => {
+  it('compares riders and car trips, and picks pairs out of a matrix', () => {
+    const rows = ridersRows({
+      ready: true,
+      busy: false,
+      today: 400_000,
+      now: 420_000,
+      moved: 15_000,
+      carToday: 700_000,
+      boardingsToday: new Float32Array(0),
+      boardingsNow: new Float32Array(0),
+    });
+    expect(rows.map((r) => [r.today, r.edited, r.moreIsBetter])).toEqual([
+      [400_000, 420_000, true],
+      [700_000, 685_000, false],
+    ]);
+    // Three places: 0 → 2 and 2 → 1.
+    expect(
+      pairTimes(
+        [
+          [0, 2],
+          [2, 1],
+        ],
+        3,
+        [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      ),
+    ).toEqual([2, 7]);
   });
 });

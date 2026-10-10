@@ -72,22 +72,25 @@ export interface Riders {
   today: number;
   now: number;
   moved: number;
+  /** Car trips a weekday within the map today (at full demand, estimated). */
+  carToday: number;
   boardingsToday: Float32Array;
   boardingsNow: Float32Array;
 }
 
 /** The engine's riders (sim `zg_riders`); undefined without. */
 export function readRiders(words: Float32Array): Riders | undefined {
-  if (words.length < 6) return undefined;
-  const routes = words[5];
+  if (words.length < 7) return undefined;
+  const routes = words[6];
   return {
     ready: words[0] === 1,
     busy: words[1] === 1,
     today: words[2],
     now: words[3],
     moved: words[4],
-    boardingsToday: words.subarray(6, 6 + routes),
-    boardingsNow: words.subarray(6 + routes, 6 + 2 * routes),
+    carToday: words[5],
+    boardingsToday: words.subarray(7, 7 + routes),
+    boardingsNow: words.subarray(7 + routes, 7 + 2 * routes),
   };
 }
 

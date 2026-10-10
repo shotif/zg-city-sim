@@ -28,6 +28,9 @@ import {
   compareStats,
   diffBands,
   summariseTravelTimes,
+  type TravelTimeSummary,
+  pairTimes,
+  ridersRows,
 } from './edit/compare';
 import {
   type BuiltNetwork,
@@ -1100,7 +1103,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       let diffOn = false;
       let busy = false;
       let run = 0;
-      const compared = { stats: 0, travel: -Infinity, diff: -Infinity };
+      const compared = { stats: 0, travel: -Infinity, diff: -Infinity, transit: false };
       let todayRoads: Promise<Baseline> | undefined;
       const baselineData = (): Promise<Baseline> => {
         if (!project) {
@@ -1185,6 +1188,13 @@ export async function startApp(container: HTMLElement): Promise<void> {
         const words = (edges: (number | undefined)[]) =>
           Uint32Array.from(pairs.flatMap(([i, j]) => [edges[i]!, edges[j]!]));
         const [editedPairs, todayPairs] = [words(placeEdges), words(todayEdges)];
+        // By public transport (M9e): between the places themselves, today and with the edits,
+        // as the player's simulation works its riders out.
+        const placePoints = Float32Array.from(PLACES.flatMap((p) => [p.x, p.z]));
+        const allPairs: [number, number][] = [];
+        for (let i = 0; i < PLACES.length; i++) {
+          for (let j = 0; j < PLACES.length; j++) if (i !== j) allPairs.push([i, j]);
+        }
 
         // Both start at 06:50 with the same trips: the player's with the edits.
         const speed = sim?.speed ?? 1;
@@ -1202,6 +1212,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
         compared.stats = 0;
         compared.travel = -Infinity;
         compared.diff = -Infinity;
+        compared.transit = false;
+        let carTimes: TravelTimeSummary | undefined;
         debug.compared = compared;
         timer = setInterval(() => {
           const edited = sim;
@@ -1215,21 +1227,49 @@ export async function startApp(container: HTMLElement): Promise<void> {
           const minute = commonMinute(todaySim.minutes, edited.minutes);
           if (minute !== undefined) {
             compared.stats = minute * 60;
-            buildPanel?.setComparison(
-              minute * 60,
-              compareStats(todaySim.minutes.get(minute)!, edited.minutes.get(minute)!),
-            );
+            const rows = compareStats(todaySim.minutes.get(minute)!, edited.minutes.get(minute)!);
+            // Public transport's riders today and with the edits (M9e).
+            if (ridersNow?.ready && !ridersNow.busy) rows.push(...ridersRows(ridersNow));
+            buildPanel?.setComparison(minute * 60, rows);
           }
           if (busy) return;
+          // By car every five simulated minutes; by public transport then too, and as soon
+          // as the player's simulation has worked its riders out (M9e).
+          const n = PLACES.length;
+          const transitSummary = (pt: Float32Array) =>
+            pt.length === 2 * n * n
+              ? summariseTravelTimes(
+                  allPairs,
+                  pairTimes(allPairs, n, pt.subarray(0, n * n)),
+                  pairTimes(allPairs, n, pt.subarray(n * n)),
+                )
+              : undefined;
           if (time - compared.travel >= 300) {
             busy = true;
-            Promise.all([todaySim.routeTimes(todayPairs), edited.routeTimes(editedPairs)])
-              .then(([a, b]) => {
+            Promise.all([
+              todaySim.routeTimes(todayPairs),
+              edited.routeTimes(editedPairs),
+              edited.ptJourneys(placePoints),
+            ])
+              .then(([a, b, pt]) => {
                 compared.travel = Math.min(a.time, b.time);
-                buildPanel?.setTravelTimes(
-                  compared.travel,
-                  summariseTravelTimes(pairs, a.times, b.times),
-                );
+                carTimes = summariseTravelTimes(pairs, a.times, b.times);
+                const transit = transitSummary(pt);
+                compared.transit = transit !== undefined;
+                buildPanel?.setTravelTimes(compared.travel, carTimes, transit);
+              })
+              .finally(() => {
+                busy = false;
+              });
+          } else if (!compared.transit && carTimes && edited.ready) {
+            busy = true;
+            const car = carTimes;
+            edited
+              .ptJourneys(placePoints)
+              .then((pt) => {
+                const transit = transitSummary(pt);
+                compared.transit = transit !== undefined;
+                if (transit) buildPanel?.setTravelTimes(compared.travel, car, transit);
               })
               .finally(() => {
                 busy = false;

@@ -2592,6 +2592,47 @@ fn riders_take_the_bus_and_more_buses_take_cars_off_the_road() {
 }
 
 #[test]
+fn journey_times_between_places_walk_wait_and_ride() {
+    use crate::riders::{WALK_DETOUR, WALK_SPEED};
+    let (mut engine, _, _) = two_zones();
+    engine.set_time(0.0);
+    engine.start_riders(None);
+    let places = [(6.0, 1.6), (3006.0, 1.6), (90_000.0, 0.0)];
+    assert!(engine.riders.as_ref().unwrap().journeys(&places).is_none());
+    for _ in 0..10 {
+        engine.step();
+    }
+    // East: walk 300 m to the stop, wait half of 10 min, ride 5 min, walk 300 m; no way
+    // west, nor to a place far from any stop.
+    let walk = 298.8 * WALK_DETOUR / WALK_SPEED;
+    let (today, now) = engine.riders.as_ref().unwrap().journeys(&places).unwrap();
+    assert!(
+        (today[1] - (2.0 * walk + 300.0 + 300.0)).abs() < 2.0,
+        "{}",
+        today[1]
+    );
+    assert!(today[3].is_infinite() && today[2].is_infinite());
+    assert_eq!(today[0], 0.0);
+    assert_eq!(now, today);
+    // Twice as often: 23 buses in the peak's two hours (one between each two of the 12),
+    // so a wait of half of 7,200 s / 23.
+    engine.set_edits(&[Edit::Frequency {
+        route: 0,
+        factor: 2.0,
+    }]);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let (today2, now) = engine.riders.as_ref().unwrap().journeys(&places).unwrap();
+    assert_eq!(today2, today);
+    assert!(
+        (now[1] - (today[1] - 300.0 + 3600.0 / 23.0)).abs() < 2.0,
+        "{}",
+        now[1]
+    );
+}
+
+#[test]
 fn car_trips_moved_to_public_transport_are_drawn_only_where_it_changed() {
     use crate::demand::Shift;
     use std::sync::Arc;

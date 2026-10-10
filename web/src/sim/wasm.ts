@@ -47,6 +47,7 @@ export interface EngineExports {
   zg_line_plan_ptr(): number;
   zg_riders(): number;
   zg_riders_ptr(): number;
+  zg_pt_journeys(points: number, count: number): number;
   zg_edge_speed_ptr(): number;
   zg_edge_count(): number;
 }
@@ -335,6 +336,24 @@ export class TrafficEngine {
   riders(): Float32Array {
     const ex = this.exports;
     const len = ex.zg_riders();
+    return len > 0
+      ? new Float32Array(this.memory, ex.zg_riders_ptr(), len).slice()
+      : new Float32Array(0);
+  }
+
+  /** Journey times by public transport between every two of `points` (x, z pairs), today
+   * then with the edits (s; -1: none), empty until today's riders are worked out (M9e). */
+  ptJourneys(points: Float32Array): Float32Array {
+    const ex = this.exports;
+    const bytes = points.byteLength;
+    const ptr = bytes > 0 ? ex.zg_alloc(bytes) : 0;
+    if (bytes > 0) {
+      new Uint8Array(this.memory, ptr, bytes).set(
+        new Uint8Array(points.buffer, points.byteOffset, bytes),
+      );
+    }
+    const len = ex.zg_pt_journeys(ptr, points.length / 2);
+    if (bytes > 0) ex.zg_free(ptr, bytes);
     return len > 0
       ? new Float32Array(this.memory, ex.zg_riders_ptr(), len).slice()
       : new Float32Array(0);

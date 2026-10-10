@@ -3,6 +3,7 @@
  * the same start with the same trips, compared as they run.
  */
 import { STAT } from '../sim/wasm';
+import type { Riders } from '../world/transitLines';
 
 /** Places travel times are compared between (scene x, z): the City's districts at the
  * mean position of their residents (census 2021, as the simulation places them), and the
@@ -95,6 +96,38 @@ export function compareStats(today: Float64Array, edited: Float64Array): Compare
       digits: 1,
     },
   ];
+}
+
+/** Rows for public transport (M9e): trips a weekday by public transport and by car, as the
+ * engine estimates them today and with the edits. */
+export function ridersRows(r: Riders): CompareRow[] {
+  return [
+    {
+      label: 'Trips by public transport a weekday (estimated)',
+      today: r.today,
+      edited: r.now,
+      unit: '',
+      moreIsBetter: true,
+      digits: 0,
+    },
+    {
+      label: 'Trips by car a weekday (estimated)',
+      today: r.carToday,
+      edited: r.carToday - r.moved,
+      unit: '',
+      moreIsBetter: false,
+      digits: 0,
+    },
+  ];
+}
+
+/** Times of `pairs` of places from a matrix of every two of `n` places. */
+export function pairTimes(
+  pairs: readonly [number, number][],
+  n: number,
+  matrix: ArrayLike<number>,
+): number[] {
+  return pairs.map(([i, j]) => matrix[i * n + j]);
 }
 
 /** The latest simulated minute both simulations have statistics for. */

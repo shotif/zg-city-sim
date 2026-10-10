@@ -322,26 +322,35 @@ export class BuildPanel {
     }
   }
 
-  /** Travel times between places, today and with the edits. */
-  setTravelTimes(time: number, summary: TravelTimeSummary): void {
-    const lines: string[] = [
-      `Travel times by car between the City's districts and four nearby towns, at ${formatClock(time)}: ` +
-        `${percent(summary.mean) || 'no change'} on average over ${summary.pairs} trips.`,
-    ];
-    for (const [title, list] of [
-      ['Slower', summary.slower],
-      ['Faster', summary.faster],
-    ] as const) {
-      for (const c of list) {
-        lines.push(
-          `${title}: ${c.from} → ${c.to}, ${minutes(c.today)} → ${minutes(c.edited)} min ` +
-            `(${percent(change(c.today, c.edited))})`,
-        );
+  /** Travel times between places, today and with the edits: by car at `time`, and by
+   * public transport (walk, wait and ride, as the morning peak runs) where known. */
+  setTravelTimes(time: number, summary: TravelTimeSummary, transit?: TravelTimeSummary): void {
+    const lines: string[] = [];
+    const heads = new Set<number>();
+    const add = (head: string, s: TravelTimeSummary) => {
+      heads.add(lines.length);
+      lines.push(`${head}: ${percent(s.mean) || 'no change'} on average over ${s.pairs} trips.`);
+      for (const [title, list] of [
+        ['Slower', s.slower],
+        ['Faster', s.faster],
+      ] as const) {
+        for (const c of list) {
+          lines.push(
+            `${title}: ${c.from} → ${c.to}, ${minutes(c.today)} → ${minutes(c.edited)} min ` +
+              `(${percent(change(c.today, c.edited))})`,
+          );
+        }
       }
-    }
+    };
+    add(
+      `Travel times by car between the City's districts and four nearby towns, at ${formatClock(time)}`,
+      summary,
+    );
+    if (transit?.pairs)
+      add('By public transport, walking, waiting and riding in the morning peak', transit);
     this.travel.replaceChildren(
       ...lines.map((text, i) => {
-        const p = el('p', i === 0 ? 'build-travel-summary' : 'build-travel-pair');
+        const p = el('p', heads.has(i) ? 'build-travel-summary' : 'build-travel-pair');
         p.textContent = text;
         return p;
       }),

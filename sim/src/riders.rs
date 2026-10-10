@@ -153,6 +153,9 @@ pub struct Graph {
     first: Vec<u32>,
     head: Vec<u32>,
     cost: Vec<f32>,
+    /// Each arc's time as it passes (s): walking and waiting not weighted, no boarding
+    /// penalty (M9e: journey times to show).
+    plain: Vec<f32>,
     /// The pattern an arc boards (`NONE` for other arcs).
     board: Vec<u32>,
     /// Each pattern's route (the timetable's, or a new line's).
@@ -201,7 +204,7 @@ impl Graph {
             }
         }
         let stops = stop_pos.len();
-        let mut arcs: Vec<Vec<(u32, f32, u32)>> = vec![Vec::new(); stops];
+        let mut arcs: Vec<Vec<(u32, f32, u32, f32)>> = vec![Vec::new(); stops];
         let mut pattern_route = Vec::new();
         let mut keys: Vec<_> = patterns.into_iter().filter(|(_, v)| v.0 > 0).collect();
         keys.sort_by(|a, b| a.0.cmp(&b.0));
@@ -209,7 +212,8 @@ impl Graph {
             let p = pattern_route.len() as u32;
             pattern_route.push(route);
             let headway = (PEAK.1 - PEAK.0) / count as f32;
-            let wait = WAIT_WEIGHT * (headway / 2.0).min(WAIT_CAP) + BOARDING;
+            let waiting = (headway / 2.0).min(WAIT_CAP);
+            let wait = WAIT_WEIGHT * waiting + BOARDING;
             // The rep trip's times at its stops (stops repeated on one spot count once).
             let range = data.stops(rep);
             let mut times = Vec::with_capacity(ids.len());
@@ -232,12 +236,12 @@ impl Graph {
                 let node = base + k as u32;
                 arcs.push(Vec::new());
                 if k + 1 < ids.len() {
-                    arcs[s as usize].push((node, wait, p));
+                    arcs[s as usize].push((node, wait, p, waiting));
                     let ride = (times[k + 1] - times[k]).max(30.0);
-                    arcs[node as usize].push((node + 1, ride, NONE));
+                    arcs[node as usize].push((node + 1, ride, NONE, ride));
                 }
                 if k > 0 {
-                    arcs[node as usize].push((s, 0.0, NONE));
+                    arcs[node as usize].push((s, 0.0, NONE, 0.0));
                 }
             }
         }
@@ -269,18 +273,20 @@ impl Graph {
         for s in 0..stops {
             for (t, d) in near(stop_pos[s], TRANSFER, &stop_cells) {
                 if t as usize != s {
-                    arcs[s].push((t, walk(d), NONE));
+                    arcs[s].push((t, walk(d), NONE, walk(d) / WALK_WEIGHT));
                 }
             }
         }
         let mut first = Vec::with_capacity(arcs.len() + 1);
-        let (mut head, mut cost, mut board) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut head, mut cost, mut board, mut plain) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         first.push(0);
         for list in &arcs {
-            for &(h, c, b) in list {
+            for &(h, c, b, t) in list {
                 head.push(h);
                 cost.push(c);
                 board.push(b);
+                plain.push(t);
             }
             first.push(head.len() as u32);
         }
@@ -291,9 +297,63 @@ impl Graph {
             first,
             head,
             cost,
+            plain,
             board,
             pattern_route,
         }
+    }
+
+    /// Journey times (s, as they pass: walking, waiting, riding) between every two of
+    /// `points`, by the way with the least generalised time; infinite where there is none,
+    /// 0 from a place to itself.
+    pub fn journeys(&self, points: &[(f32, f32)]) -> Vec<f32> {
+        let n = points.len();
+        let access: Vec<Vec<(u32, f32)>> = points.iter().map(|&p| self.access(p)).collect();
+        let nodes = self.nodes();
+        let (mut dist, mut time) = (vec![f32::INFINITY; nodes], vec![0f32; nodes]);
+        let mut out = vec![f32::INFINITY; n * n];
+        for (o, from) in access.iter().enumerate() {
+            dist.fill(f32::INFINITY);
+            let mut heap = BinaryHeap::new();
+            for &(s, c) in from {
+                if c < dist[s as usize] {
+                    dist[s as usize] = c;
+                    time[s as usize] = c / WALK_WEIGHT;
+                    heap.push(Reverse((c.to_bits(), s)));
+                }
+            }
+            while let Some(Reverse((bits, v))) = heap.pop() {
+                let d = f32::from_bits(bits);
+                if d > dist[v as usize] {
+                    continue;
+                }
+                for a in self.first[v as usize] as usize..self.first[v as usize + 1] as usize {
+                    let h = self.head[a] as usize;
+                    let nd = d + self.cost[a];
+                    if nd < dist[h] {
+                        dist[h] = nd;
+                        time[h] = time[v as usize] + self.plain[a];
+                        heap.push(Reverse((nd.to_bits(), h as u32)));
+                    }
+                }
+            }
+            for (d, to) in access.iter().enumerate() {
+                if d == o {
+                    out[o * n + d] = 0.0;
+                    continue;
+                }
+                let best = to
+                    .iter()
+                    .map(|&(s, c)| (dist[s as usize] + c, time[s as usize] + c / WALK_WEIGHT))
+                    .min_by(|a, b| a.0.total_cmp(&b.0));
+                if let Some((g, t)) = best
+                    && g.is_finite()
+                {
+                    out[o * n + d] = t;
+                }
+            }
+        }
+        out
     }
 
     pub fn nodes(&self) -> usize {
@@ -482,6 +542,8 @@ pub struct Summary {
     pub trips_today: f64,
     pub trips_now: f64,
     pub car_moved: f64,
+    /// Car trips a weekday within the map at full demand today (M9e).
+    pub car_today: f64,
     pub boardings_today: Vec<f64>,
     pub boardings_now: Vec<f64>,
 }
@@ -503,6 +565,10 @@ pub struct Riders {
     pub factor: Option<Arc<Vec<f32>>>,
     /// Bumped whenever `factor` changes.
     pub version: u32,
+    /// The networks journeys were last worked out on, today's and with the edits (none: as
+    /// today), for journey times between places (M9e).
+    graph_today: Option<Graph>,
+    graph_now: Option<Graph>,
 }
 
 impl Riders {
@@ -534,7 +600,22 @@ impl Riders {
             summary: Summary::default(),
             factor: None,
             version: 0,
+            graph_today: None,
+            graph_now: None,
         }
+    }
+
+    /// Journey times by public transport (s, walking, waiting and riding) between every two
+    /// of `points`, today and with the edits in force (as last worked out); none until
+    /// today's are.
+    pub fn journeys(&self, points: &[(f32, f32)]) -> Option<(Vec<f32>, Vec<f32>)> {
+        let today = self.graph_today.as_ref()?;
+        let times = today.journeys(points);
+        let now = match &self.graph_now {
+            Some(g) => g.journeys(points),
+            None => times.clone(),
+        };
+        Some((times, now))
     }
 
     /// Public transport runs as `graph` now (none: as today): work its journeys out again.
@@ -551,6 +632,7 @@ impl Riders {
             }
             None => {
                 self.job = None;
+                self.graph_now = None;
                 self.clear_now();
             }
         }
@@ -584,8 +666,10 @@ impl Riders {
         if is_today {
             self.summary.trips_today = skim.trips;
             self.summary.boardings_today = boardings;
+            self.summary.car_today = self.od.iter().map(|&t| t as f64).sum();
             self.summary.ready = true;
             self.today = Some(skim.time);
+            self.graph_today = Some(skim.graph);
             self.clear_now();
             if let Some(waiting) = self.waiting.take() {
                 self.set_network(waiting, self.routes);
@@ -612,6 +696,7 @@ impl Riders {
         self.summary.trips_now = skim.trips;
         self.summary.boardings_now = boardings;
         self.summary.car_moved = moved;
+        self.graph_now = Some(skim.graph);
         self.factor = Some(Arc::new(factor));
         self.version += 1;
         true

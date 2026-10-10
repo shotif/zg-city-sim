@@ -97,6 +97,7 @@ export class SimClient {
       case 'transit':
       case 'linePlan':
       case 'riders':
+      case 'journeys':
       case 'reach': {
         const resolve = this.waiting.get(message.id);
         this.waiting.delete(message.id);
@@ -240,6 +241,16 @@ export class SimClient {
       type: 'riders',
       id: ++this.requestId,
     }).then((m) => m.riders);
+  }
+
+  /** Journey times by public transport between every two of `points` (x, z pairs), today
+   * then with the edits (M9e; see `TrafficEngine.ptJourneys`). */
+  ptJourneys(points: Float32Array): Promise<Float32Array> {
+    return this.ask<Extract<FromWorker, { type: 'journeys' }>>({
+      type: 'journeys',
+      id: ++this.requestId,
+      points,
+    }).then((m) => m.times);
   }
 
   /** A new line's way through its stops (M9c; see `TrafficEngine.planLine`). */

@@ -486,8 +486,13 @@ test("compares edited roads with today's", async ({ page }, testInfo) => {
     null,
     { timeout: 150_000 },
   );
-  await expect(page.locator('.build-table tbody tr')).toHaveCount(6, { timeout: 120_000 });
-  await expect(page.locator('.build-travel-summary')).toContainText('on average over', {
+  // Six measures of the roads, and public transport's riders (M9e).
+  await expect(page.locator('.build-table tbody tr')).toHaveCount(8, { timeout: 120_000 });
+  await expect(page.locator('.build-table tbody')).toContainText('Trips by public transport');
+  await expect(page.locator('.build-travel-summary').first()).toContainText('on average over', {
+    timeout: 120_000,
+  });
+  await expect(page.locator('.build-travel-summary').last()).toContainText('By public transport', {
     timeout: 120_000,
   });
   await page.getByLabel('Difference map').check();
