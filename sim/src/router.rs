@@ -25,6 +25,48 @@ pub const LANDMARKS: usize = 12;
 /// Unreachable in landmark tables.
 const FAR: u16 = u16::MAX;
 
+/// What a route search is for (`Router::purpose`), for the search log.
+pub mod purpose {
+    /// A trip starting.
+    pub const DEPART: u8 = 0;
+    /// A vehicle at the end of a lane with no way on along its route (missed a lane change).
+    pub const LANE: u8 = 1;
+    /// Re-planning after an edit or closure.
+    pub const REPLAN: u8 = 2;
+    /// A driver on the way weighing a faster way around a jam (`reroute_en_route`).
+    pub const EN_ROUTE: u8 = 3;
+    /// A bus's, tram's or train's way between stops, on free-flow times.
+    pub const TRANSIT: u8 = 4;
+    /// Travel times for the app (between districts, before and after).
+    pub const INFO: u8 = 5;
+    pub const NAMES: [&str; 6] = ["depart", "lane", "replan", "en route", "transit", "info"];
+}
+
+/// A route search as logged (`Router::log`), to replay it with other routers.
+#[derive(Clone, Copy, Debug)]
+pub struct Query {
+    pub from: u32,
+    pub to: u32,
+    pub vclass: u16,
+    pub tolls: bool,
+    pub purpose: u8,
+    pub found: bool,
+    pub settled: u32,
+    /// The route's edges hashed (FNV-1a), 0 without a route.
+    pub hash: u64,
+}
+
+/// FNV-1a over a route's edges, for comparing routes found by different searches.
+pub fn route_hash(route: &[u32]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for &e in route {
+        for b in e.to_le_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    h
+}
+
 /// Travel times (whole seconds) between landmarks and every routable edge.
 pub struct Landmarks {
     /// Compact index of each edge in the tables (NONE for junction-internal edges).
@@ -310,6 +352,10 @@ pub struct Router {
     pub failed: u64,
     pub settled_found: u64,
     pub settled_failed: u64,
+    /// What the next searches are for (`purpose`), set by the caller for the log.
+    pub purpose: u8,
+    /// Every search, when set (the `run` example's `ROUTE_LOG`).
+    pub log: Option<Vec<Query>>,
 }
 
 impl Router {
@@ -327,6 +373,8 @@ impl Router {
             failed: 0,
             settled_found: 0,
             settled_failed: 0,
+            purpose: purpose::DEPART,
+            log: None,
         }
     }
 
@@ -359,6 +407,18 @@ impl Router {
         #[cfg(feature = "profile")]
         {
             self.seconds += start.elapsed().as_secs_f64();
+        }
+        if let Some(log) = self.log.as_mut() {
+            log.push(Query {
+                from,
+                to,
+                vclass,
+                tolls: self.tolls,
+                purpose: self.purpose,
+                found: route.is_some(),
+                settled: self.last_settled as u32,
+                hash: route.as_deref().map_or(0, route_hash),
+            });
         }
         route
     }

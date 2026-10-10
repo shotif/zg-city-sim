@@ -447,6 +447,24 @@ Known gaps:
 
 **Status (M10, done 2026-10-10).** Trams and buses now move through junctions and stops as they do: a queue of trams keeps its green, a stop takes two, a tram or bus at its stop does not hold the lights, and buses keep right and serve every stop. Over a whole day trams run 9-10 min late on average (16.5 min before) and the junctions queue 6 % less, with the counts as they were. Signal priority for trams and buses is a tool at a junction and along a line: at all 436 signals they cross, trams are 40 s late on average in the morning peak instead of 5-6 min, for 12 % more queuing for cars. Riders share parallel lines by how often they run, and their car times come from the roads at their peak speeds, so road edits move trips between the car and public transport too. Boardings, about 565,800 a weekday, are 94 % of ZET's 2024 figure and 66 % of the survey's. Running every line twice as often is more than the tracks carry: queuing at junctions rises 15 % and trams run 44 min late over a day (in the morning peak, 7 min with priority everywhere instead of 15). Open: trams going with the parallel traffic where the guessed programs give them phases of their own; bus bays; trips by public transport without a car alternative; a faster timetable for lines with priority.
 
+**Plan (M11 Faster routing, chosen 2026-10-10).** Route searches are 44 % of the engine's time in the morning peak (461 of 1,042 s from 06:00 to 08:30, natively). Each is an A* search with landmark bounds, weighted by 1.2, over arrays for all 474,287 edges, 352,232 of which lie inside junctions. M11 replaces them with customizable contraction hierarchies (CCH), which find exact fastest routes in tens of microseconds on travel times that change every minute. Each step is pushed to `main` when it holds:
+
+- **M11a, measure** (done 2026-10-10). Log every route search of a morning peak with the travel times it ran on (`ROUTE_LOG`), replay them (`routes --replay`), and measure a hierarchy against them offline.
+  - As measured: 186,684 searches from 07:00 to 08:30, by purpose:
+    - 101,954 drivers weighing a way round jams (49 % of the edges settled);
+    - 53,076 trips starting (40 %);
+    - 31,577 vehicles that missed a lane change (11 %);
+    - 77 transit legs.
+  - By class: cars that weigh tolls make 81 % of the searches, cars that do not 10 %, trucks 7 % and bikes 1.6 %. Replayed, every search finds the route it found in the run, in 1.24 ms on average.
+  - The hierarchy (`sim/src/cch.rs`) covers the 117,008 edges that cars, trucks, buses or bikes may use.
+    - Its order comes from nested dissection with inertial flow (separators of 48, 23 and 8 edges at the top). With shortcuts it has 849,056 arcs, and its elimination tree is 232 ranks high. It builds in 3.7 s natively.
+    - It takes about 45 ms to customise for one class's travel times, and a search takes 57 µs, 22 times faster than today's.
+    - Of the first 60,000 logged searches, 94.6 % find the same route as in the run and 5.3 % a faster one, where the weighted bound let A* stop short: 0.8 % faster on average, by 4 s at the median and 24 s at the 90th percentile. None finds a slower one.
+    - A test checks it against exact A* on a grid with tolls, bike-only roads and turns.
+- **M11b, the engine routes on the hierarchy.** Cars and trucks (with and without tolls) and bikes route on it. It is customised whenever the measured times change (once a simulated minute), and after closures and edits. A* stays for transit legs and while a hierarchy is being built. Checked with day runs on two seeds against today's (counts, gridlock and queuing), and by how long a day run takes.
+- **M11c, in the browser.** The hierarchy is built without stalling the page and customised between steps. It is built again for drawn roads (new edges ranked on top), projects and edits. The engine's speed in the morning peak is measured with the WebAssembly in Node.
+- **M11d, searches to many places.** The riders' car journeys (a search from each zone to every other, M10d) and land value's accessibility run on the hierarchy (PHAST: one search up, one sweep down), so riders are ready sooner after load.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.
@@ -567,6 +585,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M8 Pedestrians, cyclists and trains** | HŽ trains on their timetable and the level crossings they close, pedestrians at crossings and signals, cyclists on cycle lanes and roads (done 2026-10-10) |
 | **M9 Public transport tools** | ZET's and HŽ's lines on the map with their stops and departures, frequencies, new bus and tram lines, riders and the car trips they move, before and after (done 2026-10-10) |
 | **M10 Public transport, deeper** | Trams and buses through junctions and stops as they go, signal priority, riders shared between parallel lines, car times for the split from the simulated roads, boardings compared with ZET's (done 2026-10-10) |
+| **M11 Faster routing** | Route searches on customizable contraction hierarchies: exact fastest routes for cars, trucks and bikes in tens of microseconds, in the engine and the browser |
 
 ## Risks and open questions
 

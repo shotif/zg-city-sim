@@ -458,6 +458,84 @@ pub fn demand_scale(demand_dir: &str) -> f32 {
         .unwrap_or(1.0)
 }
 
+/// Route searches logged for replay (`ROUTE_LOG`): `queries.bin`, one record per search
+/// (`QUERY_BYTES`: from, to, vclass, tolls, purpose, found, settled, the route's hash and
+/// the travel times it ran on), and `times-<k>.bin`, the travel times (f32 per edge) each
+/// time they changed; `free.bin` and `bike.bin` for transit legs and bikes.
+pub struct RouteLog {
+    dir: std::path::PathBuf,
+    /// Steps to run before logging.
+    after: u32,
+    steps: u32,
+    queries: std::io::BufWriter<std::fs::File>,
+    /// The travel times last written, and their number.
+    times: Vec<f32>,
+    snapshot: u32,
+    pub count: u64,
+}
+
+pub const QUERY_BYTES: usize = 4 + 4 + 2 + 1 + 1 + 1 + 4 + 8 + 4;
+
+impl RouteLog {
+    fn new(dir: &str, after: u32) -> RouteLog {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).expect("route log directory");
+        let queries = std::fs::File::create(dir.join("queries.bin")).expect("queries.bin");
+        RouteLog {
+            dir,
+            after,
+            steps: 0,
+            queries: std::io::BufWriter::new(queries),
+            times: Vec::new(),
+            snapshot: 0,
+            count: 0,
+        }
+    }
+
+    fn write_times(path: &std::path::Path, times: &[f32]) {
+        let bytes: Vec<u8> = times.iter().flat_map(|t| t.to_le_bytes()).collect();
+        std::fs::write(path, bytes).expect("times");
+    }
+
+    fn before_step(&mut self, engine: &mut Engine) {
+        if self.steps == self.after && engine.route_log().is_none() {
+            let (free, bike) = engine.free_and_bike_times();
+            Self::write_times(&self.dir.join("free.bin"), free);
+            Self::write_times(&self.dir.join("bike.bin"), bike);
+            self.times = engine.travel_time.clone();
+            Self::write_times(&self.dir.join("times-0.bin"), &self.times);
+            *engine.route_log() = Some(Vec::new());
+        }
+    }
+
+    fn after_step(&mut self, engine: &mut Engine) {
+        use std::io::Write;
+        self.steps += 1;
+        let Some(log) = engine.route_log().as_mut() else {
+            return;
+        };
+        for q in log.drain(..) {
+            let mut r = Vec::with_capacity(QUERY_BYTES);
+            r.extend(q.from.to_le_bytes());
+            r.extend(q.to.to_le_bytes());
+            r.extend(q.vclass.to_le_bytes());
+            r.extend([q.tolls as u8, q.purpose, q.found as u8]);
+            r.extend(q.settled.to_le_bytes());
+            r.extend(q.hash.to_le_bytes());
+            r.extend(self.snapshot.to_le_bytes());
+            self.queries.write_all(&r).expect("queries.bin");
+            self.count += 1;
+        }
+        // The searches of the next step run on the travel times as this one left them.
+        if engine.travel_time != self.times {
+            self.snapshot += 1;
+            self.times.clone_from(&engine.travel_time);
+            let path = self.dir.join(format!("times-{}.bin", self.snapshot));
+            Self::write_times(&path, &self.times);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = args
@@ -545,6 +623,15 @@ fn main() {
     for &j in &watch {
         print!("junction {j}:\n{}", engine.describe_program(j));
     }
+    // ROUTE_LOG=dir: every route search from ROUTE_LOG_AFTER minutes into the run on, with
+    // the travel times it ran on, for the `routes` example to replay.
+    let mut route_log = std::env::var("ROUTE_LOG").ok().map(|dir| {
+        let after: u32 = std::env::var("ROUTE_LOG_AFTER")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        RouteLog::new(&dir, after * (60.0 / DT) as u32)
+    });
     // TRAM_HOLDUPS=1: where trams stand still off their stops, and why, printed at the end.
     let tram_holdups = std::env::var("TRAM_HOLDUPS").is_ok();
     let mut held: HashMap<(u32, Holdup), f32> = HashMap::new();
@@ -553,7 +640,13 @@ fn main() {
     for m in 1..=minutes {
         let t = Instant::now();
         for k in 0..steps_per_minute {
+            if let Some(log) = route_log.as_mut() {
+                log.before_step(&mut engine);
+            }
             engine.step();
+            if let Some(log) = route_log.as_mut() {
+                log.after_step(&mut engine);
+            }
             if tram_holdups && k % 10 == 0 {
                 for v in engine.live_vehicles() {
                     let veh = &engine.vehs[v as usize];

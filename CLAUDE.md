@@ -35,6 +35,7 @@ Read these before changing anything:
 | `sim/src/engine.rs` | Vehicles, IDM/MOBIL, junction right of way, signals (`merge_signal_phases`, `retime_signals`, actuated control), routing calls, re-routing on the way (`reroute_en_route`), closures, statistics. |
 | `sim/src/network.rs` | The network built from the packed arrays: routing successors, toll time, where turns wait inside junctions (`waits_for`). |
 | `sim/src/router.rs` | ALT A* with weighted heuristic; `reach`, the time-limited search behind land value's accessibility (`Engine::reach`). |
+| `sim/src/cch.rs` | Customizable contraction hierarchies (M11): the order by nested dissection (inertial flow), contraction, customisation for a class's travel times (`Metric`), and queries up the elimination tree (`Query`). Measured offline so far (M11a). |
 | `sim/src/demand.rs` | Trip generation: `HOURLY` profile, gravity model, gateways. |
 | `sim/src/weather.rs` | The weather's factors on desired speed, headway and acceleration (M6b). |
 | `sim/src/transit.rs` | Trams, buses and trains on timetable; lines run more or less often by frequency edits (M9b: trips cancelled, or copies of them appended to the timetable); new lines' trips (M9c). |
@@ -44,7 +45,7 @@ Read these before changing anything:
 | `pipeline/data/bike_counts_2014.json` | The City's 2014 bike counts at 7 places, for the validation report (M8d). |
 | `sim/src/patch.rs` | Swapping in a network with roads drawn while traffic runs (`Engine::replace_network`, `LanePiece`). |
 | `sim/src/tests.rs` | Engine tests on hand-built networks. |
-| `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck; `--features profile` times each phase and the route searches), `day.rs` (a whole weekday, for validation, with the delay queued at each junction by cause), `compare.rs` (one network through the morning peak, for a project's before and after), `routes.rs` (times route searches, and how much longer routes get with other heuristic weights) and `riders.rs` (public transport's riders today, and the constant calibrated to the Transport Master Plan's split). |
+| `sim/examples/` | `run.rs` (a few hours, prints where vehicles get stuck; `--features profile` times each phase and the route searches), `day.rs` (a whole weekday, for validation, with the delay queued at each junction by cause), `compare.rs` (one network through the morning peak, for a project's before and after), `routes.rs` (times route searches and how much longer routes get with other heuristic weights; `--replay` replays the searches a run logged, `--cch` measures the contraction hierarchy) and `riders.rs` (public transport's riders today, and the constant calibrated to the Transport Master Plan's split). |
 | `web/` | TypeScript, Vite, three.js app. `src/sim/` holds the worker, protocol and wasm wrapper; `src/world/` the layers (terrain in tiles coarser with distance, roads, buildings, vehicles and their models, traffic map, closures, news, edits, the sun, daylight and night lights, the weather); `src/edit/` the edit model, road index, comparisons, projects, the junction builder (`builder.ts`: roads drawn, with tram tracks if asked, roundabouts and signal programs, built into the network the engine runs), the junctions' movements for the signal editor (`signals.ts`) and new public transport lines' stops (`lines.ts`); `src/grow/` the game layer (M5: lots, zones and brush strokes, the Zones tool, buildings that grow and the homes and jobs they add to the traffic's demand, land value and demand per zone, the budget); `src/ui/` the HUD, panels (stations and level crossings on the traffic map: `railMarkers.ts`; the Public transport panel: `transitPanel.ts`, over the timetable in `src/world/transitLines.ts`), sound and the `?perf` overlay; `src/camera/` the views. |
 | `.github/workflows/` | `deploy.yml` (build, test, deploy main) and `live-data.yml` (copies the City's closures feed and DHMZ's weather in Zagreb to the `live-data` branch every 15 minutes). |
 
@@ -69,6 +70,9 @@ cd sim && cargo run --release --example run -- ../web/public/data/network 6 270 
 cargo run --release --example day -- ../web/public/data /tmp/day                 # a whole weekday, about 1 h
 cd .. && python -m pipeline.validate /tmp/day                                     # rewrites docs/VALIDATION.md
 python -m pipeline.peak /tmp/day /tmp/day2                                        # the roads' peak speeds for car journeys (M10d)
+# Route searches: log a morning peak's, then replay them with today's router or the hierarchy (M11)
+cd sim && ROUTE_LOG=/tmp/routes ROUTE_LOG_AFTER=60 cargo run --release --example run -- ../web/public/data/network 6 150
+cargo run --release --example routes -- ../web/public/data/network --replay /tmp/routes 60000 --cch
 # A project's before and after (06:00-10:00): today's network with two seeds, then the project's
 cd sim && cargo run --release --example compare -- ../web/public/data /tmp/today.json 6 4 1   # and seed 2
 cargo run --release --example compare -- ../web/public/data/projects/<id> /tmp/p.json       # gunzip its .bin.gz first
@@ -89,6 +93,7 @@ Environment variables for the native runs:
 - `FREQUENCY_MODES=tram` (or `bus`), with `FREQUENCY`, changes only that mode's lines; `FREQUENCY_ROUTES=5` only those routes (the timetable's indices: tram 6 is 5).
 - `PRIORITY=all` (the `run` and `day` examples) gives trams and buses signal priority at every signal they cross (M10b); `PRIORITY=5` along those routes.
 - `TRAM_HOLDUPS=1` (the `run` example) prints at the end where trams stood still off their stops and why, and how late buses and trams ran; `WATCH_LANES=462508` prints the vehicles on those lanes every 5 simulated minutes.
+- `ROUTE_LOG=dir` (the `run` example) logs every route search, with what it was for and the travel times it ran on, from `ROUTE_LOG_AFTER` minutes into the run (default 0), for `routes --replay dir [n] [--cch]`.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
 ## Things that bite

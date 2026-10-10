@@ -22,7 +22,7 @@ use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::pedestrians::{self, MIN_WALK, OWN_SIGNAL_GAP, OWN_SIGNAL_YELLOW, Pedestrians};
 use crate::riders::{CAR_ORIGINS_PER_STEP, Graph, NO_ZONE, Riders};
 use crate::rng::Rng;
-use crate::router::{LandmarkBuild, Landmarks, Router};
+use crate::router::{LandmarkBuild, Landmarks, Query, Router, purpose};
 use crate::transit::{
     FREQUENCY_RANGE, LINE_DWELL, LINE_HEADWAY, LINE_PACE, LINE_TRIPS, LinePlan, PendingRun,
     Transit, TransitRun,
@@ -1096,6 +1096,17 @@ impl Engine {
     /// Time spent searching routes (s); counted only with the `profile` feature.
     pub fn route_seconds(&self) -> f64 {
         self.router.seconds
+    }
+
+    /// The free-flow times (s per edge) transit legs are routed on, and the times bikes
+    /// choose routes by (empty: by distance), for replaying logged searches.
+    pub fn free_and_bike_times(&self) -> (&[f32], &[f32]) {
+        (&self.free_time, &self.bike_time)
+    }
+
+    /// The route search log (`Router::log`): set it to log every search from then on.
+    pub fn route_log(&mut self) -> &mut Option<Vec<Query>> {
+        &mut self.router.log
     }
 
     /// Route searches: all, those that failed, and edges settled by found and failed ones.
@@ -2950,6 +2961,7 @@ impl Engine {
             return leg.clone();
         }
         self.router.tolls = true;
+        self.router.purpose = purpose::TRANSIT;
         let leg = self
             .router
             .route(&self.net, &self.free_time, e0, e1, vclass);
@@ -3765,6 +3777,7 @@ impl Engine {
             return;
         };
         router.tolls = veh.weighs_tolls;
+        router.purpose = purpose::LANE;
         let here = net.d.lane_edge[veh.lane as usize];
         for l in net.lane_links(veh.lane) {
             if net.link_allow[l as usize] & vclass == 0 {
@@ -3814,6 +3827,7 @@ impl Engine {
                 continue;
             }
             self.router.tolls = self.weighs_tolls(&trip);
+            self.router.purpose = purpose::DEPART;
             let times = if trip.vtype == vtype::BIKE && !self.bike_time.is_empty() {
                 &self.bike_time
             } else {
@@ -4856,6 +4870,7 @@ impl Engine {
             return None;
         }
         self.router.tolls = true;
+        self.router.purpose = purpose::INFO;
         let route = self
             .router
             .route(&self.net, &self.travel_time, from, to, vclass::PASSENGER)?;
@@ -4941,6 +4956,7 @@ impl Engine {
         let vclass = veh.params().vclass;
         let here = self.net.d.lane_edge[lane as usize];
         self.router.tolls = veh.weighs_tolls;
+        self.router.purpose = purpose::REPLAN;
         let times: &[f32] = if veh.vtype == vtype::BIKE && !self.bike_time.is_empty() {
             &self.bike_time
         } else {
@@ -5031,6 +5047,7 @@ impl Engine {
         let here = d.lane_edge[lane as usize];
         let dest = *veh.route.last().unwrap();
         self.router.tolls = veh.weighs_tolls;
+        self.router.purpose = purpose::EN_ROUTE;
         let found = self
             .router
             .route(&self.net, &self.travel_time, here, dest, vclass);

@@ -3924,3 +3924,134 @@ fn cyclists_take_a_road_with_a_cycle_track_over_a_busy_one() {
         "the car took the straight road"
     );
 }
+
+/// A grid of two-way roads 200 m apart at speeds from 8 to 25 m/s, every turn but the
+/// U-turn made at each junction; some roads tolled, some for bikes only.
+fn grid(n: u32) -> (Network, Vec<u32>) {
+    let mut b = Builder::default();
+    let mut junction = Vec::new();
+    for i in 0..n {
+        for k in 0..n {
+            junction.push(b.junction(i as f32 * 200.0, k as f32 * 200.0));
+        }
+    }
+    let at = |i: u32, k: u32| junction[(i * n + k) as usize];
+    let mut roads = Vec::new();
+    let mut h = 7u32;
+    let mut hash = || {
+        h = h.wrapping_mul(2_654_435_761).wrapping_add(12345);
+        h >> 8
+    };
+    for i in 0..n {
+        for k in 0..n {
+            for (di, dk) in [(1, 0), (0, 1)] {
+                if i + di >= n || k + dk >= n {
+                    continue;
+                }
+                let (a, c) = (at(i, k), at(i + di, k + dk));
+                for (from, to) in [(a, c), (c, a)] {
+                    let e = b.road(from, to, 1, 8.0 + (hash() % 17) as f32);
+                    match hash() % 10 {
+                        0 => b.d.edge_flags[e as usize] |= edge_flag::TOLL,
+                        1 => {
+                            let lane = b.lane(e, 0) as usize;
+                            b.d.lane_allow[lane] = crate::network::vclass::BICYCLE;
+                        }
+                        _ => {}
+                    }
+                    roads.push(e);
+                }
+            }
+        }
+    }
+    // Every turn from each road into the next, but not straight back.
+    let d = b.d.clone();
+    for &from in &roads {
+        for &to in &roads {
+            let j = d.edge_to[from as usize];
+            if d.edge_from[to as usize] != j || d.edge_to[to as usize] == d.edge_from[from as usize]
+            {
+                continue;
+            }
+            let (p, q) = (
+                b.junctions[d.edge_from[from as usize] as usize],
+                b.junctions[d.edge_to[to as usize] as usize],
+            );
+            let jp = b.junctions[j as usize];
+            let cross = (jp.0 - p.0) * (q.1 - jp.1) - (jp.1 - p.1) * (q.0 - jp.0);
+            let direction = if cross.abs() < 1.0 {
+                dir::STRAIGHT
+            } else if cross > 0.0 {
+                dir::LEFT
+            } else {
+                dir::RIGHT
+            };
+            let (fl, tl) = (b.lane(from, 0), b.lane(to, 0));
+            b.connect(fl, tl, j, direction, b'M');
+        }
+    }
+    (b.build(), roads)
+}
+
+#[test]
+fn the_hierarchy_finds_routes_as_fast_as_a_star() {
+    use crate::cch::{Cch, Metric, Query};
+    use crate::network::vclass::{BICYCLE, PASSENGER};
+    let (net, roads) = grid(7);
+    let cch = Cch::build(&net);
+    assert_eq!(cch.len(), roads.len());
+    let mut router = Router::new(net.edge_count());
+    router.weight = 1.0;
+    let mut query = Query::new(&cch);
+    // Free flow, then some roads jammed.
+    let free: Vec<f32> = (0..net.edge_count())
+        .map(|e| net.edge_length[e] / net.edge_speed[e])
+        .collect();
+    let mut jammed = free.clone();
+    for &e in roads.iter().step_by(3) {
+        jammed[e as usize] *= 4.0;
+    }
+    let cost = |route: &[u32], times: &[f32], vclass: u16, tolls: bool| -> f32 {
+        route
+            .windows(2)
+            .map(|p| {
+                let s = net
+                    .successors(p[0])
+                    .iter()
+                    .find(|s| s.edge == p[1] && s.allow & vclass != 0)
+                    .expect("a move the class may make");
+                times[p[1] as usize] + s.penalty + if tolls { s.toll } else { 0.0 }
+            })
+            .sum()
+    };
+    let mut compared = 0;
+    for times in [&free, &jammed] {
+        for (vclass, tolls) in [(PASSENGER, true), (PASSENGER, false), (BICYCLE, true)] {
+            let mut metric = Metric::new(vclass, tolls);
+            metric.customize(&cch, &net, times);
+            router.tolls = tolls;
+            for (i, &a) in roads.iter().enumerate() {
+                for &b in roads.iter().skip(i % 5).step_by(5) {
+                    let want = router.route(&net, times, a, b, vclass);
+                    let got = query.route(&cch, &metric, a, b);
+                    assert_eq!(want.is_some(), got.is_some(), "{a} -> {b}");
+                    let (Some(want), Some((got, said))) = (want, got) else {
+                        continue;
+                    };
+                    assert_eq!((got[0], *got.last().unwrap()), (a, b));
+                    let (w, g) = (
+                        cost(&want, times, vclass, tolls),
+                        cost(&got, times, vclass, tolls),
+                    );
+                    assert!(
+                        (w - g).abs() < 1e-2 * w.max(1.0),
+                        "{a} -> {b}: {w} against {g}"
+                    );
+                    assert!((said - g).abs() < 1e-2 * g.max(1.0));
+                    compared += 1;
+                }
+            }
+        }
+    }
+    assert!(compared > 5000, "{compared}");
+}

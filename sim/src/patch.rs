@@ -376,6 +376,7 @@ impl Engine {
             };
             let (a, b) = (veh.route[gap], veh.route[gap + 1]);
             self.router.tolls = true;
+            self.router.purpose = purpose::TRANSIT;
             let Some(leg) = self.router.route(&self.net, &self.free_time, a, b, vclass) else {
                 return false;
             };

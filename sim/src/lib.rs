@@ -9,6 +9,7 @@
 // Index loops read best in this numeric code.
 #![allow(clippy::needless_range_loop)]
 
+pub mod cch;
 pub mod demand;
 pub mod edits;
 pub mod engine;
