@@ -1799,8 +1799,13 @@ impl Engine {
             if net.lane_internal[cur as usize] {
                 // A turn that waits inside the junction: at the point where it waits, until
                 // what it crosses there is clear.
+                // Nor past it into the way of what it crosses while a light just beyond the
+                // junction would hold it there (M12).
                 let w = net.lane_wait[cur as usize];
-                if w != NONE && !self.wait_clear(v, veh, w, cur, dist) {
+                if w != NONE
+                    && (!self.wait_clear(v, veh, w, cur, dist)
+                        || self.light_past_wait(veh, cur, route_i, dist))
+                {
                     acc = acc.min(stop_at(speed, vmax, dist, p, self.weather));
                     break;
                 }
@@ -2444,12 +2449,39 @@ impl Engine {
     /// The state of a light (red, red and yellow, or yellow) on the way on past `link`
     /// before a road long enough for `veh` to wait on, if there is one.
     fn light_just_beyond(&self, link: u32, veh: &Vehicle) -> Option<u8> {
+        let to = self.net.d.link_to[link as usize];
+        self.light_from(to, veh.route_idx + 1, veh)
+    }
+
+    /// Whether a vehicle `dist` metres before the point where its turn waits inside a
+    /// junction, on junction lane `lane` (its route at `route_i`), should stay there for a
+    /// light just beyond the junction: red, or yellow while it can stop comfortably.
+    fn light_past_wait(&self, veh: &Vehicle, lane: u32, route_i: u32, dist: f32) -> bool {
+        let net = &self.net;
+        let mut to = net.d.lane_next[lane as usize];
+        for _ in 0..8 {
+            if to == NONE || !net.lane_internal[to as usize] {
+                break;
+            }
+            to = net.d.lane_next[to as usize];
+        }
+        if to == NONE || net.lane_internal[to as usize] {
+            return false;
+        }
+        match self.light_from(to, route_i + 1, veh) {
+            None => false,
+            Some(b'y') => veh.speed * veh.speed <= 2.0 * veh.params().decel * dist.max(0.05),
+            Some(_) => true,
+        }
+    }
+
+    /// As `light_just_beyond`, from road lane `to` (its route at `route_i`).
+    fn light_from(&self, to: u32, route_i: u32, veh: &Vehicle) -> Option<u8> {
         let d = &self.net.d;
         let p = veh.params();
         let mut need = p.length + p.min_gap;
-        let mut link = link;
-        for route_i in (veh.route_idx + 1..).take(4) {
-            let to = d.link_to[link as usize] as usize;
+        let mut to = to as usize;
+        for route_i in (route_i..).take(4) {
             let len = d.lane_length[to];
             if len >= need {
                 return None;
@@ -2466,7 +2498,7 @@ impl Engine {
             if need <= 0.0 {
                 return None;
             }
-            link = next;
+            to = d.link_to[next as usize] as usize;
         }
         None
     }

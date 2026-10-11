@@ -4598,6 +4598,82 @@ fn a_driver_in_a_junction_clears_the_signal_a_short_piece_beyond() {
 }
 
 #[test]
+fn a_turn_waiting_inside_a_junction_stays_put_for_a_light_just_beyond() {
+    // As in `waiting_left_turn`, with the road the turn leaves by 0.3 m long into a signal:
+    // when the oncoming traffic thins out the light there is red, and the turn waits at
+    // its point inside the junction rather than move across the oncoming lane and stand
+    // there for the red.
+    let mut b = Builder::default();
+    let jw = b.junction(0.0, 0.0);
+    let j = b.junction(300.0, 0.0);
+    let je = b.junction(600.0, 0.0);
+    let jn = b.junction(300.0, -12.3);
+    let jn2 = b.junction(300.0, -312.3);
+    let eb_in = b.road(jw, j, 1, 13.9);
+    let eb_out = b.road(j, je, 1, 13.9);
+    let wb_in = b.road(je, j, 1, 13.9);
+    let wb_out = b.road(j, jw, 1, 13.9);
+    let short = b.road(j, jn, 1, 13.9);
+    let nb_out = b.road(jn, jn2, 1, 13.9);
+    let (eb, wb, ls) = (b.lane(eb_in, 0), b.lane(wb_in, 0), b.lane(short, 0));
+    b.connect(eb, b.lane(eb_out, 0), j, dir::STRAIGHT, b'O');
+    let left = b.connect(eb, ls, j, dir::LEFT, b'o');
+    let oncoming = b.connect(wb, b.lane(wb_out, 0), j, dir::STRAIGHT, b'O');
+    let wait = b.d.link_via[left as usize];
+    let to = b.d.lane_next[wait as usize];
+    let end = *b.d.lane_shape_offsets.last().unwrap() as usize;
+    let (x, z) = (b.d.lane_shape[end * 3 - 3], b.d.lane_shape[end * 3 - 2]);
+    let e = b.add_edge(j, j, edge_flag::INTERNAL);
+    let second = b.add_lane(e, &[(x, z), (x, z - 2.0)], 7.0, ALL);
+    b.d.edge_lane_count[e as usize] = 1;
+    b.d.lane_next[wait as usize] = second;
+    b.d.lane_next[second as usize] = to;
+    b.set_logic(j, &[(0, 0), (0b100, 0b100), (0, 0b010)]);
+    b.d.wait_lane = vec![wait];
+    b.d.wait_foe_offsets = vec![0, 2];
+    b.d.wait_foes = vec![b.d.link_via[oncoming as usize], wb];
+    let signal = b.connect(ls, b.lane(nb_out, 0), jn, dir::STRAIGHT, b'O');
+    b.signal(&[signal], &[(50.0, "G"), (3.0, "y"), (60.0, "r")]);
+    let net = Network::build(b.data()).unwrap();
+    assert!(net.d.lane_length[ls as usize] < 1.0);
+    let mut engine = Engine::new(net, 1);
+    engine.set_time(0.0);
+    // Oncoming traffic every 3 s for 70 s, past the junction until about 92 s.
+    for k in 0..24 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 3.0,
+            from: wb_in,
+            to: wb_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 30.0, assert_no_overlaps);
+    let lane = engine.net.edge_lanes(eb_in).start;
+    let turn = engine.insert_at(vtype::CAR, vec![eb_in, short, nb_out], lane, 220.0, 10.0);
+    let serial = engine.vehs[turn as usize].serial;
+    let mut across = 0.0f32;
+    run_until(&mut engine, 112.0, |e| {
+        assert_no_overlaps(e);
+        let t = &e.vehs[turn as usize];
+        if t.serial == serial && (t.lane == second || t.lane == ls) && t.speed < 0.1 {
+            across += DT;
+        }
+    });
+    assert!(
+        across < 2.0,
+        "the turn stood {across} s across the oncoming lane"
+    );
+    // On green it goes.
+    run_until(&mut engine, 150.0, assert_no_overlaps);
+    let t = &engine.vehs[turn as usize];
+    assert!(
+        t.serial != serial || !t.alive() || t.route_idx >= 2,
+        "the turn never went"
+    );
+}
+
+#[test]
 fn a_stop_sign_a_short_piece_beyond_lets_drivers_through() {
     // As above with a stop sign at J2: drivers stop there and go on, none held at J1.
     let mut b = Builder::default();
