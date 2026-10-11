@@ -4535,3 +4535,93 @@ fn capacity_of_right_before_left_and_split_crossings() {
         assert!((1_700.0..2_100.0).contains(&flow), "{median} m: {flow:.0}");
     }
 }
+
+#[test]
+fn a_driver_in_a_junction_clears_the_signal_a_short_piece_beyond() {
+    // A priority junction J1 whose way on is a road 0.3 m long into a signal at J2 (two
+    // junctions netconvert split a few metres apart, as Vrbik XIII. before Slavonska
+    // avenija's signals). A queue moves off on green; when the light changes, those that
+    // followed into J1 clear J2 rather than stand inside J1 for the red.
+    let mut b = Builder::default();
+    let j0 = b.junction(-500.0, 0.0);
+    let j1 = b.junction(0.0, 0.0);
+    let j2 = b.junction(12.3, 0.0);
+    let j3 = b.junction(512.3, 0.0);
+    let e0 = b.road(j0, j1, 1, 13.9);
+    let short = b.road(j1, j2, 1, 13.9);
+    let e1 = b.road(j2, j3, 1, 13.9);
+    let (l0, ls, l1) = (b.lane(e0, 0), b.lane(short, 0), b.lane(e1, 0));
+    b.connect(l0, ls, j1, dir::STRAIGHT, b'M');
+    let signal = b.connect(ls, l1, j2, dir::STRAIGHT, b'O');
+    b.signal(
+        &[signal],
+        &[(100.0, "r"), (9.0, "G"), (3.0, "y"), (60.0, "r")],
+    );
+    let net = b.build();
+    assert!(net.d.lane_length[ls as usize] < 1.0);
+    let mut engine = Engine::new(net, 3);
+    for k in 0..15 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 2.0,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    let mut standing = 0.0f32;
+    run_until(&mut engine, 170.0, |e| {
+        // Standing inside J1 or on the piece beyond it (the rear then still in J1).
+        for lane in 0..e.net.lane_count() as u32 {
+            let in_j1 = lane == ls
+                || e.net.lane_internal[lane as usize] && e.net.d.lane_next[lane as usize] == ls;
+            if in_j1 {
+                for &v in e.vehicles_on(lane) {
+                    if e.vehs[v as usize].speed < 0.1 {
+                        standing += DT;
+                    }
+                }
+            }
+        }
+        assert_no_overlaps(e);
+    });
+    assert!(
+        standing < 5.0,
+        "vehicles stood {standing} s inside the first junction"
+    );
+    // The queue still moves off on each green.
+    assert!(
+        engine.stats.arrived >= 4,
+        "{} arrived",
+        engine.stats.arrived
+    );
+}
+
+#[test]
+fn a_stop_sign_a_short_piece_beyond_lets_drivers_through() {
+    // As above with a stop sign at J2: drivers stop there and go on, none held at J1.
+    let mut b = Builder::default();
+    let j0 = b.junction(-300.0, 0.0);
+    let j1 = b.junction(0.0, 0.0);
+    let j2 = b.junction(12.3, 0.0);
+    let j3 = b.junction(312.3, 0.0);
+    let e0 = b.road(j0, j1, 1, 13.9);
+    let short = b.road(j1, j2, 1, 13.9);
+    let e1 = b.road(j2, j3, 1, 13.9);
+    let (l0, ls, l1) = (b.lane(e0, 0), b.lane(short, 0), b.lane(e1, 0));
+    b.connect(l0, ls, j1, dir::STRAIGHT, b'M');
+    b.connect(ls, l1, j2, dir::STRAIGHT, b's');
+    let net = b.build();
+    let mut engine = Engine::new(net, 3);
+    for k in 0..5 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 4.0,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 150.0, assert_no_overlaps);
+    assert_eq!(engine.stats.arrived, 5);
+}

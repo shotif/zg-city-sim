@@ -1948,7 +1948,7 @@ impl Engine {
         };
         match state {
             b'r' | b'u' => return brake > p.emergency_decel,
-            b'y' if brake <= p.decel => return false,
+            b'y' if brake <= p.decel && !self.stops_in_junction(veh, link) => return false,
             b's' | b'w' if veh.stop_done != link => return false,
             _ => {}
         }
@@ -1959,10 +1959,23 @@ impl Engine {
         // a driver who stops on the ring for a full exit blocks everyone behind.
         let entering = self.enters_roundabout(link);
         let crossing = self.net.link_crossing[link as usize] != NONE;
+        let near = dist < speed * speed / (2.0 * p.decel) + p.length + 5.0;
         if (entering || crossing || veh.wait < BLOCK_BOX_WAIT)
-            && dist < speed * speed / (2.0 * p.decel) + p.length + 5.0
+            && near
             && (!self.exit_has_room(link, veh)
                 || entering && !self.roundabout_exit_has_room(link, veh))
+        {
+            return false;
+        }
+        // A red light just beyond, with a road too short to wait on in between (junctions
+        // netconvert split a few metres apart): entering now means standing in this junction
+        // for the red, however long the wait (M12). At a yellow, as at the light itself, only
+        // when the driver can still stop comfortably. Not between two signals, where the way
+        // on may clear only while this one is red.
+        if near
+            && self.net.d.link_tls[link as usize] == NONE
+            && let Some(beyond) = self.light_just_beyond(link, veh)
+            && (beyond != b'y' || brake <= p.decel)
         {
             return false;
         }
@@ -2402,7 +2415,9 @@ impl Engine {
             if next == NONE {
                 return len - reserved >= need.min(len);
             }
-            if !self.signal_allows(next, NONE) {
+            // A red light there leaves no room (a yellow is for `light_just_beyond`, a stop
+            // sign is stopped at and passed).
+            if matches!(self.link_state(next), b'r' | b'u') {
                 return false;
             }
             // Through the next junction: a vehicle moving on there makes room, as on a road;
@@ -2424,6 +2439,58 @@ impl Engine {
             link = next;
         }
         true
+    }
+
+    /// The state of a light (red, red and yellow, or yellow) on the way on past `link`
+    /// before a road long enough for `veh` to wait on, if there is one.
+    fn light_just_beyond(&self, link: u32, veh: &Vehicle) -> Option<u8> {
+        let d = &self.net.d;
+        let p = veh.params();
+        let mut need = p.length + p.min_gap;
+        let mut link = link;
+        for route_i in (veh.route_idx + 1..).take(4) {
+            let to = d.link_to[link as usize] as usize;
+            let len = d.lane_length[to];
+            if len >= need {
+                return None;
+            }
+            let next = self.choose_link_or_detour(to as u32, &veh.route, route_i, p.vclass);
+            if next == NONE {
+                return None;
+            }
+            let state = self.link_state(next);
+            if matches!(state, b'r' | b'u' | b'y') {
+                return Some(state);
+            }
+            need -= len + self.net.link_via_length[next as usize];
+            if need <= 0.0 {
+                return None;
+            }
+            link = next;
+        }
+        None
+    }
+
+    /// Whether `veh`, already past the stop line before the road `link` leaves (or on it),
+    /// would stop at `link`'s line with its rear still in the junction behind: a road
+    /// shorter than the vehicle in between. Such a driver goes on at a yellow.
+    fn stops_in_junction(&self, veh: &Vehicle, link: u32) -> bool {
+        let net = &self.net;
+        let from = net.d.link_from[link as usize];
+        if net.d.lane_length[from as usize] >= veh.params().length {
+            return false;
+        }
+        let mut lane = veh.lane;
+        for _ in 0..4 {
+            if lane == from {
+                return true;
+            }
+            if lane == NONE || !net.lane_internal[lane as usize] {
+                return false;
+            }
+            lane = net.d.lane_next[lane as usize];
+        }
+        false
     }
 
     /// The first vehicle ahead of `veh` past `link`'s stop line along its way, within 60 m:
