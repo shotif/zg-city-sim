@@ -4420,3 +4420,118 @@ fn capacity_of_a_lane_drop() {
         assert!((1_500.0..2_100.0).contains(&got), "{name}: {got:.0}");
     }
 }
+
+/// Vehicles an hour a four-arm junction where traffic gives way to the right (state `=`)
+/// lets through, every arm with a queue going straight on.
+fn right_before_left_capacity() -> f64 {
+    let mut b = Builder::default();
+    let c = b.junction(0.0, 0.0);
+    // Arms: north (-z), east, south, west; each a road in and a road out.
+    let dirs = [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)];
+    let far: Vec<u32> = dirs
+        .iter()
+        .map(|&(x, z)| b.junction(x * 400.0, z * 400.0))
+        .collect();
+    let into: Vec<u32> = far.iter().map(|&f| b.road(f, c, 1, 13.9)).collect();
+    let out: Vec<u32> = far.iter().map(|&f| b.road(c, f, 1, 13.9)).collect();
+    // Straight on: from arm k out by the opposite arm. Request k is from arm k; a driver
+    // gives way to the one coming from its right: from the south (heading north) to the
+    // east, from the east to the north, from the north to the west, from the west to the
+    // south.
+    for k in 0..4 {
+        let (fl, tl) = (b.lane(into[k], 0), b.lane(out[(k + 2) % 4], 0));
+        b.connect(fl, tl, c, dir::STRAIGHT, b'=');
+    }
+    let right = [3usize, 0, 1, 2]; // from north the right is west, ...
+    let rows: Vec<(u32, u32)> = (0..4)
+        .map(|k| (1 << right[k], (1 << ((k + 1) % 4)) | (1 << ((k + 3) % 4))))
+        .collect();
+    b.set_logic(c, &rows);
+    let mut engine = Engine::new(b.build(), 5);
+    for k in 0..4 {
+        for t in 0..1200 {
+            engine.add_trip(Trip {
+                depart: t as f64 * 2.0,
+                from: into[k],
+                to: out[(k + 2) % 4],
+                vtype: vtype::CAR,
+                flags: 0,
+            });
+        }
+    }
+    let lanes: Vec<u32> = into
+        .iter()
+        .map(|&e| engine.net.edge_lanes(e).start)
+        .collect();
+    let mut total = 0.0;
+    let mut on: Vec<std::collections::HashSet<(u32, u32)>> = vec![Default::default(); 4];
+    let mut left = 0u32;
+    run_until(&mut engine, 2400.0, |e| {
+        for (k, &lane) in lanes.iter().enumerate() {
+            let now: std::collections::HashSet<(u32, u32)> = e
+                .vehicles_on(lane)
+                .iter()
+                .map(|&v| (v, e.vehs[v as usize].serial))
+                .collect();
+            if e.time >= 600.0 {
+                left += on[k].difference(&now).count() as u32;
+            }
+            on[k] = now;
+        }
+        assert_no_overlaps(e);
+    });
+    total += left as f64 * 3600.0 / 1800.0;
+    total
+}
+
+/// A dual carriageway crossed at two signals a short median apart (`median` m), both green
+/// together for the road crossing it: vehicles an hour a queue of 40 puts across.
+fn split_crossing_saturation(median: f32) -> f64 {
+    let mut b = Builder::default();
+    let j0 = b.junction(-1000.0, 0.0);
+    let a = b.junction(0.0, 0.0);
+    let m = b.junction(median + 12.0, 0.0);
+    let j2 = b.junction(median + 512.0, 0.0);
+    let e0 = b.road(j0, a, 1, 13.9);
+    let mid = b.road(a, m, 1, 13.9);
+    let e1 = b.road(m, j2, 1, 13.9);
+    let (l0, lm, l1) = (b.lane(e0, 0), b.lane(mid, 0), b.lane(e1, 0));
+    let first = b.connect(l0, lm, a, dir::STRAIGHT, b'O');
+    let second = b.connect(lm, l1, m, dir::STRAIGHT, b'O');
+    b.signal(&[first, second], &[(300.0, "rr"), (600.0, "GG")]);
+    let mut engine = Engine::new(b.build(), 5);
+    for k in 0..40 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 2.5,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 300.0, |_| {});
+    let mut crossed = Vec::new();
+    run_until(&mut engine, 200.0, |e| {
+        while crossed.len() < 40 - e.vehicles_on(l0).len() {
+            crossed.push(e.time - 300.0);
+        }
+        assert_no_overlaps(e);
+    });
+    saturation_flow(&crossed)
+}
+
+#[test]
+fn capacity_of_right_before_left_and_split_crossings() {
+    let rbl = right_before_left_capacity();
+    // HCM's all-way stop control lets about 1,300-1,800 an hour through a one-lane
+    // crossroads with every arm queued.
+    println!("right before left, four arms queued: {rbl:.0}/h");
+    // Opposite arms go together, so more than all-way stops; never stuck.
+    assert!((1_000.0..4_000.0).contains(&rbl), "{rbl:.0}");
+    // Two signals with a median between them pass what one does, however short the median.
+    for median in [10.0, 1.0] {
+        let flow = split_crossing_saturation(median);
+        println!("signals a {median} m median apart: {flow:.0}/h");
+        assert!((1_700.0..2_100.0).contains(&flow), "{median} m: {flow:.0}");
+    }
+}
