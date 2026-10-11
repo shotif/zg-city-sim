@@ -27,7 +27,7 @@ Read these before changing anything:
 | `pipeline/census.py` | Tool, run by hand: DZS 2021 population by settlement for the counties around the City (`pipeline/data/census_2021_settlements.json`). |
 | `pipeline/gateways.py` | Traffic across the map's edge: counted sections crossing it, else typical volumes. |
 | `pipeline/peak.py` | Tool, run by hand with the validation runs: the roads' speeds from 07:00 to 09:00 in day runs, kept by position in `pipeline/data/peak_speeds.json`, which the network step matches to edges (`edgePeak`) for the riders' car journeys (M10d). |
-| `pipeline/validate.py` | Writes `docs/VALIDATION.md` from a day run, with the junctions that hold up most traffic (from the day runner's `junction_delay.bin`). |
+| `pipeline/validate.py` | Writes `docs/VALIDATION.md` from a day run, with the junctions that hold up most traffic (from the day runner's `junction_delay.bin`) and the minutes lost on the worst way into each news hotspot in the peaks (M12). |
 | `pipeline/projects.py` | Planned road projects (M4c): each a patch over the OSM extract (proposed or construction ways opened, ends carried across roads, signals, bridges), built by netconvert into a network of its own with demand, transit and news (`web/public/data/projects/<id>/`, about 3 min each). `python -m pipeline.projects compare` writes their before and after numbers to `pipeline/data/projects/<id>.json`. |
 | `pipeline/zoning.py` | Lots for zoning (M5a): free land along streets, 20 m by 30 m, kept off buildings, roads, water and the land the City's plan keeps open; each lot's street, planned use and the storeys around it. The plan's polygons for the app's map. |
 | `pipeline/data/news.json` | Curated news reports of jams (39 places). |
@@ -140,6 +140,7 @@ Environment variables for the native runs:
 | Room to change lanes: lane choice looks past shorter roads (`LANE_CHANGE_ROOM`, `LANE_CHANGE_SECONDS`) | `sim/src/engine.rs` | 150 m, or 10 s at the speed limit if longer |
 | Re-routing on the way (`REROUTE_CHECK`, `REROUTE_SLOWER`, `REROUTE_LOSS`, `REROUTE_GAIN`, `REROUTE_GAIN_TIME`, `REROUTE_LANE_ROOM`) | `sim/src/engine.rs` | every 60 s, when the rest takes 25 % and 60 s longer than expected; a new way that saves 10 % and 60 s; 100 m to change lanes |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
+| Looking out for traffic still crossing the junction before a short lane in (`LOOK_BACK`) | `sim/src/engine.rs` | lanes under 30 m (M12a: roundabouts' ring pieces) |
 | Signal priority (`PRIORITY_AHEAD`, `PRIORITY_EXTENSION`, `MIN_GREEN`; `PRIORITY_JUNCTION`, `PRIORITY_UPKEEP`) | `sim/src/engine.rs`, `web/src/grow/economy.ts` | asked 20 s ahead; its green up to 15 s longer, others cut to 6 s; €15,000 a junction and €600 a year (estimates) |
 | Buses and trams at stops (`MIN_DWELL`, `PLATFORM`) | `sim/src/engine.rs` | at least 15 s (buses) or 20 s (trams) a stop; a second bus within 20 m, or tram within 36 m, behind one at the stop serves it there (estimates) |
 | Pedestrians a day per crossing (`USES_PER_PERSON`, `WALKERS_PER_STOP`, `HOURLY`) | `pipeline/pedestrians.py` | 0.3 uses a day per resident or job beside a crossing, falling to none at 400 m; 6 per bus or tram stopping within 150 m (estimates) |

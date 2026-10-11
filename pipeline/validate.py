@@ -159,13 +159,63 @@ def place_share(speeds: np.ndarray, edges: np.ndarray, length: np.ndarray) -> fl
     return float((ratio[used] / 254 * w).sum() / w.sum())
 
 
+# The worst way into a hotspot is followed upstream this far (m), while traffic on it moves
+# below this share of the limit.
+APPROACH_REACH = 3000.0
+APPROACH_SLOW = 0.7
+
+
+def predecessors(net: dict[str, np.ndarray]) -> list[list[int]]:
+    """The edges each edge is entered from (by the links between them)."""
+    edge_of = net["laneEdge"].astype(np.int64)
+    before: list[set[int]] = [set() for _ in range(len(net["edgeFlags"]))]
+    for a, b in zip(edge_of[net["linkFrom"]], edge_of[net["linkTo"]], strict=True):
+        if a != b:
+            before[b].add(int(a))
+    return [sorted(p) for p in before]
+
+
+def approach_loss(
+    edges: np.ndarray,
+    before: list[list[int]],
+    loss: np.ndarray,
+    share: np.ndarray,
+    length: np.ndarray,
+) -> float:
+    """Seconds a driver loses against the speed limit on the worst way into a place: from
+    each of its edges upstream, always onto the way in that loses most, while traffic on
+    it is slow and up to `APPROACH_REACH` metres."""
+    worst = 0.0
+    for start in edges:
+        e, lost, metres, seen = int(start), 0.0, 0.0, set()
+        while e not in seen and metres < APPROACH_REACH:
+            seen.add(e)
+            lost += loss[e]
+            metres += length[e]
+            slow = [p for p in before[e] if share[p] < APPROACH_SLOW and p not in seen]
+            if not slow:
+                break
+            e = max(slow, key=lambda p: loss[p])
+        worst = max(worst, lost)
+    return worst
+
+
 def hotspot_rows(
     net: dict[str, np.ndarray], index: dict, speeds: np.ndarray
 ) -> tuple[list[dict], dict[str, float]]:
-    """Simulated peak-hour speed at each news hotspot, and the share of main-road length
-    that is congested (below 45 % of the limit) in each peak."""
+    """Simulated peak-hour speed at each news hotspot, the minutes lost on its worst way in,
+    and the share of main-road length that is congested (below 45 % of the limit) in each
+    peak."""
     hotspots = json.loads((OUTPUT_DIR / "news" / "hotspots.json").read_text())["hotspots"]
     length = net["laneLength"][net["edgeLaneStart"]].astype(np.float64)
+    limit = net["laneSpeed"][net["edgeLaneStart"]].astype(np.float64)
+    before = predecessors(net)
+    losses = {}
+    for k, hour in PEAKS.items():
+        ratio = speeds[hour].astype(np.float64)
+        share = np.where(ratio < 255, ratio / 254, 1.0)
+        free = length / np.maximum(limit, 1.0)
+        losses[k] = (free / np.maximum(share, 0.02) - free, share)
     rows = []
     for h in hotspots:
         edges = np.asarray(h["edges"], np.int64)
@@ -174,6 +224,10 @@ def hotspot_rows(
                 "name": h["name"],
                 "reports": len(h["reports"]),
                 **{k: place_share(speeds[hour], edges, length) for k, hour in PEAKS.items()},
+                **{
+                    f"{k} lost": approach_loss(edges, before, *losses[k], length) / 60
+                    for k in PEAKS
+                },
             }
         )
     internal = (net["edgeFlags"] & index["flags"]["internal"]) != 0
@@ -764,11 +818,14 @@ def report(
             "one-off works or crashes the simulation does not have, but chronic bottlenecks "
             "should be slow in the simulated peaks too. Mean speed as a share of the speed "
             "limit in the busiest hours (bands as on the traffic map: below 45 % is "
-            "congested):",
+            "congested), and the minutes a driver loses against the limit on the worst way "
+            "in (followed upstream while traffic on it moves below 70 % of the limit, up to "
+            f"{APPROACH_REACH / 1000:.0f} km; in Zagreb's peaks, waits of 30-45 minutes at "
+            "the worst places are usual):",
             "",
-            f"| Place | Reports | {names[0].replace('-', ':00-')}:00 | "
-            f"{names[1].replace('-', ':00-')}:00 |",
-            "|---|---:|---:|---:|",
+            f"| Place | Reports | {names[0].replace('-', ':00-')}:00 | lost | "
+            f"{names[1].replace('-', ':00-')}:00 | lost |",
+            "|---|---:|---:|---:|---:|---:|",
         ]
 
         def cell(share: float) -> str:
@@ -776,7 +833,9 @@ def report(
 
         for r in hot_rows:
             lines.append(
-                f"| {r['name']} | {r['reports']} | {cell(r[names[0]])} | {cell(r[names[1]])} |"
+                f"| {r['name']} | {r['reports']} | {cell(r[names[0]])} | "
+                f"{r[names[0] + ' lost']:.0f} min | {cell(r[names[1]])} | "
+                f"{r[names[1] + ' lost']:.0f} min |"
             )
         lines += [
             "",
