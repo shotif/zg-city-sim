@@ -4144,3 +4144,276 @@ fn an_order_made_elsewhere_gives_the_same_routes() {
     }
     assert!(found > 100, "{found}");
 }
+
+// ---- capacity against the Highway Capacity Manual (M12a; `cargo test --release capacity
+// -- --nocapture` prints what each lets through) ------------------------------------------
+
+/// Vehicles an hour that leave `lane` between `from` and `to` seconds into a run.
+fn lane_throughput(engine: &mut Engine, lane: u32, from: f64, to: f64) -> f64 {
+    let mut on: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+    let mut left = 0u32;
+    let start = engine.time;
+    run_until(engine, to as f32, |e| {
+        let now: std::collections::HashSet<(u32, u32)> = e
+            .vehicles_on(lane)
+            .iter()
+            .map(|&v| (v, e.vehs[v as usize].serial))
+            .collect();
+        if e.time - start >= from {
+            left += on.difference(&now).count() as u32;
+        }
+        on = now;
+        assert_no_overlaps(e);
+    });
+    left as f64 * 3600.0 / (to - from)
+}
+
+/// Departure times at random (shifted exponential headways, at least `min_gap` s) for
+/// `per_hour` vehicles an hour over `seconds`.
+fn random_departures(rng: &mut Rng, per_hour: f64, min_gap: f64, seconds: f64) -> Vec<f64> {
+    let mut out = Vec::new();
+    if per_hour <= 0.0 {
+        return out;
+    }
+    let mean = 3600.0 / per_hour;
+    let mut t = 0.0;
+    loop {
+        t += min_gap + -(1.0 - rng.f64()).ln() * (mean - min_gap).max(0.0);
+        if t > seconds {
+            return out;
+        }
+        out.push(t);
+    }
+}
+
+/// A give-way right turn into a main road carrying `major` vehicles an hour at random,
+/// with a queue always waiting on the minor road: vehicles an hour it lets in.
+fn give_way_capacity(major: f64) -> f64 {
+    let (b, [main_in, main_out, minor_in, _]) = t_junction();
+    let mut engine = Engine::new(b.build(), 5);
+    let minor_lane = engine.net.edge_lanes(minor_in).start;
+    let mut rng = Rng::new(11);
+    for t in random_departures(&mut rng, major, 2.0, 2400.0) {
+        engine.add_trip(Trip {
+            depart: t,
+            from: main_in,
+            to: main_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    for k in 0..1600 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 1.5,
+            from: minor_in,
+            to: main_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    lane_throughput(&mut engine, minor_lane, 600.0, 2400.0)
+}
+
+#[test]
+fn capacity_of_a_give_way_turn() {
+    // HCM: a minor right turn at a stop sign, critical gap 6.2 s, follow-up 3.3 s. Giving
+    // way, drivers need not stop when the main road is clear, so more go then.
+    let hcm = |v: f64| {
+        if v == 0.0 {
+            3600.0 / 3.3
+        } else {
+            v * (-v * 6.2 / 3600.0).exp() / (1.0 - (-v * 3.3 / 3600.0).exp())
+        }
+    };
+    for major in [0.0, 300.0, 600.0, 900.0, 1200.0] {
+        let (got, want) = (give_way_capacity(major), hcm(major));
+        println!("give way, main road {major:.0}/h: {got:.0}/h (HCM {want:.0}/h)");
+        assert!(
+            (0.65 * want..1.8 * want).contains(&got),
+            "{major}: {got:.0}"
+        );
+    }
+}
+
+/// A one-lane roundabout of radius `r` (the ring's pieces between the junctions where arms
+/// join are r * 1.41 - 12 m long: 9 m at 15 m, under a metre at 9.3 m) with four arms (north, east, south, west), traffic
+/// going round anticlockwise as seen from above, and entering traffic giving way to the
+/// ring. Returns the builder, the arms' roads in and out by arm, and the south arm's
+/// way in.
+fn roundabout_four_arms(r: f32) -> (Builder, [(u32, u32); 4]) {
+    let mut b = Builder::default();
+    // North is -z. Ring nodes, then the arms' far ends 300 m out.
+    let dirs = [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)]; // N, E, S, W
+    let ring: Vec<u32> = dirs
+        .iter()
+        .map(|&(x, z)| b.junction(x * r, z * r))
+        .collect();
+    let far: Vec<u32> = dirs
+        .iter()
+        .map(|&(x, z)| b.junction(x * (r + 300.0), z * (r + 300.0)))
+        .collect();
+    // Anticlockwise seen from above with north up: N -> W -> S -> E -> N.
+    let next = [3usize, 0, 1, 2]; // from arm k the ring runs to arm next[k]
+    let mut ring_edge = [0u32; 4]; // ring edge from node k to node next[k]
+    for k in 0..4 {
+        let e = b.road(ring[k], ring[next[k]], 1, 8.3);
+        b.d.edge_flags[e as usize] |= edge_flag::ROUNDABOUT;
+        ring_edge[k] = e;
+    }
+    let mut arms = [(0u32, 0u32); 4];
+    for k in 0..4 {
+        let into = b.road(far[k], ring[k], 1, 13.9);
+        let out = b.road(ring[k], far[k], 1, 13.9);
+        arms[k] = (into, out);
+    }
+    // At node k: from the ring edge coming in (from the node whose next is k): on round
+    // (request 0, priority) or out (request 1, priority); from the arm: onto the ring
+    // (request 2, gives way to request 0).
+    for k in 0..4 {
+        let prev = (0..4).find(|&p| next[p] == k).unwrap();
+        let (ring_in, ring_out) = (b.lane(ring_edge[prev], 0), b.lane(ring_edge[k], 0));
+        let (arm_in, arm_out) = (b.lane(arms[k].0, 0), b.lane(arms[k].1, 0));
+        b.connect(ring_in, ring_out, ring[k], dir::STRAIGHT, b'M');
+        b.connect(ring_in, arm_out, ring[k], dir::RIGHT, b'M');
+        b.connect(arm_in, ring_out, ring[k], dir::RIGHT, b'm');
+        b.set_logic(ring[k], &[(0b000, 0b100), (0b000, 0b000), (0b001, 0b001)]);
+    }
+    (b, arms)
+}
+
+/// Vehicles an hour that enter the roundabout from the south with `circulating` vehicles
+/// an hour going past that entry on the ring (from the west to the east) at random.
+fn roundabout_capacity(circulating: f64, r: f32) -> f64 {
+    let (b, arms) = roundabout_four_arms(r);
+    let mut engine = Engine::new(b.build(), 5);
+    let (n, e, s, w) = (arms[0], arms[1], arms[2], arms[3]);
+    let south_lane = engine.net.edge_lanes(s.0).start;
+    let mut rng = Rng::new(13);
+    for t in random_departures(&mut rng, circulating, 2.0, 2400.0) {
+        engine.add_trip(Trip {
+            depart: t,
+            from: w.0,
+            to: e.1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    for k in 0..1600 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 1.5,
+            from: s.0,
+            to: n.1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    lane_throughput(&mut engine, south_lane, 600.0, 2400.0)
+}
+
+#[test]
+fn capacity_of_a_roundabout_entry() {
+    // HCM (6th edition), one-lane entry against one circulating lane: 1,380 e^(-0.00102 vc).
+    for vc in [0.0, 300.0, 600.0, 900.0] {
+        let (got, want) = (
+            roundabout_capacity(vc, 15.0),
+            1380.0 * (-0.00102 * vc).exp(),
+        );
+        // A third of the network's ring pieces are under a metre long.
+        let short = roundabout_capacity(vc, 9.3);
+        println!(
+            "roundabout entry, {vc:.0}/h going round: {got:.0}/h, {short:.0}/h with ring pieces under a metre (HCM {want:.0}/h)"
+        );
+        assert!((0.7 * want..1.3 * want).contains(&got), "{vc}: {got:.0}");
+        assert!((0.7 * want..1.3 * want).contains(&short), "{vc}: {short:.0}");
+    }
+}
+
+/// Vehicles an hour a queue of 40 cars puts through a green light that turns `direction`
+/// (the road beyond leaves at a right angle for turns).
+fn turn_saturation(direction: u8) -> f64 {
+    let mut b = Builder::default();
+    let j0 = b.junction(-1000.0, 0.0);
+    let j1 = b.junction(0.0, 0.0);
+    // Right of travel east is south (+z).
+    let to = match direction {
+        dir::RIGHT => (0.0, 500.0),
+        dir::LEFT => (0.0, -500.0),
+        _ => (500.0, 0.0),
+    };
+    let j2 = b.junction(to.0, to.1);
+    let e0 = b.road(j0, j1, 1, 13.9);
+    let e1 = b.road(j1, j2, 1, 13.9);
+    let (l0, l1) = (b.lane(e0, 0), b.lane(e1, 0));
+    let link = b.connect(l0, l1, j1, direction, b'O');
+    b.signal(&[link], &[(300.0, "r"), (600.0, "G")]);
+    let mut engine = Engine::new(b.build(), 5);
+    for k in 0..40 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 2.5,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 300.0, |_| {});
+    assert_eq!(engine.vehicles_on(l0).len(), 40);
+    let mut crossed = Vec::new();
+    run_until(&mut engine, 200.0, |e| {
+        while crossed.len() < 40 - e.vehicles_on(l0).len() {
+            crossed.push(e.time - 300.0);
+        }
+    });
+    saturation_flow(&crossed)
+}
+
+#[test]
+fn capacity_of_turns_at_a_green_light() {
+    // HCM: 1,900 an hour a lane straight on, times 0.85 turning right, 0.95 left (protected).
+    for (name, d, hcm) in [
+        ("straight on", dir::STRAIGHT, 1900.0),
+        ("right", dir::RIGHT, 1615.0),
+        ("left", dir::LEFT, 1805.0),
+    ] {
+        let got = turn_saturation(d);
+        println!("green light, {name}: {got:.0}/h (HCM {hcm:.0}/h)");
+        assert!((0.85 * hcm..1.15 * hcm).contains(&got), "{name}: {got:.0}");
+    }
+}
+
+/// Two lanes that narrow to one at a junction, both links zipper merges (`state`), with
+/// queues on both: vehicles an hour onto the one lane.
+fn lane_drop_capacity(state: u8) -> f64 {
+    let mut b = Builder::default();
+    let j0 = b.junction(-1000.0, 0.0);
+    let j1 = b.junction(0.0, 0.0);
+    let j2 = b.junction(1000.0, 0.0);
+    let e0 = b.road(j0, j1, 2, 13.9);
+    let e1 = b.road(j1, j2, 1, 13.9);
+    let (a, c, out) = (b.lane(e0, 0), b.lane(e0, 1), b.lane(e1, 0));
+    b.connect(a, out, j1, dir::STRAIGHT, state);
+    b.connect(c, out, j1, dir::STRAIGHT, state);
+    // Each gives way to the other, as netconvert's zipper merges have it.
+    b.set_logic(j1, &[(0b10, 0b10), (0b01, 0b01)]);
+    let mut engine = Engine::new(b.build(), 5);
+    for k in 0..2400 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 1.0,
+            from: e0,
+            to: e1,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    lane_throughput(&mut engine, out, 900.0, 2400.0)
+}
+
+#[test]
+fn capacity_of_a_lane_drop() {
+    // One lane on: about 1,900 an hour (HCM's base), less a little for the merging.
+    for (name, state) in [("zipper", b'Z'), ("give way both", b'm')] {
+        let got = lane_drop_capacity(state);
+        println!("lane drop, {name}: {got:.0}/h");
+        assert!((1_500.0..2_100.0).contains(&got), "{name}: {got:.0}");
+    }
+}

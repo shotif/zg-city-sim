@@ -201,6 +201,9 @@ pub struct Network {
     pub shape_dist: Vec<f32>,
     /// Length of the internal path of each link (sum of its via lanes).
     pub link_via_length: Vec<f32>,
+    /// The links into each lane: `links_into[links_into_offsets[l]..links_into_offsets[l + 1]]`.
+    pub links_into_offsets: Vec<u32>,
+    pub links_into: Vec<u32>,
     /// Vehicle classes allowed on the whole link (from, via and to lanes).
     pub link_allow: Vec<u16>,
     /// Lane permissions as loaded: edits change `d.lane_allow`, and a vehicle already on a
@@ -339,6 +342,22 @@ impl Network {
             link_via_length[l] = len;
         }
 
+        let n_lanes = d.lane_edge.len();
+        let mut links_into_offsets = vec![0u32; n_lanes + 1];
+        for l in 0..n_links {
+            links_into_offsets[d.link_to[l] as usize + 1] += 1;
+        }
+        for l in 0..n_lanes {
+            links_into_offsets[l + 1] += links_into_offsets[l];
+        }
+        let mut fill = links_into_offsets.clone();
+        let mut links_into = vec![0u32; n_links];
+        for l in 0..n_links {
+            let to = d.link_to[l] as usize;
+            links_into[fill[to] as usize] = l as u32;
+            fill[to] += 1;
+        }
+
         // Request index -> link per junction.
         let mut junction_request_offset = vec![0u32; n_junctions + 1];
         for j in 0..n_junctions {
@@ -414,6 +433,8 @@ impl Network {
             lane_geom_length,
             shape_dist,
             link_via_length,
+            links_into_offsets,
+            links_into,
             link_allow: vec![0; n_links],
             lane_allow_loaded,
             link_banned: vec![false; n_links],

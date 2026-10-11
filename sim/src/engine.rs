@@ -66,6 +66,9 @@ const PUSH_IN_WAIT: f32 = 15.0;
 /// may only clear at a red), a driver enters a junction even if the road behind it is full,
 /// so gridlocks can unwind.
 const BLOCK_BOX_WAIT: f32 = 60.0;
+/// Lanes into a junction shorter than this (m): drivers giving way there also look out for
+/// those still crossing the junction before it (M12).
+const LOOK_BACK: f32 = 30.0;
 /// Bikes (M8d) route as if roads without a cycle track or lane were this many times as long
 /// (one lane each way; more), and are drawn this far (m) in from the right-hand edge of their
 /// lane.
@@ -2402,14 +2405,22 @@ impl Engine {
             if !self.signal_allows(next, NONE) {
                 return false;
             }
+            // Through the next junction: a vehicle moving on there makes room, as on a road;
+            // one standing leaves the room behind it (M12).
+            need -= (len - reserved).max(0.0);
             let mut via = d.link_via[next as usize];
             while via != NONE && self.net.lane_internal[via as usize] {
-                if self.ahead_of(via, 0, bike).is_some() {
-                    return false;
+                let via_len = d.lane_length[via as usize];
+                if let Some(u) = self.ahead_of(via, 0, bike) {
+                    let uv = &self.vehs[u as usize];
+                    return uv.speed > 3.0 || uv.pos - uv.params().length >= need;
+                }
+                need -= via_len;
+                if need <= 0.0 {
+                    return true;
                 }
                 via = d.lane_next[via as usize];
             }
-            need -= (len - reserved).max(0.0);
             link = next;
         }
         true
@@ -2562,6 +2573,75 @@ impl Engine {
                     can_stop: uv.speed * uv.speed / (2.0 * up.decel) < dist - 1.0,
                 };
                 n += 1;
+            }
+            // A short lane in (a roundabout's ring pieces are mostly under a metre): those
+            // still inside the junction before it, bound this way, are coming too (M12).
+            if lane_len < LOOK_BACK && self.lane_vehs[from].is_empty() {
+                n = self.coming_through(link, from, lane_len, out, n);
+            }
+        }
+        n
+    }
+
+    /// Vehicles inside the junctions just before lane `from` that will take `link` from it
+    /// (by their routes), as users of `link` arriving in turn, added to `out` from `n`.
+    fn coming_through(
+        &self,
+        link: u32,
+        from: usize,
+        lane_len: f32,
+        out: &mut [LinkUser; 8],
+        mut n: usize,
+    ) -> usize {
+        let net = &self.net;
+        let d = &net.d;
+        let to_edge = d.lane_edge[d.link_to[link as usize] as usize];
+        let from_edge = d.lane_edge[from];
+        let (a, b) = (
+            net.links_into_offsets[from] as usize,
+            net.links_into_offsets[from + 1] as usize,
+        );
+        for &pl in &net.links_into[a..b] {
+            let mut lane = d.link_via[pl as usize];
+            let mut rest = net.link_via_length[pl as usize];
+            let mut guard = 0;
+            while lane != NONE && net.lane_internal[lane as usize] && guard < 8 {
+                for &u in &self.lane_vehs[lane as usize] {
+                    if n == out.len() {
+                        return n;
+                    }
+                    let uv = &self.vehs[u as usize];
+                    let i = uv.route_idx as usize;
+                    if uv.route.get(i + 1) != Some(&from_edge)
+                        || uv.route.get(i + 2) != Some(&to_edge)
+                    {
+                        continue;
+                    }
+                    let up = uv.params();
+                    let dist = (rest - uv.pos).max(0.0) + lane_len;
+                    let v_link = self.link_speed(uv, link);
+                    let arrive = travel_time(dist, uv.speed, up.accel, v_link);
+                    let v_arrive = (uv.speed * uv.speed + 2.0 * up.accel * dist)
+                        .sqrt()
+                        .min(v_link.max(uv.speed));
+                    out[n] = LinkUser {
+                        veh: u,
+                        arrive: arrive.max(0.01),
+                        leave: arrive
+                            + travel_time(
+                                net.link_via_length[link as usize] + up.length,
+                                v_arrive,
+                                up.accel,
+                                v_link,
+                            ),
+                        speed: uv.speed,
+                        can_stop: false,
+                    };
+                    n += 1;
+                }
+                rest -= d.lane_length[lane as usize];
+                lane = d.lane_next[lane as usize];
+                guard += 1;
             }
         }
         n
