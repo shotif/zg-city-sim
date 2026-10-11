@@ -478,8 +478,8 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
             if let Some(n) = env("CANDIDATES") {
                 demand.candidates = n as usize;
             }
-            // MIRROR_HOME=1: trips home as commutes driven back (M13).
-            demand.mirror_home = std::env::var("MIRROR_HOME").is_ok();
+            // NO_MIRROR_HOME=1: trips home from jobs to homes near them, as before M13.
+            demand.mirror_home = std::env::var("NO_MIRROR_HOME").is_err();
             // GATEWAY_LOCAL_KM=8: another decay for traffic across the map's edge on roads
             // other than motorways, to calibrate.
             if let Some(km) = std::env::var("GATEWAY_LOCAL_KM")

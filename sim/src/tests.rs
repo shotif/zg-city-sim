@@ -4625,3 +4625,51 @@ fn a_stop_sign_a_short_piece_beyond_lets_drivers_through() {
     run_until(&mut engine, 150.0, assert_no_overlaps);
     assert_eq!(engine.stats.arrived, 5);
 }
+
+#[test]
+fn commuters_drive_home_to_the_town_they_came_from() {
+    // A town 20 km from the City with homes and no jobs, and the City with as many homes
+    // and all the jobs: half the commutes come from the town, and so half the trips home
+    // from the City's jobs go back there (M13). Drawn from jobs to homes near them, nearly
+    // none did.
+    let mut b = Builder::default();
+    let j = [
+        b.junction(0.0, 0.0),
+        b.junction(100.0, 0.0),
+        b.junction(20_000.0, 0.0),
+        b.junction(20_100.0, 0.0),
+        b.junction(20_200.0, 0.0),
+    ];
+    let town = b.road(j[0], j[1], 1, 13.9);
+    let city_homes = b.road(j[2], j[3], 1, 13.9);
+    let city_jobs = b.road(j[3], j[4], 1, 13.9);
+    let net = b.build();
+    let mut demand = Demand::new(
+        &net,
+        vec![town, city_homes, city_jobs],
+        &[1.0, 1.0, 0.0],
+        &[0.0, 0.0, 1.0],
+        10_000.0,
+    );
+    let mut rng = crate::rng::Rng::new(5);
+    let mut share_home_in_town = |demand: &Demand| {
+        let mut to_town = 0;
+        for _ in 0..4000 {
+            let (from, to) = demand.draw_home(&mut rng).expect("a trip home");
+            assert_eq!(from, 2, "trips home start at the jobs");
+            to_town += (to == 0) as u32;
+        }
+        to_town as f32 / 4000.0
+    };
+    let mirrored = share_home_in_town(&demand);
+    assert!(
+        (0.4..0.6).contains(&mirrored),
+        "{mirrored} went home to the town"
+    );
+    demand.mirror_home = false;
+    let near = share_home_in_town(&demand);
+    assert!(
+        near < 0.1,
+        "{near} went home to the town drawn near the jobs"
+    );
+}

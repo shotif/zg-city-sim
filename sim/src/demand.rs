@@ -277,7 +277,7 @@ impl Demand {
             decay: 4000.0,
             power: 0.0,
             candidates: CANDIDATES,
-            mirror_home: false,
+            mirror_home: true,
             hourly_sum: HOURLY.iter().sum(),
             acc: 0.0,
             gateways: Vec::new(),
@@ -376,6 +376,11 @@ impl Demand {
     /// for comparing where commutes go with the census (M13).
     pub fn draw_commute(&self, rng: &mut Rng) -> Option<(usize, usize)> {
         self.draw(1.0, 0.0, rng).flatten()
+    }
+
+    /// A trip home as the engine draws them (indices into the demand edges).
+    pub fn draw_home(&self, rng: &mut Rng) -> Option<(usize, usize)> {
+        self.draw(0.0, 1.0, rng).flatten()
     }
 
     /// Bike trips (M8d): `daily` a day between the edges' homes and jobs, over shorter
