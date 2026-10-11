@@ -162,6 +162,11 @@ pub struct Demand {
     home_cum: Vec<f64>,
     work_cum: Vec<f64>,
     any_cum: Vec<f64>,
+    /// The same weights for drawing destination candidates in constant time (M13: many
+    /// candidates a trip).
+    home_alias: Alias,
+    work_alias: Alias,
+    any_alias: Alias,
     /// Trips per day within the map at scale 1.
     pub daily_trips: f64,
     /// Distance (m) over which destination attractiveness falls by a factor e.
@@ -194,6 +199,60 @@ pub struct Demand {
     pub vtype: Option<u8>,
     /// Car trips moved to public transport or back, where edits change it (M9d).
     shift: Option<Shift>,
+}
+
+/// Walker's alias table: draws an index in proportion to its weight in constant time.
+#[derive(Default)]
+struct Alias {
+    prob: Vec<f32>,
+    alias: Vec<u32>,
+}
+
+impl Alias {
+    fn new(weights: &[f32]) -> Alias {
+        let n = weights.len();
+        let total: f64 = weights.iter().map(|&w| w.max(0.0) as f64).sum();
+        if n == 0 || total <= 0.0 {
+            return Alias::default();
+        }
+        let mut prob: Vec<f64> = weights
+            .iter()
+            .map(|&w| w.max(0.0) as f64 * n as f64 / total)
+            .collect();
+        let mut alias = vec![0u32; n];
+        let (mut small, mut large): (Vec<usize>, Vec<usize>) = (0..n).partition(|&i| prob[i] < 1.0);
+        while let (Some(&s), Some(&l)) = (small.last(), large.last()) {
+            small.pop();
+            alias[s] = l as u32;
+            prob[l] -= 1.0 - prob[s];
+            if prob[l] < 1.0 {
+                large.pop();
+                small.push(l);
+            }
+        }
+        // What is left is 1 but for rounding.
+        for i in small.into_iter().chain(large) {
+            prob[i] = 1.0;
+            alias[i] = i as u32;
+        }
+        Alias {
+            prob: prob.into_iter().map(|p| p as f32).collect(),
+            alias,
+        }
+    }
+
+    fn sample(&self, rng: &mut Rng) -> Option<usize> {
+        let n = self.prob.len();
+        if n == 0 {
+            return None;
+        }
+        let i = ((rng.f64() * n as f64) as usize).min(n - 1);
+        Some(if rng.f32() < self.prob[i] {
+            i
+        } else {
+            self.alias[i] as usize
+        })
+    }
 }
 
 fn cumulative(w: &[f32]) -> Vec<f64> {
@@ -273,6 +332,9 @@ impl Demand {
             home_cum: cumulative(home),
             work_cum: cumulative(work),
             any_cum: cumulative(&any),
+            home_alias: Alias::new(home),
+            work_alias: Alias::new(work),
+            any_alias: Alias::new(&any),
             daily_trips,
             decay: 4000.0,
             power: 0.0,
@@ -350,19 +412,19 @@ impl Demand {
                 .draw(1.0, 0.0, rng)
                 .map(|pair| pair.map(|(home, work)| (work, home)));
         }
-        let (from_cum, to_cum) = if r < to_work {
-            (&self.home_cum, &self.work_cum)
+        let (from_cum, to) = if r < to_work {
+            (&self.home_cum, &self.work_alias)
         } else if r < to_work + to_home {
-            (&self.work_cum, &self.home_cum)
+            (&self.work_cum, &self.home_alias)
         } else {
-            (&self.any_cum, &self.any_cum)
+            (&self.any_cum, &self.any_alias)
         };
         let o = sample(from_cum, rng)?;
         Some(
             self.near(
                 self.pos[o],
                 o,
-                to_cum,
+                to,
                 self.decay,
                 self.power,
                 self.candidates,
@@ -411,6 +473,9 @@ impl Demand {
         self.home_cum = fresh.home_cum;
         self.work_cum = fresh.work_cum;
         self.any_cum = fresh.any_cum;
+        self.home_alias = fresh.home_alias;
+        self.work_alias = fresh.work_alias;
+        self.any_alias = fresh.any_alias;
         self.daily_trips = daily_trips;
         self.by_edge = OnceCell::new();
         // The shift names the old edges: the engine sets it again.
@@ -687,12 +752,12 @@ impl Demand {
             let Some(g) = sample(&self.inbound.cum, rng) else {
                 break;
             };
-            let cum = [&self.work_cum, &self.home_cum, &self.any_cum][pick(mix, rng)];
+            let to = [&self.work_alias, &self.home_alias, &self.any_alias][pick(mix, rng)];
             let (decay, candidates) = self.gateway_reach[g];
             let Some(d) = self.near(
                 self.gateway_pos[g],
                 usize::MAX,
-                cum,
+                to,
                 decay,
                 0.0,
                 candidates,
@@ -716,12 +781,12 @@ impl Demand {
             let Some(g) = sample(&self.outbound.cum, rng) else {
                 break;
             };
-            let cum = [&self.home_cum, &self.work_cum, &self.any_cum][pick(mix, rng)];
+            let from = [&self.home_alias, &self.work_alias, &self.any_alias][pick(mix, rng)];
             let (decay, candidates) = self.gateway_reach[g];
             let Some(o) = self.near(
                 self.gateway_pos[g],
                 usize::MAX,
-                cum,
+                from,
                 decay,
                 0.0,
                 candidates,
@@ -796,7 +861,7 @@ impl Demand {
         &self,
         from: (f32, f32),
         exclude: usize,
-        cum: &[f64],
+        weights: &Alias,
         decay: f32,
         power: f32,
         candidates: usize,
@@ -811,13 +876,15 @@ impl Demand {
             if n == candidates {
                 break;
             }
-            let c = sample(cum, rng)?;
+            let c = weights.sample(rng)?;
             if c == exclude {
                 continue;
             }
             let dist = distance(from, self.pos[c]);
             let mut w = (-dist / decay).exp();
-            if power > 0.0 {
+            if power == 1.0 {
+                w *= 1000.0 / dist.max(400.0);
+            } else if power > 0.0 {
                 w *= (dist.max(400.0) / 1000.0).powf(-power);
             }
             let w = w + 1e-9;
@@ -837,5 +904,35 @@ impl Demand {
             }
         }
         Some(cand[n - 1])
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::Alias;
+    use crate::rng::Rng;
+
+    #[test]
+    fn alias_draws_in_proportion_to_weights() {
+        let alias = Alias::new(&[1.0, 0.0, 3.0, 6.0, -2.0]);
+        let mut rng = Rng::new(3);
+        let mut seen = [0u32; 5];
+        for _ in 0..100_000 {
+            seen[alias.sample(&mut rng).unwrap()] += 1;
+        }
+        let share = |i: usize| seen[i] as f32 / 100_000.0;
+        assert_eq!(
+            (seen[1], seen[4]),
+            (0, 0),
+            "weightless entries drawn: {seen:?}"
+        );
+        for (i, want) in [(0, 0.1), (2, 0.3), (3, 0.6)] {
+            assert!(
+                (share(i) - want).abs() < 0.01,
+                "{i}: {} not {want}",
+                share(i)
+            );
+        }
+        assert!(Alias::new(&[0.0, 0.0]).sample(&mut rng).is_none());
     }
 }
