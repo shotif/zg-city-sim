@@ -26,6 +26,7 @@ import shapely
 
 from .config import OUTPUT_DIR, PIPELINE_DIR, REPO_ROOT
 from .counts import STATIONS, WORKDAY_FACTOR, Station
+from .demand import CAR_TRIP_RATE, CAR_TRIPS_PER_RESIDENT, COUNTY_RATE, SETTLEMENTS
 from .gateways import road_refs, to_scene
 from .packed import read_packed
 from .transit import tangent
@@ -395,6 +396,58 @@ def crossing_rows(
     return rows
 
 
+COMMUTERS = PIPELINE_DIR / "data" / "census_2021_commuters.json"
+# Towns shown in the commutes table (largest by employed residents), and the share of a
+# town's census population that must live inside the map for it to be shown.
+COMMUTE_TOWNS = 14
+TOWN_INSIDE = 0.6
+
+
+def commute_rows(run_dir: Path) -> list[tuple[str, int, float, float, float, float]] | None:
+    """Where commutes go (M13): for the City and the largest towns with most of their
+    people inside the map, employed residents (the 2021 census) and the shares of commutes
+    that stay in the town and go to the City, simulated (drawn from the demand by the day
+    runner) and in the census (of everyone employed: those who work in their own settlement
+    or another one of the same town stay; those who work in another county go to the City,
+    from Zagreb County). For the City, the second share is of those who work outside it."""
+    path = run_dir / "town_commutes.bin"
+    index = json.loads((OUTPUT_DIR / "demand" / "demand.json").read_text())
+    if not path.exists() or not COMMUTERS.exists() or "towns" not in index:
+        return None
+    raw = path.read_bytes()
+    n = struct.unpack_from("<I", raw)[0]
+    drawn = np.frombuffer(raw, "<f4", n * n, 4).reshape(n, n).astype(float)
+    census = {(r["county"], r["town"]): r for r in json.loads(COMMUTERS.read_text())["towns"]}
+    # Each town's people inside the map (from its streets' trip weights) against its census
+    # population, to leave out towns mostly beyond the map's edge.
+    demand = read_packed(OUTPUT_DIR / "demand" / index["file"], index)
+    town = demand["demandTown"].astype(np.int64)
+    inside = town < len(index["towns"])
+    trips = np.bincount(town[inside], demand["demandHome"][inside], len(index["towns"]))
+    population: dict[tuple[str, str], float] = {}
+    for r in json.loads(SETTLEMENTS.read_text())["settlements"]:
+        key = (r["county"], r["municipality"])
+        population[key] = population.get(key, 0.0) + r["population"]
+    rows = []
+    for i, t in enumerate(index["towns"][: n - 1]):
+        key = (t["county"], t["town"])
+        c = census.get(key)
+        total = drawn[i].sum()
+        if c is None or not c["employed"] or total <= 0:
+            continue
+        rate = CAR_TRIP_RATE.get(t["county"], COUNTY_RATE) / CAR_TRIPS_PER_RESIDENT
+        if i > 0 and trips[i] / rate < TOWN_INSIDE * population.get(key, np.inf):
+            continue
+        employed = c["employed"]
+        stay = (employed - c["commuters"] + c["withinTown"]) / employed
+        away = 1 - drawn[0, 0] / total if i == 0 else drawn[i, 0] / total
+        rows.append(
+            (t["town"], employed, drawn[i, i] / total, stay, away, c["otherCounty"] / employed)
+        )
+    rows.sort(key=lambda r: (r[0] != "Zagreb", -r[1]))
+    return rows[: COMMUTE_TOWNS + 1]
+
+
 BIKE_COUNTS = PIPELINE_DIR / "data" / "bike_counts_2014.json"
 # A bike counting site goes on the nearest stretch of its road within this far (m) of where
 # the City's map shows it, with the nearest stretch running the other way (a divided road's
@@ -476,6 +529,7 @@ def report(
     inputs: set[int] | None = None,
     crossings: list[tuple[str, int, float, float]] | None = None,
     bikes: list[tuple[str, int, float]] | None = None,
+    commutes: list[tuple[str, int, float, float, float, float]] | None = None,
 ) -> str:
     """docs/VALIDATION.md. `inputs`: stations whose counts set traffic across the map's
     edge."""
@@ -895,6 +949,29 @@ def report(
                         f"| {name} | {fmt(counted)} | {fmt(simulated)} | "
                         f"{simulated / counted:.2f} |"
                     )
+    if commutes:
+        lines += [
+            "",
+            "## Where commutes go",
+            "",
+            "The 2021 census counts each town's employed residents and, of those who commute "
+            "daily, where they work: in another settlement of the same town, another town of "
+            "the county, another county (from Zagreb County, nearly always the City) or "
+            "abroad. Simulated: commutes drawn from the demand by the town of home and of "
+            "work. The census's shares are of everyone employed, by any mode and including "
+            "those who work where they live, so simulated car commutes should leave a town "
+            "somewhat more often than the census has it. For the City, the second pair is the "
+            "share who work outside it.",
+            "",
+            "| Town | Employed (census) | Stay in the town: simulated | census "
+            "| Go to the City: simulated | census |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+        for name, employed, sim_stay, stay, sim_away, away in commutes:
+            lines.append(
+                f"| {name} | {fmt(employed)} | {sim_stay:.0%} | {stay:.0%} | "
+                f"{sim_away:.0%} | {away:.0%} |"
+            )
     lines += [
         "",
         "## How to repeat",
@@ -962,6 +1039,7 @@ def main(argv: list[str] | None = None) -> None:
             inputs=inputs,
             crossings=crossings,
             bikes=bikes,
+            commutes=commute_rows(args.run_dir),
         )
     )
     scale = float(day.get("demandScale", 1.0))
