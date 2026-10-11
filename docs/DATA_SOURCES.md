@@ -13,7 +13,7 @@ _Inventory verified by live queries on 2026-10-06. "Not verified" marks anything
 | ZET GTFS static | Tram and bus routes, stops, timetables | Otvorena dozvola | ✅ in use: weekday timetable on the network |
 | ZET GTFS-RT | Live tram and bus positions | Otvorena dozvola, "test purpose only" | M6 (needs a proxy) |
 | HŽ Putnički prijevoz GTFS | Train routes, stations, timetables | none stated (published for public use; used with attribution, by the owner's decision) | ✅ in use (M8a): a weekday's trains in the map |
-| DZS Census 2021 | Population by district and settlement, commuters | attribution requested | ✅ population of each of the 17 districts and of 384 settlements around the City in use for demand (`pipeline/data/census_2021_settlements.json`) |
+| DZS Census 2021 | Population by district and settlement, commuters | attribution requested | ✅ population of each of the 17 districts and of 384 settlements around the City in use for demand (`pipeline/data/census_2021_settlements.json`); employed residents and daily commuters by town against the simulated commutes (`census_2021_commuters.json`, M13) |
 | Hrvatske ceste counts 2025 | Calibration (AADT and hourly profiles at counting stations) | page says Otvorena dozvola, PDF says all rights reserved | ✅ 156 stations in and around the map, 90 with hourly profiles (`pipeline/data/hc_counts_2025.json`): traffic across the map's edge, the hourly demand profile and [validation](VALIDATION.md) |
 | Transport Master Plan (2020) | Calibration targets: trip rates, modal split | reports, no licence | M3 |
 | City road closures feed | Live closures | Otvorena dozvola | ✅ copied every 15 min to the `live-data` branch (`.github/workflows/live-data.yml`); drawn in the app, routed around |
@@ -171,6 +171,7 @@ The national access point also lists ZET and HŽ GTFS, but under a contract with
 - <https://podaci.dzs.hr/media/td3jvrbu/popis_2021-stanovnistvo_po_gradovima_opcinama.xlsx>:
   - rows for each of the 17 Zagreb city districts;
   - sheet 6: population by age;
+  - sheet 12: population aged 15 and over by economic activity (employed residents);
   - sheet 18: daily and weekly commuters by destination type.
 - <https://podaci.dzs.hr/media/rqybclnx/popis_2021-stanovnistvo_po_naseljima.xlsx>: age × sex by settlement (68 in the City; join on name).
 
@@ -201,7 +202,7 @@ The national access point also lists ZET and HŽ GTFS, but under a contract with
 
 - **Settlements** (`pipeline/census.py` → `pipeline/data/census_2021_settlements.json`): 2,287 settlements in the five counties the map covers. Around the City, each settlement's population is spread over the homes inside its OpenStreetMap boundary (admin level 8); 384 settlements match by name and town (or by a name used once in these counties, or the town of the nearest matched settlement), 2 do not.
 
-**Commuters** (sheet 18 of the towns workbook): 70,566 Zagreb residents commute daily. From the towns around the City, daily commuters to another county (for Zagreb County, the City) number 14,760 from Velika Gorica, 6,904 from Samobor, 6,251 from Zaprešić, 4,488 from Sveta Nedelja, 4,472 from Dugo Selo, 2,725 from Sveti Ivan Zelina and 2,557 from Brdovec. No municipality-to-municipality origin–destination matrix is published.
+**Commuters** (sheet 18 of the towns workbook): 70,566 Zagreb residents commute daily. From the towns around the City, daily commuters to another county (for Zagreb County, the City) number 14,760 from Velika Gorica, 6,904 from Samobor, 6,251 from Zaprešić, 4,488 from Sveta Nedelja, 4,472 from Dugo Selo, 2,725 from Sveti Ivan Zelina and 2,557 from Brdovec. No municipality-to-municipality origin–destination matrix is published. Since M13, `pipeline/census.py` writes each town's, municipality's and City district's employed residents (sheet 12) and employed daily commuters by where they work (sheet 18: another settlement of the same town, another town of the county, another county, abroad) to `pipeline/data/census_2021_commuters.json` (125 rows in the five counties), and the simulated commutes by town are compared with them.
 
 **Licence:** not stated explicitly. The workbooks ask users to cite DZS.
 

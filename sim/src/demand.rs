@@ -45,6 +45,8 @@ const CANDIDATES: usize = 8;
 /// whole map's jobs and homes, a regional road's traffic at Zabok nearly all headed for
 /// Zagreb, 25 km on.
 const LOCAL_CANDIDATES: usize = 128;
+/// Most candidates a destination is chosen from (the arrays `near` keeps them in).
+const MAX_CANDIDATES: usize = 256;
 /// Share of trips across the map's edge that are commutes (the rest are errands, business
 /// and visits), and the share of those commuters who live beyond the map (the rest live
 /// inside it and work beyond it).
@@ -164,6 +166,10 @@ pub struct Demand {
     pub daily_trips: f64,
     /// Distance (m) over which destination attractiveness falls by a factor e.
     pub decay: f32,
+    /// Destinations within the map also lose attractiveness with distance to this power (0:
+    /// by the decay alone), and are chosen from this many candidates (M13).
+    pub power: f32,
+    pub candidates: usize,
     hourly_sum: f32,
     acc: f64,
     gateways: Vec<Gateway>,
@@ -267,6 +273,8 @@ impl Demand {
             any_cum: cumulative(&any),
             daily_trips,
             decay: 4000.0,
+            power: 0.0,
+            candidates: CANDIDATES,
             hourly_sum: HOURLY.iter().sum(),
             acc: 0.0,
             gateways: Vec::new(),
@@ -341,9 +349,23 @@ impl Demand {
         };
         let o = sample(from_cum, rng)?;
         Some(
-            self.near(self.pos[o], o, to_cum, self.decay, CANDIDATES, rng)
-                .map(|d| (o, d)),
+            self.near(
+                self.pos[o],
+                o,
+                to_cum,
+                self.decay,
+                self.power,
+                self.candidates,
+                rng,
+            )
+            .map(|d| (o, d)),
         )
+    }
+
+    /// A commute from home to work as the engine draws them (indices into the demand edges),
+    /// for comparing where commutes go with the census (M13).
+    pub fn draw_commute(&self, rng: &mut Rng) -> Option<(usize, usize)> {
+        self.draw(1.0, 0.0, rng).flatten()
     }
 
     /// Bike trips (M8d): `daily` a day between the edges' homes and jobs, over shorter
@@ -652,8 +674,15 @@ impl Demand {
             };
             let cum = [&self.work_cum, &self.home_cum, &self.any_cum][pick(mix, rng)];
             let (decay, candidates) = self.gateway_reach[g];
-            let Some(d) = self.near(self.gateway_pos[g], usize::MAX, cum, decay, candidates, rng)
-            else {
+            let Some(d) = self.near(
+                self.gateway_pos[g],
+                usize::MAX,
+                cum,
+                decay,
+                0.0,
+                candidates,
+                rng,
+            ) else {
                 continue;
             };
             let truck = rng.f32() < trucks && self.entry_truck_ok[g] && self.truck_ok[d];
@@ -674,8 +703,15 @@ impl Demand {
             };
             let cum = [&self.home_cum, &self.work_cum, &self.any_cum][pick(mix, rng)];
             let (decay, candidates) = self.gateway_reach[g];
-            let Some(o) = self.near(self.gateway_pos[g], usize::MAX, cum, decay, candidates, rng)
-            else {
+            let Some(o) = self.near(
+                self.gateway_pos[g],
+                usize::MAX,
+                cum,
+                decay,
+                0.0,
+                candidates,
+                rng,
+            ) else {
                 continue;
             };
             let truck = rng.f32() < trucks && self.exit_truck_ok[g] && self.truck_ok[o];
@@ -738,19 +774,22 @@ impl Demand {
     }
 
     /// Gravity model: draw candidates by attractiveness (`cum`), keep one weighted by its
-    /// distance from `from`. `exclude` (an index into the demand edges) is never chosen.
+    /// distance from `from` (exp(-d / `decay`), times (d / 1 km)^-`power` from 400 m).
+    /// `exclude` (an index into the demand edges) is never chosen.
+    #[allow(clippy::too_many_arguments)]
     fn near(
         &self,
         from: (f32, f32),
         exclude: usize,
         cum: &[f64],
         decay: f32,
+        power: f32,
         candidates: usize,
         rng: &mut Rng,
     ) -> Option<usize> {
-        let candidates = candidates.min(LOCAL_CANDIDATES);
-        let mut cand = [0usize; LOCAL_CANDIDATES];
-        let mut weight = [0f32; LOCAL_CANDIDATES];
+        let candidates = candidates.min(MAX_CANDIDATES);
+        let mut cand = [0usize; MAX_CANDIDATES];
+        let mut weight = [0f32; MAX_CANDIDATES];
         let mut total = 0.0;
         let mut n = 0;
         for _ in 0..candidates * 2 {
@@ -761,7 +800,12 @@ impl Demand {
             if c == exclude {
                 continue;
             }
-            let w = (-distance(from, self.pos[c]) / decay).exp() + 1e-9;
+            let dist = distance(from, self.pos[c]);
+            let mut w = (-dist / decay).exp();
+            if power > 0.0 {
+                w *= (dist.max(400.0) / 1000.0).powf(-power);
+            }
+            let w = w + 1e-9;
             cand[n] = c;
             weight[n] = w;
             total += w;

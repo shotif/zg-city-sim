@@ -393,6 +393,46 @@ pub fn load_districts(demand_dir: &str) -> Vec<u8> {
     }
 }
 
+/// The town or municipality of each demand edge (`demandTown`, M13; 65535: none), if loaded.
+pub fn load_towns(demand_dir: &str) -> Vec<u16> {
+    let Some((arrays, blob)) = read_packed(demand_dir, "demand") else {
+        return Vec::new();
+    };
+    match arrays.get("demandTown") {
+        Some((_, offset, length)) => blob[*offset..*offset + 2 * length]
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Commutes from home to work drawn from `demand` (`samples` of them), counted by the town
+/// of home and of work (`towns` by demand edge; the last row and column: no town), written
+/// to `path`: u32 towns + 1, then the f32 counts row by row (M13: against the census).
+pub fn write_town_commutes(demand: &Demand, towns: &[u16], samples: usize, path: &str) {
+    let n = towns
+        .iter()
+        .filter(|&&t| t != u16::MAX)
+        .map(|&t| t as usize + 1)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let mut counts = vec![0f32; n * n];
+    let mut rng = zg_sim::rng::Rng::new(13);
+    let town = |e: usize| towns.get(e).map_or(n - 1, |&t| (t as usize).min(n - 1));
+    for _ in 0..samples {
+        if let Some((o, d)) = demand.draw_commute(&mut rng) {
+            counts[town(o) * n + town(d)] += 1.0;
+        }
+    }
+    let mut bytes = (n as u32).to_le_bytes().to_vec();
+    for c in counts {
+        bytes.extend_from_slice(&c.to_le_bytes());
+    }
+    std::fs::write(path, bytes).expect("write town commutes");
+}
+
 /// Demand from `demand_dir` (with traffic across the map's edge unless NO_GATEWAYS is
 /// set), or a placeholder from the network. `trips`: car trips a day within the map (0 =
 /// from the residents).
@@ -411,6 +451,19 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
                 d.edges.len()
             );
             let mut demand = Demand::new(net, d.edges, &d.home, &d.work, daily);
+            // GRAVITY_KM=4, GRAVITY_POWER=1 and CANDIDATES=128: the distance decay of trips
+            // within the map, its power of distance and the candidates destinations are
+            // chosen from, to calibrate (M13).
+            let env = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<f32>().ok());
+            if let Some(km) = env("GRAVITY_KM") {
+                demand.decay = km * 1000.0;
+            }
+            if let Some(power) = env("GRAVITY_POWER") {
+                demand.power = power;
+            }
+            if let Some(n) = env("CANDIDATES") {
+                demand.candidates = n as usize;
+            }
             // GATEWAY_LOCAL_KM=8: another decay for traffic across the map's edge on roads
             // other than motorways, to calibrate.
             if let Some(km) = std::env::var("GATEWAY_LOCAL_KM")

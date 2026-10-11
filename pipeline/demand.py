@@ -96,6 +96,8 @@ SETTLEMENTS = PIPELINE_DIR / "data" / "census_2021_settlements.json"
 # better than at 70 %, the worst places lose 30-40 minutes in the afternoon peak, as in
 # Zagreb, about 1 % of trips are removed from gridlock and the queues clear by night.
 DEMAND_SCALE = 0.8
+# `demandTown` of streets in no known town (beyond the counties the census covers).
+NO_TOWN = 65535
 # Height of one storey, used when a building's number of storeys is unknown.
 STOREY = 3.0
 # Share of floor area that is usable (walls, stairs, plant rooms excluded).
@@ -361,11 +363,12 @@ def read_boundaries() -> tuple[
 
 def settlement_zones(
     x: np.ndarray, z: np.ndarray, outside: np.ndarray
-) -> tuple[np.ndarray, list[float], list[float], dict]:
+) -> tuple[np.ndarray, list[float], list[float], list[tuple[str, str]], dict]:
     """Census settlement of each building outside the City: (zone index per building, -1
     for none; the population of each zone inside the map; each zone's car trips per
-    resident; statistics). A settlement's population is matched by its name and its town
-    or municipality, and cut to the share of its outline inside the map."""
+    resident; each zone's county and town or municipality; statistics). A settlement's
+    population is matched by its name and its town or municipality, and cut to the share of
+    its outline inside the map."""
     census = json.loads(SETTLEMENTS.read_text())["settlements"]
     by_key = {
         (normalize_name(r["municipality"]), normalize_name(r["settlement"])): r for r in census
@@ -408,6 +411,7 @@ def settlement_zones(
     zone = np.full(len(x), -1, np.int64)
     totals: list[float] = []
     rates: list[float] = []
+    towns: list[tuple[str, str]] = []
     geoms = []
     unmatched = [settlements[i][0] for i, r in enumerate(rows) if r is None]
     for (_, geom), row in zip(settlements, rows, strict=True):
@@ -416,6 +420,7 @@ def settlement_zones(
         share = float(geom.intersection(world).area / max(geom.area, 1.0))
         totals.append(row["population"] * share)
         rates.append(CAR_TRIP_RATE.get(row["county"], COUNTY_RATE))
+        towns.append((row["county"], row["municipality"]))
         geoms.append(geom)
     if geoms:
         tree = shapely.STRtree(geoms)
@@ -427,7 +432,7 @@ def settlement_zones(
         "settlementPopulation": round(sum(totals)),
         "settlementsUnmatched": len(unmatched),
     }
-    return zone, totals, rates, stats
+    return zone, totals, rates, towns, stats
 
 
 def classify_landuse(x: np.ndarray, z: np.ndarray, geoms: list, classes: list[int]) -> np.ndarray:
@@ -524,7 +529,7 @@ def build_demand(root: Path = OUTPUT_DIR) -> dict:
     residents = spread(home_area, district, [*population, 0.0])
     # Around the City: each settlement's census population over its homes; homes in no
     # matched settlement (Slovenia, gaps between outlines) at the settlements' mean density.
-    zone, totals, zone_rates, settlement_stats = settlement_zones(x, z, ~inside)
+    zone, totals, zone_rates, zone_towns, settlement_stats = settlement_zones(x, z, ~inside)
     zoned = zone >= 0
     residents[zoned] = spread(home_area[zoned], zone[zoned], totals)
     density = sum(totals) / max(float(home_area[zoned].sum()), 1.0)
@@ -552,6 +557,18 @@ def build_demand(root: Path = OUTPUT_DIR) -> dict:
     by_district = np.zeros((n_edges, len(names) + 1))
     np.add.at(by_district, (edge_of[attached], district[attached]), weight[attached])
     edge_district = by_district[used].argmax(axis=1)
+    # The town or municipality of each street's homes and jobs, the City as one (M13: the
+    # census's commuters by town); NO_TOWN where none is known (beyond the counties).
+    town_keys = [("Grad Zagreb", "Zagreb"), *dict.fromkeys(zone_towns)]
+    town_index = {key: i for i, key in enumerate(town_keys)}
+    zone_town = np.array([town_index[t] for t in zone_towns], np.int64)
+    town = np.full(len(x), len(town_keys), np.int64)
+    town[inside] = 0
+    town[zoned] = zone_town[zone[zoned]]
+    by_town = np.zeros((n_edges, len(town_keys) + 1))
+    np.add.at(by_town, (edge_of[attached], town[attached]), weight[attached])
+    edge_town = by_town[used].argmax(axis=1)
+    edge_town[edge_town == len(town_keys)] = NO_TOWN
     gateway_arrays, gateways = build_gateways(net, n_index)
 
     out_dir = root / "demand"
@@ -562,6 +579,7 @@ def build_demand(root: Path = OUTPUT_DIR) -> dict:
             "demandHome": home[used].astype(np.float32),
             "demandWork": work[used].astype(np.float32),
             "demandDistrict": edge_district.astype(np.uint8),
+            "demandTown": edge_town.astype(np.uint16),
             **gateway_arrays,
         },
     )
@@ -591,7 +609,13 @@ def build_demand(root: Path = OUTPUT_DIR) -> dict:
     ]
     (out_dir / "demand.json").write_text(
         json.dumps(
-            {**packed, **stats, "districts": per_district, "gatewayList": gateways},
+            {
+                **packed,
+                **stats,
+                "districts": per_district,
+                "towns": [{"county": c, "town": t} for c, t in town_keys],
+                "gatewayList": gateways,
+            },
             ensure_ascii=False,
         )
     )

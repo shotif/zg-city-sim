@@ -11,8 +11,9 @@
 //! (u32 junction count, u32 kinds of holdup, then for each junction the vehicle-seconds queued
 //! there over the day by why the queue's front vehicle waited, f32, kinds as `delayKinds` in
 //! day.json; then the same charged to the junction downstream each queue waited on in the
-//! end) and `<out_dir>/day.json` (traffic statistics per hour, with the vehicle-hours
-//! queued at junctions by holdup).
+//! end), `<out_dir>/town_commutes.bin` (commutes drawn from the demand by the town of home
+//! and of work, against the census: `run::write_town_commutes`, M13) and `<out_dir>/day.json`
+//! (traffic statistics per hour, with the vehicle-hours queued at junctions by holdup).
 //!
 //! `FREQUENCY=2` runs every tram and bus line twice as often, `PRIORITY=all` gives trams and
 //! buses signal priority (see `run.rs`).
@@ -57,6 +58,15 @@ fn main() {
 
     let net = Network::build(run::load(&format!("{root}/network"))).expect("network");
     let demand = run::demand_for(&net, &format!("{root}/demand"), 0.0);
+    let towns = run::load_towns(&format!("{root}/demand"));
+    if !towns.is_empty() {
+        run::write_town_commutes(
+            &demand,
+            &towns,
+            2_000_000,
+            &format!("{out}/town_commutes.bin"),
+        );
+    }
     // SEED: another run of the same day (runs differ under congestion).
     let seed = std::env::var("SEED")
         .ok()
