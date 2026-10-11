@@ -170,6 +170,8 @@ pub struct Demand {
     /// by the decay alone), and are chosen from this many candidates (M13).
     pub power: f32,
     pub candidates: usize,
+    /// Trips home drawn as commutes driven back (M13), not from jobs to homes near them.
+    pub mirror_home: bool,
     hourly_sum: f32,
     acc: f64,
     gateways: Vec<Gateway>,
@@ -275,6 +277,7 @@ impl Demand {
             decay: 4000.0,
             power: 0.0,
             candidates: CANDIDATES,
+            mirror_home: false,
             hourly_sum: HOURLY.iter().sum(),
             acc: 0.0,
             gateways: Vec::new(),
@@ -340,6 +343,13 @@ impl Demand {
     /// was found.
     fn draw(&self, to_work: f32, to_home: f32, rng: &mut Rng) -> Option<Option<(usize, usize)>> {
         let r = rng.f32();
+        // Going home: a commute driven back, so that those who drive from a town to work in
+        // the City drive back to it (M13).
+        if self.mirror_home && r >= to_work && r < to_work + to_home {
+            return self
+                .draw(1.0, 0.0, rng)
+                .map(|pair| pair.map(|(home, work)| (work, home)));
+        }
         let (from_cum, to_cum) = if r < to_work {
             (&self.home_cum, &self.work_cum)
         } else if r < to_work + to_home {
