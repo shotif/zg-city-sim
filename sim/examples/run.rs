@@ -407,6 +407,20 @@ pub fn load_towns(demand_dir: &str) -> Vec<u16> {
     }
 }
 
+/// The town of each network edge with homes or jobs (`demandTown`; 65535 elsewhere).
+pub fn load_edge_towns(demand_dir: &str, edges: usize) -> Vec<u16> {
+    let towns = load_towns(demand_dir);
+    let mut out = vec![u16::MAX; edges];
+    if let Some(d) = load_demand(demand_dir) {
+        for (&e, &t) in d.edges.iter().zip(&towns) {
+            if let Some(slot) = out.get_mut(e as usize) {
+                *slot = t;
+            }
+        }
+    }
+    out
+}
+
 /// Commutes from home to work drawn from `demand` (`samples` of them), counted by the town
 /// of home and of work (`towns` by demand edge; the last row and column: no town), written
 /// to `path`: u32 towns + 1, then the f32 counts row by row (M13: against the census).

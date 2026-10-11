@@ -97,6 +97,7 @@ Environment variables for the native runs:
 - `PRIORITY=all` (the `run` and `day` examples) gives trams and buses signal priority at every signal they cross (M10b); `PRIORITY=5` along those routes.
 - `TRAM_HOLDUPS=1` (the `run` example) prints at the end where trams stood still off their stops and why, and how late buses and trams ran; `WATCH_LANES=462508` prints the vehicles on those lanes every 5 simulated minutes.
 - `NO_HIERARCHY=1` (the `run`, `day`, `compare` and `riders` examples) searches routes by A* throughout, as before M11.
+- `SELECT_EDGES=12,34` (the `day` example) writes `select_link.csv`: where the cars and lorries driving onto those edges come from and go to, by town (M13).
 - `ROUTE_LOG=dir` (the `run` example) logs every route search, with what it was for and the travel times it ran on, from `ROUTE_LOG_AFTER` minutes into the run (default 0), for `routes --replay dir [n] [--cch]`.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 

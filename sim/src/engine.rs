@@ -282,6 +282,8 @@ pub struct Vehicle {
     pub blink: i8,
     pub depart: f64,
     pub distance: f32,
+    /// Edge the trip started on (the route's first edge until re-routing replaces it).
+    pub origin: u32,
     /// `trip::*` flags of the trip.
     pub trip_flags: u8,
     /// Whether the driver's routes weigh motorway tolls (`Engine::weighs_tolls`).
@@ -321,6 +323,7 @@ impl Vehicle {
             blink: 0,
             depart: 0.0,
             distance: 0.0,
+            origin: NONE,
             trip_flags: 0,
             weighs_tolls: true,
             transit: None,
@@ -4215,6 +4218,7 @@ impl Engine {
         veh.speed_factor = speed_factor;
         veh.trip_flags = trip.flags;
         veh.weighs_tolls = weighs_tolls;
+        veh.origin = edge;
         veh.route.clear();
         veh.route.append(route);
         veh.next_link = next_link;
@@ -4257,6 +4261,7 @@ impl Engine {
         veh.lane = lane;
         veh.pos = pos;
         veh.speed = speed;
+        veh.origin = route[0];
         veh.route = route;
         veh.next_link = next_link;
         veh.arrival_pos = arrival_pos;

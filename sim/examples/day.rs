@@ -11,7 +11,10 @@
 //! (u32 junction count, u32 kinds of holdup, then for each junction the vehicle-seconds queued
 //! there over the day by why the queue's front vehicle waited, f32, kinds as `delayKinds` in
 //! day.json; then the same charged to the junction downstream each queue waited on in the
-//! end), `<out_dir>/town_commutes.bin` (commutes drawn from the demand by the town of home
+//! end), `<out_dir>/select_link.csv` with `SELECT_EDGES=12,34` (where the cars and lorries
+//! driving onto those edges come from and go to: edge, town of origin, town of destination,
+//! vehicles; towns as `demandTown`, 65534 beyond the map, 65535 unknown; M13),
+//! `<out_dir>/town_commutes.bin` (commutes drawn from the demand by the town of home
 //! and of work, against the census: `run::write_town_commutes`, M13) and `<out_dir>/day.json`
 //! (traffic statistics per hour, with the vehicle-hours queued at junctions by holdup).
 //!
@@ -23,9 +26,10 @@
 
 use std::time::Instant;
 
-use zg_sim::engine::{DT, Engine, Holdup};
-use zg_sim::network::Network;
+use zg_sim::engine::{DT, Engine, Holdup, trip};
+use zg_sim::network::{NONE, Network};
 use zg_sim::transit::Transit;
+use zg_sim::vtype;
 
 #[path = "run.rs"]
 #[allow(dead_code)]
@@ -124,6 +128,19 @@ fn main() {
     let mut delay_hours = Vec::new();
 
     let n = engine.net.edge_count();
+    // SELECT_EDGES: where the traffic on those edges comes from and goes to (M13).
+    let select: Vec<u32> = std::env::var("SELECT_EDGES")
+        .ok()
+        .map(|v| v.split(',').filter_map(|e| e.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    let edge_towns = if select.is_empty() {
+        Vec::new()
+    } else {
+        run::load_edge_towns(&format!("{root}/demand"), n)
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut select_counts: std::collections::HashMap<(u32, u16, u16), u32> =
+        std::collections::HashMap::new();
     let mut by_hour = vec![Vec::new(); 24];
     let mut speeds_by_hour = vec![Vec::new(); 24];
     let mut speed_sum = vec![0u32; n];
@@ -142,6 +159,27 @@ fn main() {
         speed_n.fill(0);
         for i in 0..steps {
             engine.step();
+            for &e in &select {
+                for lane in engine.net.edge_lanes(e) {
+                    for &v in engine.vehicles_on(lane) {
+                        let veh = &engine.vehs[v as usize];
+                        if veh.vtype > vtype::TRUCK || !seen.insert((e, v, veh.serial)) {
+                            continue;
+                        }
+                        let town = |edge: u32, beyond: bool| {
+                            if beyond {
+                                u16::MAX - 1
+                            } else {
+                                edge_towns.get(edge as usize).copied().unwrap_or(u16::MAX)
+                            }
+                        };
+                        let from = town(veh.origin, veh.trip_flags & trip::ENTER != 0);
+                        let dest = *veh.route.last().unwrap_or(&NONE);
+                        let to = town(dest, veh.trip_flags & trip::EXIT != 0);
+                        *select_counts.entry((e, from, to)).or_default() += 1;
+                    }
+                }
+            }
             // Speeds every 10 minutes (the engine averages them over its last minute).
             if i % (600.0 / DT) as u32 == (600.0 / DT) as u32 - 1 {
                 for (e, &r) in engine.edge_speed_ratio.iter().enumerate() {
@@ -241,6 +279,19 @@ fn main() {
         }
     }
     std::fs::write(format!("{out}/junction_delay.bin"), bytes).expect("write delay");
+    if !select.is_empty() {
+        let mut rows: Vec<_> = select_counts.into_iter().collect();
+        rows.sort();
+        let csv: String = rows
+            .iter()
+            .map(|((e, from, to), k)| format!("{e},{from},{to},{k}\n"))
+            .collect();
+        std::fs::write(
+            format!("{out}/select_link.csv"),
+            format!("edge,from,to,vehicles\n{csv}"),
+        )
+        .expect("write select link");
+    }
     let s = &engine.stats;
     // The edges vehicles were most often removed from, as [edge, vehicles].
     let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
