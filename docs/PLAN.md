@@ -501,7 +501,16 @@ Known gaps:
     - at 75 %, 13 and 14 stations, 53 % and 52 %, 0.83 and 0.82, 0.7 %, 4,600, 31 and 28 minutes;
     - at 80 %, 17 and 16 stations, 53 %, 0.84, 1.0 % and 1.1 %, 4,900, 36 and 38 minutes.
   - 80 % fits the most stations and gives the waits Zagreb's worst places have in the peaks (30-45 minutes), for a little more gridlock than the 1 % aimed for. 75 % fits no better than 70 %.
-  - Recalibrated for it: the roads' peak speeds for the riders' car journeys, from the two 80 % runs (`pipeline/data/peak_speeds.json`).
+  - Recalibrated for it:
+    - The roads' peak speeds for the riders' car journeys, from the two 80 % runs (`pipeline/data/peak_speeds.json`).
+    - Public transport's constant, 1.71 (1.717): 436,096 trips by public transport a weekday and 565,186 boardings, as before.
+    - The projects' before and after, run again at 80 % (they were still from 60 %).
+    - The validation report, from the 80 % day on seed 1.
+
+**Status (M12, done 2026-10-11 at 80 %).** The simulation runs 80 % of the estimated demand instead of 70 %, and fits the counts as well or better than before M12 at 70 %: 17 and 16 of 47 stations within ±25 % (17 and 17), the total at 0.84 of the counts (0.79 and 0.80), mean difference 53 % (54 % and 55 %), 40 % of station-hours with GEH below 5 (38 % and 40 %). The worst places in the news lose 30-38 minutes in the afternoon peak, as Zagreb's do; 1.0-1.1 % of trips are removed from gridlock, and the queues clear by night.
+- What made room: roundabouts whose ring pieces are under a metre long, which let in half what the manual gives (M12a), drivers giving way who missed traffic still crossing the junction before (M12a), and drivers standing in a junction for a red light just beyond it (M12c).
+- Tried and left out: signals guessed further out, crossings joined and signalled, a shorter give-way margin, and turns held at their waiting place (M12c).
+- What limits it: the network delivers at most 51,000-52,000 trips an hour; at 90 % the afternoon locks up. Most of the time lost now is at give-way junctions in the centre that are signalled in reality; signalling them from OSM and netconvert's guesses moved the queues elsewhere. The City's signal timings would help most. More demand also fills the roads that are already full rather than the county and local roads, which carry 0.62 of their counts: where trips go matters as much as how many there are.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
@@ -624,7 +633,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M9 Public transport tools** | ZET's and HŽ's lines on the map with their stops and departures, frequencies, new bus and tram lines, riders and the car trips they move, before and after (done 2026-10-10) |
 | **M10 Public transport, deeper** | Trams and buses through junctions and stops as they go, signal priority, riders shared between parallel lines, car times for the split from the simulated roads, boardings compared with ZET's (done 2026-10-10) |
 | **M11 Faster routing** | Route searches on customizable contraction hierarchies: exact fastest routes for cars, trucks and bikes in tens of microseconds, in the engine and the browser; the engine 1.8 times faster in the peak (done 2026-10-10) |
-| **M12 More junction capacity** | Junctions measured against the Highway Capacity Manual and corrected where layouts cost capacity (roundabouts of short ring pieces), then the demand raised past 70 % as far as the counts and gridlock allow |
+| **M12 More junction capacity** | Junctions measured against the Highway Capacity Manual and corrected where layouts cost capacity (roundabouts of short ring pieces, drivers standing in a junction for a light just beyond), then the demand raised from 70 % to 80 % (done) |
 
 ## Risks and open questions
 
