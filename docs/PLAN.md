@@ -504,7 +504,7 @@ Known gaps:
   - Recalibrated for it:
     - The roads' peak speeds for the riders' car journeys, from the two 80 % runs (`pipeline/data/peak_speeds.json`).
     - Public transport's constant, 1.71 (1.717): 436,096 trips by public transport a weekday and 565,186 boardings, as before.
-    - The projects' before and after, run again at 80 % (they were still from 60 %).
+    - The projects' before and after, run again at 80 % (they were still from 60 %). On the named roads within 3 km, over 06:00-10:00: Jarunski most carries about 3,100 vehicles and takes 27 % off Jadranska avenija; Branimirova's extension takes 30 % off Zagrebačka cesta in Sesvete and half off Varaždinska cesta; Šarengradska ulica carries about 900 and takes 9-13 % off Ulica grada Vukovara, Slavonska, Zagrebačka avenija and Horvaćanska cesta; the A11's extension to Sarajevska cesta moves little.
     - The validation report, from the 80 % day on seed 1.
 
 **Status (M12, done 2026-10-11 at 80 %).** The simulation runs 80 % of the estimated demand instead of 70 %, and fits the counts as well or better than before M12 at 70 %: 17 and 16 of 47 stations within ±25 % (17 and 17), the total at 0.84 of the counts (0.79 and 0.80), mean difference 53 % (54 % and 55 %), 40 % of station-hours with GEH below 5 (38 % and 40 %). The worst places in the news lose 30-38 minutes in the afternoon peak, as Zagreb's do; 1.0-1.1 % of trips are removed from gridlock, and the queues clear by night.
