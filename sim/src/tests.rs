@@ -4324,7 +4324,10 @@ fn capacity_of_a_roundabout_entry() {
             "roundabout entry, {vc:.0}/h going round: {got:.0}/h, {short:.0}/h with ring pieces under a metre (HCM {want:.0}/h)"
         );
         assert!((0.7 * want..1.3 * want).contains(&got), "{vc}: {got:.0}");
-        assert!((0.7 * want..1.3 * want).contains(&short), "{vc}: {short:.0}");
+        assert!(
+            (0.7 * want..1.3 * want).contains(&short),
+            "{vc}: {short:.0}"
+        );
     }
 }
 
