@@ -558,6 +558,10 @@ Known gaps:
 - Tried and left out: speeds as built from the roads' bends, surfaces and widths (M14b, M14d) and trips beyond the map's edge (M14c). Each moved the traffic over Medvednica rather than taking it away, or emptied the roads near the edge with it.
 - What is left: too much traffic crosses Medvednica (Karivaroš 5.1 times its count, Gusakovec 3.0, the D307 at Mokrice and Oroslavje 1.3-1.5): the Zagorje towns' and the northern gateways' trips to the City, over hill roads driven at the law's 90 km/h or netconvert's 80 km/h where OpenStreetMap has no limit. Modelling those roads as driven needs their gradients from the terrain and narrow forest roads told apart, and the towns' trips beyond the edge need the roads near the edge to keep their traffic. The D543 at Donja Zdenčina still carries 2.5 times its count, the D1 at Gornji Stupnik 0.29; tolls weighed differently by drivers (the free roads beside the tolled motorways are short in the south-west but over their counts in the north) and through traffic between neighbouring gateways (about 700 vehicles a day between the A4's and the A2's) are left for later.
 
+**Plan (M15 Roads into the City, chosen 2026-10-12).** After M14 the motorways and most roads near the map's edge fit their counts, but the roads between the towns around the City and the City carry 30-70 % of theirs: Velika Gorica's old road through Velika Mlaka (0.52), the D430 at Selnica Šćitarjevska (0.47) and the town's northern bypass (0.30); the D3 from Sveti Ivan Zelina at Belovar and Blažev Dol (0.43, 0.36) and the Ž3016 at Brezovec Zelinski (0.43); the Ž3034 at Dugo Selo (0.54) and the Ž3070 at Rugvica (0.66); the D1 at Gornji Stupnik (0.29). On each of them most of the simulated traffic is the town's trips to and from the City (Velika Gorica's 72-77 % at Velika Mlaka and Selnica, Sveti Ivan Zelina's 51-62 % on the D3). M15 finds, town by town, whether those trips are too few or take other roads, and fixes the causes. Each step that changes the simulation is checked with day runs at 80 % on two seeds and pushed to `main` when it holds.
+
+- **M15a, the towns' trips by the roads they take.** A cordon round each town (Velika Gorica, Sveti Ivan Zelina, Dugo Selo, Samobor and Sveta Nedelja): the town's trips to and from the City by the road they cross it on, against the counts on those roads and the trips the census's commuters imply.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.
@@ -682,6 +686,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M12 More junction capacity** | Junctions measured against the Highway Capacity Manual and corrected where layouts cost capacity (roundabouts of short ring pieces, drivers standing in a junction for a light just beyond), then the demand raised from 70 % to 80 % (done) |
 | **M13 Where trips go** | The towns' car trips and their destinations fitted to the 2021 census's commuters and the counts, trips home back to where commuters came from: 21-22 of 47 stations within ±25 %, half the gridlock (done) |
 | **M14 Route choice** | The A1's toll plaza at Lučko cleared and regional traffic across the map's edge kept regional: 20-21 of 47 stations within ±25 %, less gridlock; speeds as built and trips beyond the edge tried and left out (done) |
+| **M15 Roads into the City** | The roads between the towns around the City and the City fitted to their counts: the towns' trips to the City and the roads they take, town by town |
 
 ## Risks and open questions
 
