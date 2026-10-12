@@ -84,11 +84,16 @@ CAR_TRIPS_PER_RESIDENT = 1.84 * 0.46 / 1.3
 # person in the City and in Krapina-Zagorje County and 1.90 in Zagreb County, of which (not
 # walking) 52.2 %, 80.3 % and 67.3 % by car; scaled from the City's survey rate by those
 # ratios. Counties outside the Master Plan area take Zagreb County's rate.
-COUNTY_RATE = CAR_TRIPS_PER_RESIDENT * 1.90 / 1.84 * 67.3 / 52.2
+# Around the City, raised by half (M13): at those rates the towns' homes started about 0.4
+# commutes a day per employed resident (2021 census), where a car share of 60-65 % (an
+# estimate) gives about 0.6, and the roads between the towns and the City carried well
+# under their counts.
+TOWN_TRIP_FACTOR = 1.5
+COUNTY_RATE = CAR_TRIPS_PER_RESIDENT * 1.90 / 1.84 * 67.3 / 52.2 * TOWN_TRIP_FACTOR
 CAR_TRIP_RATE = {
     "Grad Zagreb": CAR_TRIPS_PER_RESIDENT,
     "Zagrebačka": COUNTY_RATE,
-    "Krapinsko-zagorska": CAR_TRIPS_PER_RESIDENT * 80.3 / 52.2,
+    "Krapinsko-zagorska": CAR_TRIPS_PER_RESIDENT * 80.3 / 52.2 * TOWN_TRIP_FACTOR,
 }
 SETTLEMENTS = PIPELINE_DIR / "data" / "census_2021_settlements.json"
 # Share of the estimated demand the simulation runs (docs/VALIDATION.md). The simulated

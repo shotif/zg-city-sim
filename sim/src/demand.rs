@@ -38,9 +38,17 @@ fn purposes(hour: usize) -> (f32, f32) {
 }
 
 /// Candidate destinations the gravity model chooses between: drawn by attractiveness, one
-/// chosen by distance. Few candidates soften the distance decay; trips within the map and
-/// on motorways across its edge are calibrated with 8.
+/// chosen by distance. Few candidates soften the distance decay; traffic across the map's
+/// edge on motorways and bikes are calibrated with 8.
 const CANDIDATES: usize = 8;
+/// Trips within the map choose from many candidates (close to choosing among all
+/// destinations), with attractiveness falling as e^(-d / 10 km) / (d / 1 km) (M13): with 8
+/// candidates and a 4 km decay, 67-90 % of each town's commutes went to the City where the
+/// 2021 census has 30-60 %. Calibrated by day runs against the counts (a 6 km decay, nearer
+/// the census, left the counted roads with too little traffic).
+const TRIP_CANDIDATES: usize = 128;
+const TRIP_DECAY: f32 = 10_000.0;
+const TRIP_POWER: f32 = 1.0;
 /// Candidates for traffic across the map's edge on other roads: with 8, drawn from the
 /// whole map's jobs and homes, a regional road's traffic at Zabok nearly all headed for
 /// Zagreb, 25 km on.
@@ -336,9 +344,9 @@ impl Demand {
             work_alias: Alias::new(work),
             any_alias: Alias::new(&any),
             daily_trips,
-            decay: 4000.0,
-            power: 0.0,
-            candidates: CANDIDATES,
+            decay: TRIP_DECAY,
+            power: TRIP_POWER,
+            candidates: TRIP_CANDIDATES,
             mirror_home: true,
             hourly_sum: HOURLY.iter().sum(),
             acc: 0.0,
@@ -451,6 +459,8 @@ impl Demand {
         let mut d = Demand::new(net, edges, home, work, daily);
         d.vtype = Some(vtype::BIKE);
         d.decay = BIKE_DECAY;
+        d.power = 0.0;
+        d.candidates = CANDIDATES;
         d
     }
 
