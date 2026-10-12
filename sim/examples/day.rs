@@ -13,7 +13,8 @@
 //! day.json; then the same charged to the junction downstream each queue waited on in the
 //! end), `<out_dir>/select_link.csv` with `SELECT_EDGES=12,34` (where the cars and lorries
 //! driving onto those edges come from and go to: edge, town of origin, town of destination,
-//! vehicles; towns as `demandTown`, 65534 beyond the map, 65535 unknown; M13),
+//! vehicles; towns as `demandTown`, beyond the map 40000 plus the gateway's index in the
+//! demand's list (65534 if not known), 65535 unknown; M13),
 //! `<out_dir>/town_commutes.bin` (commutes drawn from the demand by the town of home
 //! and of work, against the census: `run::write_town_commutes`, M13) and `<out_dir>/day.json`
 //! (traffic statistics per hour, with the vehicle-hours queued at junctions by holdup).
@@ -133,10 +134,13 @@ fn main() {
         .ok()
         .map(|v| v.split(',').filter_map(|e| e.trim().parse().ok()).collect())
         .unwrap_or_default();
-    let edge_towns = if select.is_empty() {
-        Vec::new()
+    let (edge_towns, edge_gateways) = if select.is_empty() {
+        (Vec::new(), Vec::new())
     } else {
-        run::load_edge_towns(&format!("{root}/demand"), n)
+        (
+            run::load_edge_towns(&format!("{root}/demand"), n),
+            run::load_gateway_edges(&format!("{root}/demand"), n),
+        )
     };
     let mut seen = std::collections::HashSet::new();
     let mut select_counts: std::collections::HashMap<(u32, u16, u16), u32> =
@@ -168,7 +172,10 @@ fn main() {
                         }
                         let town = |edge: u32, beyond: bool| {
                             if beyond {
-                                u16::MAX - 1
+                                match edge_gateways.get(edge as usize) {
+                                    Some(&g) if g < 20_000 => 40_000 + g,
+                                    _ => u16::MAX - 1,
+                                }
                             } else {
                                 edge_towns.get(edge as usize).copied().unwrap_or(u16::MAX)
                             }

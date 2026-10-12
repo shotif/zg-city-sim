@@ -398,11 +398,13 @@ class Placed:
 
 # Stations placed by hand: the tables give no road number.
 MANUAL = {
+    # Halfway along the 2 km section: at Velika Gorica's end the road's traffic splits
+    # over a junction's pieces (M13).
     2014: {
-        "at": (16.0510, 45.7221),
+        "at": (16.0341, 45.7276),
         "road_names": ["Zagrebačka cesta", "Zagrebačka ulica"],
         "placed": "by hand: the old road from Zagreb to Velika Gorica (Zagrebačka cesta, "
-        "no road number) between Velika Mlaka and Velika Gorica",
+        "no road number), halfway between Velika Mlaka and Velika Gorica",
     },
 }
 

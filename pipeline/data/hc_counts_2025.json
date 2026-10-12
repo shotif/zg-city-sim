@@ -12666,19 +12666,19 @@
    ],
    "length_km": 2.0,
    "at": [
-    16.051,
-    45.7221
+    16.0341,
+    45.7276
    ],
    "inside": true,
-   "placed": "by hand: the old road from Zagreb to Velika Gorica (Zagrebačka cesta, no road number) between Velika Mlaka and Velika Gorica",
+   "placed": "by hand: the old road from Zagreb to Velika Gorica (Zagrebačka cesta, no road number), halfway between Velika Mlaka and Velika Gorica",
    "path": [
     [
-     16.051,
-     45.7221
+     16.0341,
+     45.7276
     ],
     [
-     16.051,
-     45.7221
+     16.0341,
+     45.7276
     ]
    ],
    "hourly": {

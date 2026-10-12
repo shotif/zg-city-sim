@@ -421,6 +421,22 @@ pub fn load_edge_towns(demand_dir: &str, edges: usize) -> Vec<u16> {
     out
 }
 
+/// The gateway (index in the demand's list) whose road each network edge leads into or out
+/// of the map on (65535 elsewhere).
+pub fn load_gateway_edges(demand_dir: &str, edges: usize) -> Vec<u16> {
+    let mut out = vec![u16::MAX; edges];
+    if let Some(d) = load_demand(demand_dir) {
+        for (i, g) in d.gateways.iter().enumerate() {
+            for e in [g.entry, g.exit] {
+                if let Some(slot) = out.get_mut(e as usize) {
+                    *slot = i as u16;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Commutes from home to work drawn from `demand` (`samples` of them), counted by the town
 /// of home and of work (`towns` by demand edge; the last row and column: no town), written
 /// to `path`: u32 towns + 1, then the f32 counts row by row (M13: against the census).
