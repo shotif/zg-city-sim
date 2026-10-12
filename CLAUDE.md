@@ -134,7 +134,7 @@ Environment variables for the native runs:
 | Destinations within the map (`TRIP_DECAY`, `TRIP_POWER`, `TRIP_CANDIDATES`) | `sim/src/demand.rs` | e^(−d / 10 km) / (d / 1 km), from 128 candidates (M13; 4 km from 8 before); trips home are commutes driven back |
 | Gateway decay (`GATEWAY_DECAY`, `LOCAL_GATEWAY_DECAY`, `LOCAL_GATEWAY_POWER`) | `sim/src/demand.rs` | e^(−d / 12 km) on motorways and expressways (8 candidates); e^(−d / 10 km) / (d / 1 km) on other roads, as trips within the map (128 candidates; M14b, 8 km and no power before) |
 | Inbound lead | `sim/src/demand.rs` | 45 min |
-| Toll time (`TOLL_TIME`) | `sim/src/network.rs` | 0.018 s/m |
+| Toll and fuel time (`TOLL_TIME`, `FUEL_TIME`) | `sim/src/network.rs` | 0.018 s/m of tolled motorway; 0.020 s/m driven, for fuel, in car and lorry routes (M15b; about €0.09 a kilometre at €16 an hour, an estimate) |
 | Signal re-timing (`MIN_GREEN`, `LONG_CYCLE`, `MAX_EXTENSION`, `TRAM_TRACK_SHARE`) | `sim/src/engine.rs` | 6 s, 120 s, 20 s, 0.25 |
 | Phase skipping: lanes too short to show a call (`CALL_LANE`, plus a tram where trams run) | `sim/src/engine.rs` | 20 m (52 m) |
 | Tram junctions joined into road junctions within (`TRAM_JOIN_DIST`) | `pipeline/network.py` | 3 m |

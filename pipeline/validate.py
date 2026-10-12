@@ -657,6 +657,9 @@ def report(
         "a tolled motorway where it is not much slower. Drivers who cross the map's edge on a "
         "tolled motorway stay on it: they pay the toll anyway. At 36 s a kilometre the A11 "
         "carried half its toll counts and the D30 at Lekenik over twice its count.",
+        "- **Fuel**: car and lorry routes also count each kilometre driven as 20 s, about "
+        "€0.09 of fuel at the same €16 an hour, so of two ways that take about as long "
+        "drivers take the shorter (M15b).",
         "- **Traffic across the map's edge**: where a road's counted section crosses the "
         "map's edge, or ends within 2.5 km of it, the gateway there carries that station's "
         "working-day count; uncounted roads get a typical volume for their class "

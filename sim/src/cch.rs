@@ -327,20 +327,22 @@ pub struct Metric {
     down_mid: Vec<u32>,
     /// Scratch: for each rank, the arc to it from the rank being customised.
     mark: Vec<u32>,
-    /// The class and whether tolls count, as customised.
+    /// The class and whether tolls and fuel count, as customised.
     pub vclass: u16,
     pub tolls: bool,
+    pub fuel: bool,
     /// Whether routes are unpacked on it (else only times are read, `Query::one_to_all`, and
     /// the middles are not kept).
     paths: bool,
 }
 
 impl Metric {
+    /// A metric for searches on the measured travel times: fuel counts but for bikes.
     pub fn new(vclass: u16, tolls: bool) -> Metric {
-        Metric::with_paths(vclass, tolls, true)
+        Metric::with_paths(vclass, tolls, vclass != vclass::BICYCLE, true)
     }
 
-    pub fn with_paths(vclass: u16, tolls: bool, paths: bool) -> Metric {
+    pub fn with_paths(vclass: u16, tolls: bool, fuel: bool, paths: bool) -> Metric {
         Metric {
             up: Vec::new(),
             down: Vec::new(),
@@ -349,13 +351,14 @@ impl Metric {
             mark: Vec::new(),
             vclass,
             tolls,
+            fuel,
             paths,
         }
     }
 
     /// Times for travel times `times` (s per edge): moving from one edge onto the next
-    /// takes the next one's time, plus the turn's penalty and, if tolls count, its toll, as
-    /// `Router::route` counts it.
+    /// takes the next one's time, plus the turn's penalty and, if they count, its toll and
+    /// fuel, as `Router::route` counts it.
     pub fn customize(&mut self, cch: &Cch, net: &Network, times: &[f32]) {
         let m = cch.arcs();
         let n = cch.len();
@@ -376,7 +379,8 @@ impl Metric {
                 continue;
             }
             let toll = if self.tolls { s.toll } else { 0.0 };
-            let w = times[s.edge as usize] + s.penalty + toll;
+            let fuel = if self.fuel { s.fuel } else { 0.0 };
+            let w = times[s.edge as usize] + s.penalty + toll + fuel;
             let slot = if cch.input_up[i] {
                 &mut self.up[a as usize]
             } else {
@@ -1053,17 +1057,22 @@ pub enum Times {
     Peak,
 }
 
-/// The metrics the engine routes on: cars and trucks on the measured times, each with and
-/// without tolls, bikes on their own times, and cars in the morning peak (times only, for
-/// the riders). Each is customised only once a search needs it.
-const KINDS: [(Times, u16, bool); 6] = [
-    (Times::Travel, vclass::PASSENGER, true),
-    (Times::Travel, vclass::PASSENGER, false),
-    (Times::Travel, vclass::TRUCK, true),
-    (Times::Travel, vclass::TRUCK, false),
-    (Times::Bike, vclass::BICYCLE, true),
-    (Times::Peak, vclass::PASSENGER, false),
+/// The metrics the engine routes on (times, class, tolls counted, fuel counted): cars and
+/// trucks on the measured times, each with and without tolls and with fuel (M15b), bikes on
+/// their own times, cars in the morning peak (times only, for the riders), and cars on the
+/// measured times alone (for `Engine::reach`). Each is customised only once a search needs
+/// it.
+const KINDS: [(Times, u16, bool, bool); 7] = [
+    (Times::Travel, vclass::PASSENGER, true, true),
+    (Times::Travel, vclass::PASSENGER, false, true),
+    (Times::Travel, vclass::TRUCK, true, true),
+    (Times::Travel, vclass::TRUCK, false, true),
+    (Times::Bike, vclass::BICYCLE, true, false),
+    (Times::Peak, vclass::PASSENGER, false, false),
+    (Times::Travel, vclass::PASSENGER, false, false),
 ];
+/// The kind of `KINDS` that counts the measured times alone.
+const TIME_ONLY: usize = 6;
 
 /// A hierarchy with a metric per kind of search (M11b), each customised when a search
 /// first needs it after its travel times changed.
@@ -1090,7 +1099,11 @@ impl Hierarchy {
         Hierarchy {
             metrics: KINDS
                 .iter()
-                .map(|&(times, v, t)| Metric::with_paths(v, t, times != Times::Peak))
+                .map(|&(times, v, t, fuel)| {
+                    // Routes are unpacked only on the metrics searched for routes.
+                    let paths = times == Times::Bike || (times == Times::Travel && fuel);
+                    Metric::with_paths(v, t, fuel, paths)
+                })
                 .collect(),
             stale: vec![true; KINDS.len()],
             trucks_as_cars: trucks_as_cars(net),
@@ -1113,14 +1126,23 @@ impl Hierarchy {
         } else {
             vclass
         };
-        KINDS.iter().position(|&(t, v, toll)| {
-            t == times && v == vclass && (toll == tolls || times == Times::Bike)
+        KINDS.iter().position(|&(t, v, toll, fuel)| {
+            t == times
+                && v == vclass
+                && (toll == tolls || times == Times::Bike)
+                && fuel == (times == Times::Travel)
         })
+    }
+
+    /// The metric of cars on the measured times alone, without tolls or fuel: how long it
+    /// takes to get places (`Engine::reach`).
+    pub fn time_kind(&self) -> usize {
+        TIME_ONLY
     }
 
     /// The measured times changed: cars and trucks customise again.
     pub fn travel_changed(&mut self) {
-        for (k, &(t, _, _)) in KINDS.iter().enumerate() {
+        for (k, &(t, _, _, _)) in KINDS.iter().enumerate() {
             if t == Times::Travel {
                 self.stale[k] = true;
             }
@@ -1137,7 +1159,7 @@ impl Hierarchy {
 
     /// The peak times changed.
     pub fn peak_changed(&mut self) {
-        for (k, &(t, _, _)) in KINDS.iter().enumerate() {
+        for (k, &(t, _, _, _)) in KINDS.iter().enumerate() {
             if t == Times::Peak {
                 self.stale[k] = true;
             }
@@ -1146,7 +1168,7 @@ impl Hierarchy {
 
     /// Bikes' times changed.
     pub fn bike_changed(&mut self) {
-        for (k, &(t, _, _)) in KINDS.iter().enumerate() {
+        for (k, &(t, _, _, _)) in KINDS.iter().enumerate() {
             if t == Times::Bike {
                 self.stale[k] = true;
             }

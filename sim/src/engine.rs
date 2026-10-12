@@ -1199,6 +1199,7 @@ impl Engine {
             return route;
         }
         self.router.tolls = tolls;
+        self.router.fuel = times == Times::Travel;
         self.router.route(&self.net, t, from, to, vclass)
     }
 
@@ -3223,6 +3224,7 @@ impl Engine {
             return leg.clone();
         }
         self.router.tolls = true;
+        self.router.fuel = false;
         self.router.purpose = purpose::TRANSIT;
         let leg = self
             .router
@@ -5146,10 +5148,7 @@ impl Engine {
         };
         let (home, work) = demand.weights_by_edge();
         let decay = decay.max(1.0);
-        let kind = self
-            .hierarchy
-            .as_ref()
-            .and_then(|h| h.kind(Times::Travel, vclass::PASSENGER, false));
+        let kind = self.hierarchy.as_ref().map(|h| h.time_kind());
         sources
             .iter()
             .map(|&from| {

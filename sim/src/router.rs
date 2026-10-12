@@ -9,7 +9,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use crate::network::{NONE, Network};
+use crate::network::{NONE, Network, vclass};
 
 /// Speed (m/s) the straight-line part of the heuristic divides distance by: faster than
 /// any road, so it never overestimates.
@@ -343,6 +343,10 @@ pub struct Router {
     pub last_settled: usize,
     /// Whether routes weigh motorway tolls (`Successor::toll`).
     pub tolls: bool,
+    /// Whether routes for cars and lorries weigh the fuel they burn (`Successor::fuel`):
+    /// searches on the measured travel times do; buses' and trams' ways between stops and
+    /// bikes do not.
+    pub fuel: bool,
     /// Weight on the heuristic (`HEURISTIC_WEIGHT`; the `routes` example tries others).
     pub weight: f32,
     /// Time spent in `route` (s); counted only with the `profile` feature.
@@ -367,6 +371,7 @@ impl Router {
             landmarks: None,
             last_settled: 0,
             tolls: true,
+            fuel: true,
             weight: HEURISTIC_WEIGHT,
             seconds: 0.0,
             searches: 0,
@@ -451,10 +456,12 @@ impl Router {
             heap,
             landmarks,
             tolls,
+            fuel,
             weight,
             ..
         } = self;
         let weight = *weight;
+        let fuel = *fuel && vclass != vclass::BICYCLE;
         let (tx, tz) = net.edge_mid[to as usize];
         let landmarks = landmarks.as_ref();
         let target = landmarks.map(|l| l.target(to));
@@ -499,7 +506,8 @@ impl Router {
                 }
                 let next = s.edge;
                 let toll = if *tolls { s.toll } else { 0.0 };
-                let cost = g + travel_time[next as usize] + s.penalty + toll;
+                let fuel = if fuel { s.fuel } else { 0.0 };
+                let cost = g + travel_time[next as usize] + s.penalty + toll + fuel;
                 let n = &mut nodes[next as usize];
                 if n.epoch != epoch {
                     *n = Node {

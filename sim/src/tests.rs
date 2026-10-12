@@ -1429,6 +1429,61 @@ fn two_ways() -> (Engine, [u32; 4]) {
     (Engine::new(b.build(), 9), [direct, up, down, last])
 }
 
+#[test]
+fn routes_weigh_fuel_so_the_shorter_of_two_close_ways_wins() {
+    use crate::cch::{Cch, Metric, Query};
+    // From the road in, 1,000 m straight at 60 km/h (60 s) or 1,414 m round at 90 km/h
+    // (57 s): by time alone the way round; with fuel at 20 s a kilometre (M15b) the
+    // straight way, 3 s slower but 414 m shorter.
+    let mut b = Builder::default();
+    let s0 = b.junction(-200.0, 0.0);
+    let a = b.junction(0.0, 0.0);
+    let m = b.junction(1000.0, 0.0);
+    let c = b.junction(500.0, 500.0);
+    let z = b.junction(1200.0, 0.0);
+    let into = b.road(s0, a, 1, 13.9);
+    let direct = b.road(a, m, 1, 1000.0 / 60.0);
+    let up = b.road(a, c, 1, 25.0);
+    let down = b.road(c, m, 1, 25.0);
+    let last = b.road(m, z, 1, 13.9);
+    for (from, to, j) in [
+        (into, direct, a),
+        (into, up, a),
+        (up, down, c),
+        (direct, last, m),
+        (down, last, m),
+    ] {
+        let (fl, tl) = (b.lane(from, 0), b.lane(to, 0));
+        b.connect(fl, tl, j, dir::STRAIGHT, b'M');
+    }
+    let net = b.build();
+    let times: Vec<f32> = (0..net.edge_count())
+        .map(|e| net.edge_length[e] / net.edge_speed[e])
+        .collect();
+    let cch = Cch::build(&net);
+    let mut query = Query::new(&cch);
+    let mut way = |vclass, fuel| {
+        let mut metric = Metric::with_paths(vclass, true, fuel, true);
+        metric.customize(&cch, &net, &times);
+        query
+            .route(&cch, &metric, into, last)
+            .map(|(route, _)| route)
+    };
+    assert_eq!(way(vclass::PASSENGER, true), Some(vec![into, direct, last]));
+    assert_eq!(
+        way(vclass::PASSENGER, false),
+        Some(vec![into, up, down, last])
+    );
+    // Bikes count no fuel (`Metric::new`, as the engine's bike searches).
+    assert!(!Metric::new(vclass::BICYCLE, true).fuel);
+    assert!(Metric::new(vclass::PASSENGER, false).fuel);
+    // The engine's car searches count it.
+    let mut engine = Engine::new(net, 9);
+    engine.build_hierarchy();
+    let straight = engine.travel_time[direct as usize] + engine.travel_time[last as usize];
+    assert!((engine.route_time(into, last).unwrap() - straight).abs() < 1e-3);
+}
+
 fn car_route(engine: &mut Engine, from: u32, to: u32) -> Option<Vec<u32>> {
     let mut router = Router::new(engine.net.edge_count());
     router.route(
@@ -4052,7 +4107,8 @@ fn the_hierarchy_finds_routes_as_fast_as_a_star() {
                     .iter()
                     .find(|s| s.edge == p[1] && s.allow & vclass != 0)
                     .expect("a move the class may make");
-                times[p[1] as usize] + s.penalty + if tolls { s.toll } else { 0.0 }
+                let fuel = if vclass != BICYCLE { s.fuel } else { 0.0 };
+                times[p[1] as usize] + s.penalty + if tolls { s.toll } else { 0.0 } + fuel
             })
             .sum()
     };

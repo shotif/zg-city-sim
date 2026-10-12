@@ -404,7 +404,7 @@ fn replay_cch(dir: &str, log: &str, limit: usize) {
     let (mut same, mut faster, mut gain, mut slower, mut astar_only, mut cch_only) =
         (0u64, 0u64, 0f64, 0u64, 0u64, 0u64);
     let mut saved = Vec::new();
-    // A route's time on `times` with its turns and tolls, as the searches count it.
+    // A route's time on `times` with its turns, tolls and fuel, as the searches count it.
     let cost = |route: &[u32], times: &[f32], vc: u16, tolls: bool| -> f64 {
         route
             .windows(2)
@@ -414,7 +414,9 @@ fn replay_cch(dir: &str, log: &str, limit: usize) {
                     .iter()
                     .find(|s| s.edge == p[1] && s.allow & vc != 0);
                 s.map_or(f64::INFINITY, |s| {
-                    (times[p[1] as usize] + s.penalty + if tolls { s.toll } else { 0.0 }) as f64
+                    let toll = if tolls { s.toll } else { 0.0 };
+                    let fuel = if vc != vclass::BICYCLE { s.fuel } else { 0.0 };
+                    (times[p[1] as usize] + s.penalty + toll + fuel) as f64
                 })
             })
             .sum()

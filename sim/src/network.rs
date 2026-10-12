@@ -30,6 +30,14 @@ pub mod edge_flag {
 /// A11's toll counts (docs/VALIDATION.md): at 36 s a kilometre it carried half of them.
 pub const TOLL_TIME: f32 = 0.018;
 
+/// Seconds car and lorry drivers count for each metre they drive, for fuel (M15b): about
+/// €0.09 a kilometre at the €16 an hour of `TOLL_TIME` (7 l per 100 km at €1.45 a litre is
+/// €0.10; an estimate). Of two ways that take about as long, routes take the shorter, as
+/// drivers do: without it, Sveti Ivan Zelina's trips to Dubrava went round by the A4 rather
+/// than straight down the D3, and Velika Gorica's to the centre by the D30 rather than the
+/// old road through Velika Mlaka.
+pub const FUEL_TIME: f32 = 0.020;
+
 /// Link directions (pipeline/simnet.py LINK_DIRS).
 pub mod dir {
     pub const STRAIGHT: u8 = 0;
@@ -186,6 +194,8 @@ pub struct Successor {
     pub penalty: f32,
     /// Seconds the toll on the edge it leads to is worth (`TOLL_TIME`), 0 on free roads.
     pub toll: f32,
+    /// Seconds the fuel to drive the edge it leads to is worth (`FUEL_TIME`).
+    pub fuel: f32,
 }
 
 pub struct Network {
@@ -569,9 +579,9 @@ impl Network {
                 i += 1;
             }
             succ_offset[from as usize + 1] += 1;
+            let length = d.lane_length[d.edge_lane_start[to as usize] as usize];
             let toll = if d.edge_flags[to as usize] & edge_flag::TOLL != 0 {
-                let lane = d.edge_lane_start[to as usize] as usize;
-                TOLL_TIME * d.lane_length[lane]
+                TOLL_TIME * length
             } else {
                 0.0
             };
@@ -580,6 +590,7 @@ impl Network {
                 allow,
                 penalty,
                 toll,
+                fuel: FUEL_TIME * length,
             });
         }
         for e in 0..n_edges {
