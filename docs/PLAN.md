@@ -81,7 +81,7 @@ All data is projected to **HTRS96/TM (EPSG:3765)**, Croatia's official map proje
   - errands both ways;
   - through traffic between gateways at least 10 km apart, mostly on the A3 bypass, a quarter of it trucks.
   Vehicles from beyond the map drive in at the road's start at speed and leave off its far end.
-- **Towns around the City**: their homes get the 2021 census population of their settlement (384 settlements, 229,000 people; DZS), and their residents make more car trips than the City's (0.87 a day in Zagreb County and the others, 1.0 in Krapina-Zagorje, against 0.65; Transport Master Plan modal split by county).
+- **Towns around the City**: their homes get the 2021 census population of their settlement (384 settlements, 229,000 people; DZS), and their residents make more car trips than the City's (1.3 a day in Zagreb County and the others, 1.5 in Krapina-Zagorje, against 0.65: the Transport Master Plan's modal split by county, raised by half in M13 from the census's commuters).
 - **Validation** against the Hrvatske ceste counts: a full simulated weekday compared station by station and hour by hour in [VALIDATION.md](VALIDATION.md).
   - 47 stations inside the map are independent checks: 17 within ±25 % (16 with another seed), the total at 0.84 of the counts, mean difference 53 % (at 80 % of the demand, after M12). The motorways match (5 of 5 within ±25 %, total 1.02-1.04); state roads carry 0.85-0.86 of their counts, county and local roads 0.62.
   - The seven stations whose counts set the traffic across the map's edge carry it within 16 % on average, so traffic from beyond the map comes in and goes out along the right roads.

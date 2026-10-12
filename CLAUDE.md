@@ -86,7 +86,7 @@ Environment variables for the native runs:
 - `DEMAND_SCALE=0.7` overrides the calibrated share of demand.
 - `DEBUG_EDGES=123,456` logs the vehicles removed from those edges, with what they see ahead.
 - `SEED=2` (the `day` and `run` examples) runs the same day with another seed, to see how much days vary.
-- `GRAVITY_KM=5` and `GATEWAY_LOCAL_KM=8` (the `day` and `run` examples) set the distance decay of trips within the map and across its edge on roads other than motorways, to calibrate them; `GRAVITY_POWER=1` makes destinations within the map also lose attractiveness with distance to that power, and `CANDIDATES=128` sets how many candidates they are chosen from (M13).
+- `GRAVITY_KM=10` and `GATEWAY_LOCAL_KM=8` (the `day` and `run` examples) set the distance decay of trips within the map and across its edge on roads other than motorways, to calibrate them; `GRAVITY_POWER=1` sets the power of distance destinations within the map also lose attractiveness by, and `CANDIDATES=128` how many candidates they are chosen from (M13).
 - `WATCH_JUNCTIONS=51800,51531` (the `run` example) prints those junctions' signal programs as the engine runs them, then every simulated minute the stopped front vehicle of each queue into them: why it waits, who it gives way to, and what holds up the vehicles inside the junction.
 - `NO_PHASE_SKIP=1` (the `day` and `run` examples) runs actuated signals through every phase, as before M7d.
 - `NO_REROUTE=1` (the `day` and `run` examples) keeps drivers on the route they chose at the start, as before M7g.
@@ -129,9 +129,9 @@ Environment variables for the native runs:
 | Knob | Where | Now |
 |---|---|---|
 | Share of estimated demand simulated (`DEMAND_SCALE`) | `pipeline/demand.py` | 0.8 |
-| Car trips per resident (`CAR_TRIP_RATE`) | `pipeline/demand.py` | 0.65 in the City, 0.87 in the counties around it, 1.0 in Krapina-Zagorje |
+| Car trips per resident (`CAR_TRIP_RATE`, `TOWN_TRIP_FACTOR`) | `pipeline/demand.py` | 0.65 in the City, 1.3 in the counties around it, 1.5 in Krapina-Zagorje (the Master Plan's rates, raised by half around the City in M13 from the census's commuters) |
 | Hourly profile and trip purposes (`HOURLY`, `purposes`) | `sim/src/demand.rs` | measured at 33 count stations (2025) |
-| Gravity decay | `sim/src/demand.rs` | 4 km |
+| Destinations within the map (`TRIP_DECAY`, `TRIP_POWER`, `TRIP_CANDIDATES`) | `sim/src/demand.rs` | e^(−d / 10 km) / (d / 1 km), from 128 candidates (M13; 4 km from 8 before); trips home are commutes driven back |
 | Gateway decay (`GATEWAY_DECAY`, `LOCAL_GATEWAY_DECAY`) | `sim/src/demand.rs` | 12 km on motorways and expressways (8 candidates), 8 km on other roads (128 candidates) |
 | Inbound lead | `sim/src/demand.rs` | 45 min |
 | Toll time (`TOLL_TIME`) | `sim/src/network.rs` | 0.018 s/m |

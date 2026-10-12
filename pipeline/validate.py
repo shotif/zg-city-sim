@@ -662,8 +662,10 @@ def report(
         "working-day count; uncounted roads get a typical volume for their class "
         "(`pipeline/gateways.py`).",
         "- **Demand**: 0.65 car trips per resident of the City a day (Transport Master Plan "
-        "survey), more in the towns around it, where more trips are by car (0.87 in Zagreb "
-        "County and the others, 1.0 in Krapina-Zagorje); towns get their census population by "
+        "survey), more in the towns around it, where more trips are by car "
+        f"({CAR_TRIP_RATE['Zagrebačka']:.2f} in Zagreb County and the others, "
+        f"{CAR_TRIP_RATE['Krapinsko-zagorska']:.2f} in Krapina-Zagorje: the Master Plan's rates, "
+        "raised by half from the census's commuters); towns get their census population by "
         "settlement. "
         "Trips are spread over the hours of a weekday by the hourly profile measured at the "
         "charted stations. Traffic coming in crosses the map's edge 45 minutes ahead of the "
