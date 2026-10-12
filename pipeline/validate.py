@@ -660,7 +660,9 @@ def report(
         "- **Traffic across the map's edge**: where a road's counted section crosses the "
         "map's edge, or ends within 2.5 km of it, the gateway there carries that station's "
         "working-day count; uncounted roads get a typical volume for their class "
-        "(`pipeline/gateways.py`).",
+        "(`pipeline/gateways.py`). Traffic on motorways and expressways goes to places "
+        "weighted by e^(−d / 12 km); on other roads, mostly between the towns on either side "
+        "of the edge, by e^(−d / 10 km) / (d / 1 km), as trips within the map.",
         "- **Demand**: 0.65 car trips per resident of the City a day (Transport Master Plan "
         "survey), more in the towns around it, where more trips are by car "
         f"({CAR_TRIP_RATE['Zagrebačka']:.2f} in Zagreb County and the others, "

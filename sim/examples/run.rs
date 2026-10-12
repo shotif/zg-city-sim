@@ -496,13 +496,18 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
             }
             // NO_MIRROR_HOME=1: trips home from jobs to homes near them, as before M13.
             demand.mirror_home = std::env::var("NO_MIRROR_HOME").is_err();
-            // GATEWAY_LOCAL_KM=8: another decay for traffic across the map's edge on roads
+            // GATEWAY_LOCAL_KM=10: another decay for traffic across the map's edge on roads
             // other than motorways, to calibrate.
             if let Some(km) = std::env::var("GATEWAY_LOCAL_KM")
                 .ok()
                 .and_then(|v| v.parse::<f32>().ok())
             {
                 demand.local_gateway_decay = km * 1000.0;
+            }
+            // GATEWAY_POWER=0: their destinations lose attractiveness by the decay alone, as
+            // before M14b.
+            if let Some(power) = env("GATEWAY_POWER") {
+                demand.local_gateway_power = power;
             }
             if std::env::var("NO_GATEWAYS").is_err() {
                 demand.set_gateways(net, &d.gateways);

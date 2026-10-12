@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -110,7 +111,7 @@ def wanted_way(tags: osmium.osm.TagList) -> bool:
 
 #: Version of the roads written for netconvert (`filter_roads`): bump it when they change, so
 #: cached networks are built again.
-ROADS_VERSION = 4
+ROADS_VERSION = 5
 
 #: Netconvert takes a railway as one-way in the direction it was drawn, so on many lines HŽ's
 #: trains could only run one way (in at Savski Marof but not out). Main-line tracks without a
@@ -237,6 +238,30 @@ def infer_lanes(ways: dict[int, tuple[list[int], dict[str, str]]]) -> dict[int, 
     return {w: n for w, n in inferred.items() if n >= (2 if w in one_way else 3)}
 
 
+#: A lane OpenStreetMap marks as merging into the one beside it (`turn:lanes`).
+MERGE = re.compile(r"merge_to_(left|right)")
+
+
+def unfinished_merges(one_way: dict[int, tuple[list[int], dict[str, str]]]) -> set[int]:
+    """One-way ways with lanes marked as merging (`merge_to_left`, `merge_to_right` in
+    `turn:lanes`) that lead into a way with more lanes than the rest: the merge is not over
+    where the way ends. Netconvert ends the merging lanes there and joins the others to the
+    next way's rightmost lanes, which may end in turn. On the A1's toll plaza at Lučko,
+    narrowing from 7 lanes to 2 in pieces 18-36 m long, every driver changed two lanes in
+    18 m five times over. These ways' merging lanes are written as plain lanes, so the lanes
+    run on and end where the ways after them narrow."""
+    after: dict[int, list[int]] = {}
+    for nodes, tags in one_way.values():
+        after.setdefault(nodes[0], []).append(lane_count(tags) or 0)
+    found = set()
+    for wid, (nodes, tags) in one_way.items():
+        turns = tags.get("turn:lanes", "").split("|")
+        merging = sum(1 for t in turns if MERGE.search(t))
+        if merging and max(after.get(nodes[-1], [0])) > len(turns) - merging:
+            found.add(wid)
+    return found
+
+
 def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
     """Write drivable roads, tracks and their turn restrictions as OSM XML for netconvert,
     with a project's patch (pipeline/projects.py) applied if given."""
@@ -244,6 +269,7 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
     way_ids: set[int] = set()
     node_ids: set[int] = set()
     main: dict[int, tuple[list[int], dict[str, str]]] = {}
+    one_way: dict[int, tuple[list[int], dict[str, str]]] = {}
     unlimited: set[int] = set()
     both_ways: set[int] = set()
     for way in osmium.FileProcessor(str(src), osmium.osm.WAY):
@@ -254,6 +280,8 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
             node_ids.update(n.ref for n in way.nodes)
             if way.tags.get("highway") in LANE_CLASSES and len(way.nodes) > 1:
                 main[way.id] = ([n.ref for n in way.nodes], dict(way.tags))
+            if "highway" in way.tags and way.tags.get("oneway") in ("yes", "1"):
+                one_way[way.id] = ([n.ref for n in way.nodes], dict(way.tags))
             if way.tags.get("highway") in SPEED_CLASSES and not any(
                 t.k.startswith("maxspeed") for t in way.tags
             ):
@@ -263,6 +291,7 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
             ):
                 both_ways.add(way.id)
     lanes = infer_lanes(main)
+    merges = unfinished_merges(one_way)
     limits = speed_limits(src, unlimited)
     for nodes, _ in patch_ways.values():
         node_ids.update(nodes)
@@ -305,6 +334,8 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
                     extra["maxspeed"] = limits[obj.id]
                 if obj.id in both_ways:
                     extra.update(BOTH_WAYS)
+                if obj.id in merges:
+                    extra["turn:lanes"] = MERGE.sub("none", obj.tags["turn:lanes"])
                 writer.add_way(obj.replace(tags={**dict(obj.tags), **extra}) if extra else obj)
             continue
         if not ways_done:
@@ -328,6 +359,7 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
         "lanesInferred": len(lanes),
         "speedLimits": {v: sum(1 for x in limits.values() if x == v) for v in ("50", "90")},
         "railBothWays": len(both_ways),
+        "mergesRunOn": len(merges),
     }
 
 

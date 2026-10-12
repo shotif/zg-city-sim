@@ -65,10 +65,13 @@ const COMMUTERS_FROM_OUTSIDE: f32 = 0.75;
 /// few kilometres less.
 const GATEWAY_DECAY: f32 = 12_000.0;
 /// The same for traffic across the map's edge on other roads, mostly between the towns on
-/// either side of it.
-/// Calibrated against the counts: 8 km cut gridlock by 15 % and brought the counts nearer
-/// on the whole; 4 km left the counted roads with too little traffic.
-pub const LOCAL_GATEWAY_DECAY: f32 = 8_000.0;
+/// either side of it: its destinations also lose attractiveness by distance's power, from
+/// 400 m (`LOCAL_GATEWAY_POWER`), as trips within the map do (M14b). By the decay alone
+/// (8 km), the City's jobs drew most of it from 25 km away: the gateways on the map's
+/// northern edge sent their traffic over Medvednica, and the roads there carried several
+/// times their counts.
+pub const LOCAL_GATEWAY_DECAY: f32 = 10_000.0;
+pub const LOCAL_GATEWAY_POWER: f32 = 1.0;
 /// Distance decay of bike trips (m): most are under 5 km.
 pub const BIKE_DECAY: f32 = 2_000.0;
 /// Roads at least this fast (m/s, 97 km/h) carry traffic from far away across the map's
@@ -189,11 +192,13 @@ pub struct Demand {
     acc: f64,
     gateways: Vec<Gateway>,
     gateway_pos: Vec<(f32, f32)>,
-    /// Per gateway: the distance decay and candidates its traffic's destinations are chosen
-    /// with (fast roads or others).
-    gateway_reach: Vec<(f32, usize)>,
-    /// Distance decay for traffic across the map's edge on roads other than fast ones.
+    /// Per gateway: the distance decay, power and candidates its traffic's destinations are
+    /// chosen with (fast roads or others).
+    gateway_reach: Vec<(f32, f32, usize)>,
+    /// Distance decay and power for traffic across the map's edge on roads other than fast
+    /// ones.
     pub local_gateway_decay: f32,
+    pub local_gateway_power: f32,
     entry_truck_ok: Vec<bool>,
     exit_truck_ok: Vec<bool>,
     inbound: Flow,
@@ -354,6 +359,7 @@ impl Demand {
             gateway_pos: Vec::new(),
             gateway_reach: Vec::new(),
             local_gateway_decay: LOCAL_GATEWAY_DECAY,
+            local_gateway_power: LOCAL_GATEWAY_POWER,
             entry_truck_ok: Vec::new(),
             exit_truck_ok: Vec::new(),
             inbound: Flow::default(),
@@ -565,9 +571,13 @@ impl Demand {
             .map(|g| {
                 let e = if g.entry != NONE { g.entry } else { g.exit };
                 if net.edge_speed[e as usize] >= FAST_ROAD {
-                    (GATEWAY_DECAY, CANDIDATES)
+                    (GATEWAY_DECAY, 0.0, CANDIDATES)
                 } else {
-                    (self.local_gateway_decay, LOCAL_CANDIDATES)
+                    (
+                        self.local_gateway_decay,
+                        self.local_gateway_power,
+                        LOCAL_CANDIDATES,
+                    )
                 }
             })
             .collect();
@@ -763,13 +773,13 @@ impl Demand {
                 break;
             };
             let to = [&self.work_alias, &self.home_alias, &self.any_alias][pick(mix, rng)];
-            let (decay, candidates) = self.gateway_reach[g];
+            let (decay, power, candidates) = self.gateway_reach[g];
             let Some(d) = self.near(
                 self.gateway_pos[g],
                 usize::MAX,
                 to,
                 decay,
-                0.0,
+                power,
                 candidates,
                 rng,
             ) else {
@@ -792,13 +802,13 @@ impl Demand {
                 break;
             };
             let from = [&self.home_alias, &self.work_alias, &self.any_alias][pick(mix, rng)];
-            let (decay, candidates) = self.gateway_reach[g];
+            let (decay, power, candidates) = self.gateway_reach[g];
             let Some(o) = self.near(
                 self.gateway_pos[g],
                 usize::MAX,
                 from,
                 decay,
-                0.0,
+                power,
                 candidates,
                 rng,
             ) else {
