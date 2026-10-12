@@ -1,97 +1,97 @@
 {
- "computed": "2026-10-11",
+ "computed": "2026-10-12",
  "fromHour": 6,
  "hours": 4,
  "demandScale": 0.8,
  "totals": {
   "today": {
-   "delayHours": 30741.7,
-   "vehicleKm": 3760999.0,
-   "arrived": 177404.5,
-   "tripMinutes": 27.93
+   "delayHours": 24705.2,
+   "vehicleKm": 3832605.0,
+   "arrived": 200993.5,
+   "tripMinutes": 23.68
   },
   "project": {
-   "delayHours": 29228.3,
-   "vehicleKm": 3779126,
-   "arrived": 178458,
-   "tripMinutes": 27.53
+   "delayHours": 24136.7,
+   "vehicleKm": 3832406,
+   "arrived": 201080,
+   "tripMinutes": 23.51
   }
  },
  "perHour": [
   {
    "hour": 6,
    "delayHours": [
-    5425.0,
-    5480.9
+    4924.7,
+    4819.0
    ],
    "vehicleKm": [
-    933148.5,
-    937082
+    961347.5,
+    955228
    ],
    "arrived": [
-    41448.5,
-    41336
+    47201.0,
+    47468
    ],
    "tripMinutes": [
-    23.57,
-    23.7
+    21.07,
+    20.83
    ]
   },
   {
    "hour": 7,
    "delayHours": [
-    8316.849999999999,
-    8045.4
+    7077.8,
+    7049.8
    ],
    "vehicleKm": [
-    1002164.5,
-    1011807
+    1027995.5,
+    1029291
    ],
    "arrived": [
-    45790.0,
-    46294
+    51731.0,
+    51483
    ],
    "tripMinutes": [
-    27.47,
-    27.43
+    23.88,
+    23.95
    ]
   },
   {
    "hour": 8,
    "delayHours": [
-    8988.95,
-    8497.9
+    7119.8,
+    6920.8
    ],
    "vehicleKm": [
-    941733.5,
-    944571
+    961363.0,
+    964369
    ],
    "arrived": [
-    44960.5,
-    45289
+    50780.5,
+    50953
    ],
    "tripMinutes": [
-    30.560000000000002,
-    30.06
+    26.04,
+    25.75
    ]
   },
   {
    "hour": 9,
    "delayHours": [
-    8010.9,
-    7204.1
+    5582.950000000001,
+    5347.1
    ],
    "vehicleKm": [
-    883952.5,
-    885666
+    881899.0,
+    883518
    ],
    "arrived": [
-    45205.5,
-    45539
+    51281.0,
+    51176
    ],
    "tripMinutes": [
-    29.79,
-    28.61
+    23.555,
+    23.31
    ]
   }
  ],
@@ -99,107 +99,107 @@
   "perHour": [
    {
     "hour": 7,
-    "mean": -0.0228
+    "mean": -0.0262
    },
    {
     "hour": 8,
-    "mean": -0.0547
+    "mean": -0.0489
    },
    {
     "hour": 9,
-    "mean": -0.0528
+    "mean": -0.0028
    },
    {
     "hour": 10,
-    "mean": -0.027
+    "mean": 0.0123
    }
   ],
-  "mean": -0.0416,
+  "mean": -0.0192,
   "faster": [
    {
     "from": "Novi Zagreb – zapad",
     "to": "Stenjevec",
-    "today": 1118,
-    "project": 772
+    "today": 1016,
+    "project": 758
    },
    {
     "from": "Novi Zagreb – zapad",
     "to": "Trešnjevka – jug",
-    "today": 858,
-    "project": 630
+    "today": 794,
+    "project": 624
    },
    {
     "from": "Novi Zagreb – zapad",
     "to": "Podsused – Vrapče",
-    "today": 1411,
-    "project": 1112
+    "today": 1286,
+    "project": 1072
    }
   ],
   "slower": [
    {
-    "from": "Samobor",
-    "to": "Novi Zagreb – zapad",
-    "today": 1194,
-    "project": 1380
-   },
-   {
-    "from": "Trešnjevka – jug",
-    "to": "Stenjevec",
-    "today": 328,
-    "project": 353
-   },
-   {
     "from": "Trešnjevka – jug",
     "to": "Črnomerec",
-    "today": 605,
-    "project": 646
+    "today": 539,
+    "project": 597
+   },
+   {
+    "from": "Samobor",
+    "to": "Novi Zagreb – zapad",
+    "today": 1199,
+    "project": 1300
+   },
+   {
+    "from": "Zaprešić",
+    "to": "Trešnjevka – jug",
+    "today": 1256,
+    "project": 1335
    }
   ]
  },
  "roads": [
   {
    "name": "Jadranska avenija",
-   "today": 35668,
-   "project": 26052
+   "today": 37163,
+   "project": 28903
   },
   {
    "name": "Karlovačka cesta",
-   "today": 4980,
-   "project": 9304
+   "today": 5023,
+   "project": 9448
   },
   {
    "name": "Jarunski most",
    "today": 0,
-   "project": 3068
+   "project": 2490
   },
   {
    "name": "Horvaćanska cesta",
-   "today": 9316,
-   "project": 8188
+   "today": 7799,
+   "project": 6639
   },
   {
-   "name": "Brezovička cesta",
-   "today": 556,
-   "project": 1025
-  },
-  {
-   "name": "Jarunska ulica",
-   "today": 1055,
-   "project": 623
+   "name": "Zagrebačka avenija",
+   "today": 8284,
+   "project": 7139
   },
   {
    "name": "Ljubljanska avenija",
-   "today": 5335,
-   "project": 4907
+   "today": 4925,
+   "project": 4289
   },
   {
-   "name": "Puškarićeva ulica",
-   "today": 2593,
-   "project": 2176
+   "name": "Brezovička cesta",
+   "today": 611,
+   "project": 1032
+  },
+  {
+   "name": "Zagrebačka cesta",
+   "today": 1454,
+   "project": 1817
   }
  ],
  "noise": {
-  "delay": 0.037,
-  "travel": 0.0364
+  "delay": 0.0544,
+  "travel": 0.0464
  }
 }
