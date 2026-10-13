@@ -188,6 +188,9 @@ pub struct Demand {
     pub candidates: usize,
     /// Trips home drawn as commutes driven back (M13), not from jobs to homes near them.
     pub mirror_home: bool,
+    /// Per demand edge, the power of distance its trips' destinations lose attractiveness
+    /// by, where it differs from `power` (empty: `power` everywhere).
+    pub origin_power: Vec<f32>,
     hourly_sum: f32,
     acc: f64,
     gateways: Vec<Gateway>,
@@ -353,6 +356,7 @@ impl Demand {
             power: TRIP_POWER,
             candidates: TRIP_CANDIDATES,
             mirror_home: true,
+            origin_power: Vec::new(),
             hourly_sum: HOURLY.iter().sum(),
             acc: 0.0,
             gateways: Vec::new(),
@@ -434,17 +438,10 @@ impl Demand {
             (&self.any_cum, &self.any_alias)
         };
         let o = sample(from_cum, rng)?;
+        let power = self.origin_power.get(o).copied().unwrap_or(self.power);
         Some(
-            self.near(
-                self.pos[o],
-                o,
-                to,
-                self.decay,
-                self.power,
-                self.candidates,
-                rng,
-            )
-            .map(|d| (o, d)),
+            self.near(self.pos[o], o, to, self.decay, power, self.candidates, rng)
+                .map(|d| (o, d)),
         )
     }
 

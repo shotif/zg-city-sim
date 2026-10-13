@@ -32,7 +32,7 @@ Read these before changing anything:
 | `pipeline/zoning.py` | Lots for zoning (M5a): free land along streets, 20 m by 30 m, kept off buildings, roads, water and the land the City's plan keeps open; each lot's street, planned use and the storeys around it. The plan's polygons for the app's map. |
 | `pipeline/data/news.json` | Curated news reports of jams (39 places). |
 | `sim/` | Rust traffic engine, compiled to WebAssembly (C ABI in `ffi.rs`) and run natively. |
-| `sim/src/engine.rs` | Vehicles, IDM/MOBIL, junction right of way, signals (`merge_signal_phases`, `retime_signals`, actuated control), routing calls, re-routing on the way (`reroute_en_route`), closures, statistics. |
+| `sim/src/engine.rs` | Vehicles, IDM/MOBIL, junction right of way, signals (`merge_signal_phases`, `trams_with_traffic`, `retime_signals`, actuated control and its tram phases), routing calls, re-routing on the way (`reroute_en_route`), closures, statistics. |
 | `sim/src/network.rs` | The network built from the packed arrays: routing successors, toll time, where turns wait inside junctions (`waits_for`). |
 | `sim/src/router.rs` | ALT A* with weighted heuristic, for transit legs and until a hierarchy is built; `reach`, the time-limited search behind land value's accessibility and the riders' car journeys without one. |
 | `sim/src/cch.rs` | Customizable contraction hierarchies (M11), which car, truck and bike routes are searched on: the order by nested dissection (inertial flow; `order`, run in a worker of its own in the browser), contraction (`Cch`; extended with new edges on top for drawn roads), customisation per class when travel times change (`Metric`, `Hierarchy`), queries up the elimination tree, and searches to every edge at once (PHAST, `Query::one_to_all`) for the riders' car journeys and land value. A* (`router.rs`) is left for transit legs and while no hierarchy is built. |
@@ -97,6 +97,7 @@ Environment variables for the native runs:
 - `PRIORITY=all` (the `run` and `day` examples) gives trams and buses signal priority at every signal they cross (M10b); `PRIORITY=5` along those routes.
 - `TRAM_HOLDUPS=1` (the `run` example) prints at the end where trams stood still off their stops and why, and how late buses and trams ran; `WATCH_LANES=462508` prints the vehicles on those lanes every 5 simulated minutes.
 - `NO_HIERARCHY=1` (the `run`, `day`, `compare` and `riders` examples) searches routes by A* throughout, as before M11.
+- `CITY_POWER=0.5` (the `day`, `run` and `compare` examples) sets the power of distance for trips from the City alone, to calibrate (M16c; the browser's demand has no such setting).
 - `NO_MIRROR_HOME=1` (the `day`, `run` and `compare` examples) draws trips home from jobs to homes near them, as before M13, instead of as commutes driven back.
 - `SELECT_EDGES=12,34` (the `day` example) writes `select_link.csv`: where the cars and lorries driving onto those edges come from and go to, by town (M13).
 - `ROUTE_LOG=dir` (the `run` example) logs every route search, with what it was for and the travel times it ran on, from `ROUTE_LOG_AFTER` minutes into the run (default 0), for `routes --replay dir [n] [--cch]`.
@@ -108,7 +109,7 @@ Environment variables for the native runs:
 - **Stale data in native runs:** the native runners read the unpacked `.bin` files, the pedestrians' and bikes' too. After rebuilding data, unpack them all again with `gunzip -kf`, or they quietly run on the old network.
 - **Drawn roads keep ids:** the junction builder builds every network from the one loaded, so lanes, edges and junctions loaded keep their ids and drawn ones come after. The engine is told where each lane went (`lanePieces`); keep that invariant when changing either side. Links taken away (a junction made a roundabout, movements closed by the signal editor) are left out of the arrays, so link ids are not stable: the engine matches them again by the lanes they join.
 - **Demand changes at runtime:** buildings grown on zoned lots add homes and jobs: the app sends today's `demand*` arrays merged with them (`zg_set_demand`), so the engine's demand weights can differ from the data loaded. Lots name today's edges; with a project open they are matched by position.
-- **Player-set signals:** programs the player sets carry `tlsFixed`; `merge_signal_phases`, `retime_signals`, actuated extension and phase skipping leave them alone.
+- **Player-set signals:** programs the player sets carry `tlsFixed`; `merge_signal_phases`, `trams_with_traffic`, `retime_signals`, actuated extension and phase skipping leave them alone.
 - **The network is built twice:** netconvert joins road junctions but not the tram-only junctions inside them, so `build_sumo_network` runs it once to find them (`tram_joins`), then again with them joined (`zagreb_<key>.joins.nod.xml` in the cache). Projects reuse today's joins.
 - **Project comparisons are noisy:** two runs of today's roads with other seeds differ by about 16 % in delay over the morning peak. Compare roads near a project, not the whole network, and use the mean of two runs of today.
 - **Peak speeds:** car journeys for the riders use the roads' speeds in the morning peak from day runs (`pipeline/data/peak_speeds.json`). After a change that moves traffic a lot, refresh them with `python -m pipeline.peak` on the new day runs, rebuild the network and calibrate `ASC` again with the `riders` example.
@@ -136,6 +137,7 @@ Environment variables for the native runs:
 | Inbound lead | `sim/src/demand.rs` | 45 min |
 | Toll and fuel time (`TOLL_TIME`, `FUEL_TIME`) | `sim/src/network.rs` | 0.018 s/m of tolled motorway; 0.020 s/m driven, for fuel, in car and lorry routes (M15b; about €0.09 a kilometre at €16 an hour, an estimate) |
 | Signal re-timing (`MIN_GREEN`, `LONG_CYCLE`, `MAX_EXTENSION`, `TRAM_TRACK_SHARE`) | `sim/src/engine.rs` | 6 s, 120 s, 20 s, 0.25 |
+| Trams with the traffic beside them (`PARALLEL_APPROACHES`) | `sim/src/engine.rs` | a tram track within 30° of road traffic going straight on gets its green where the turns across it give way; phases with trams and no road traffic straight on are called by trams alone (M16b) |
 | Phase skipping: lanes too short to show a call (`CALL_LANE`, plus a tram where trams run) | `sim/src/engine.rs` | 20 m (52 m) |
 | Tram junctions joined into road junctions within (`TRAM_JOIN_DIST`) | `pipeline/network.py` | 3 m |
 | Speed limits where OSM has none (`default_maxspeed`, `BUILT_UP_SHARE`) | `pipeline/network.py` | 50 km/h where a quarter of the land along the road is built up (ESA WorldCover) or it is named a street or square; 90 km/h outside on primary and secondary roads |

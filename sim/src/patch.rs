@@ -110,6 +110,7 @@ impl Engine {
         // running where they are, the others restart.
         let (tls_link_offsets, tls_links) = tls_links(&net);
         merge_signal_phases(&mut net, &tls_link_offsets, &tls_links);
+        trams_with_traffic(&mut net, &tls_link_offsets, &tls_links);
         retime_signals(&mut net, &tls_link_offsets, &tls_links);
         let n_tls = net.d.tls_offset.len();
         let mut tls_phase = vec![0u32; n_tls];

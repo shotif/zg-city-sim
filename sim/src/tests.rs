@@ -1403,6 +1403,72 @@ fn tram_tracks_count_a_quarter_lane_when_splitting_green() {
     assert!((durations[0] - 44.4).abs() < 0.01 && (durations[2] - 15.6).abs() < 0.01);
 }
 
+#[test]
+fn trams_go_straight_on_with_the_traffic_beside_them() {
+    // An eastbound road (straight on, and a left turn across the tram's path), a tram track
+    // beside it, and a north-south road; the tram has a phase of its own.
+    let mut b = Builder::default();
+    let jw = b.junction(0.0, 0.0);
+    let jwt = b.junction(0.0, -4.0);
+    let j = b.junction(300.0, 0.0);
+    let je = b.junction(600.0, 0.0);
+    let jet = b.junction(600.0, -4.0);
+    let jn = b.junction(300.0, -300.0);
+    let js = b.junction(300.0, 300.0);
+    let road_in = b.road(jw, j, 2, 13.9);
+    let road_out = b.road(j, je, 1, 13.9);
+    let track_in = b.road(jwt, j, 1, 13.9);
+    let track_out = b.road(j, jet, 1, 13.9);
+    let north = b.road(j, jn, 1, 13.9);
+    let ns_in = b.road(js, j, 1, 13.9);
+    for e in [track_in, track_out] {
+        let lane = b.lane(e, 0) as usize;
+        b.d.lane_allow[lane] = crate::network::vclass::TRAM;
+    }
+    let links = [
+        b.connect(
+            b.lane(road_in, 0),
+            b.lane(road_out, 0),
+            j,
+            dir::STRAIGHT,
+            b'O',
+        ),
+        b.connect(b.lane(road_in, 1), b.lane(north, 0), j, dir::LEFT, b'o'),
+        b.connect(
+            b.lane(track_in, 0),
+            b.lane(track_out, 0),
+            j,
+            dir::STRAIGHT,
+            b'O',
+        ),
+        b.connect(b.lane(ns_in, 0), b.lane(north, 0), j, dir::STRAIGHT, b'O'),
+    ];
+    // The left turn gives way to the tram; the north-south road crosses everything.
+    b.set_logic(
+        j,
+        &[(0, 0b1000), (0b0100, 0b1100), (0, 0b1010), (0, 0b0111)],
+    );
+    b.signal(
+        &links,
+        &[
+            (30.0, "Ggrr"),
+            (3.0, "yyrr"),
+            (15.0, "rrGr"),
+            (3.0, "rryr"),
+            (30.0, "rrrG"),
+            (3.0, "rrry"),
+        ],
+    );
+    let engine = Engine::new(b.build(), 1);
+    let states: Vec<String> = program(&engine).into_iter().map(|(s, _)| s).collect();
+    // The tram goes with the road beside it, on into its own phase; the left turn still
+    // gives way. The north-south road's phase is left alone.
+    assert_eq!(states[0], "GgGr");
+    assert_eq!(states[1], "yyGr");
+    assert_eq!(states[2], "rrGr");
+    assert_eq!(states[4], "rrrG");
+}
+
 // ---- edits (M4a) ----------------------------------------------------------------------------
 
 /// Two ways from A to Z: straight on through M (1 km), or a 1.4 km detour through C; then

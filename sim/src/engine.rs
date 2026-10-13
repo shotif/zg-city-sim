@@ -775,7 +775,12 @@ fn merged_program(net: &Network, t: usize, links: &[u32]) -> Option<Vec<ProgramP
             yellow = yellow.max(d.phase_duration[p]);
             continue;
         }
-        // Programs with other states (all-red phases, red-yellow, blinking) stay as they are.
+        // All-red phases go (M16b: two of the five busiest junctions on Ulica grada Vukovara
+        // had one, so their programs were never merged); programs with other states
+        // (red-yellow, blinking) stay as they are.
+        if states.iter().all(|&c| c == b'r') {
+            continue;
+        }
         if !states.iter().all(|c| matches!(c, b'G' | b'g' | b'r'))
             || lanes_served(d, links, states, &mut lanes) == 0.0
         {
@@ -925,6 +930,140 @@ fn merge_phase_states(net: &Network, links: &[u32], a: &[u8], b: &[u8]) -> Optio
     Some(merged)
 }
 
+/// Whether a lane allowing `allow` is a tram track (trams alone, no cars, buses or bikes).
+fn tram_track(allow: u16) -> bool {
+    allow & vclass::TRAM != 0 && allow & (vclass::PASSENGER | vclass::BUS | vclass::BICYCLE) == 0
+}
+
+/// Approaches at most this far apart in heading (radians, 30°) run beside each other.
+const PARALLEL_APPROACHES: f32 = 0.524;
+
+/// Netconvert gives trams phases of their own, where Zagreb's signals let a tram go straight
+/// on with the traffic beside it (M16b; at Ulica grada Vukovara and Avenija Marina Držića two
+/// tram phases took a fifth of the cycle). In each green phase that lets road traffic go
+/// straight on, a tram track beside it on the same approach gets green too, wherever every
+/// turn the phase lets go across the tram's path gives way to it (the turns then get a
+/// permissive green, `g`); the yellow after the phase shows the tram yellow too. The tram
+/// phases stay for trams turning, and actuated signals skip them when no tram calls.
+fn trams_with_traffic(net: &mut Network, tls_link_offsets: &[u32], tls_links: &[u32]) {
+    for t in 0..net.d.tls_offset.len() {
+        if net.tls_fixed(t) {
+            continue;
+        }
+        let links = &tls_links[tls_link_offsets[t] as usize..tls_link_offsets[t + 1] as usize];
+        let (a, b) = (
+            net.d.tls_phase_offsets[t] as usize,
+            net.d.tls_phase_offsets[t + 1] as usize,
+        );
+        if b <= a + 1 {
+            continue;
+        }
+        let tram = |l: u32| tram_track(net.d.lane_allow[net.d.link_from[l as usize] as usize]);
+        let road = |l: u32| {
+            net.d.lane_allow[net.d.link_from[l as usize] as usize] & vclass::PASSENGER != 0
+        };
+        let trams: Vec<u32> = links
+            .iter()
+            .copied()
+            .filter(|&l| tram(l) && net.d.link_dir[l as usize] == dir::STRAIGHT)
+            .collect();
+        if trams.is_empty() {
+            continue;
+        }
+        let state_range = |d: &NetworkData, p: usize| {
+            d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize
+        };
+        let mut changes: Vec<(usize, Vec<u8>)> = Vec::new();
+        for p in a..b {
+            let states = net.d.phase_states[state_range(&net.d, p)].to_vec();
+            let green = |s: &[u8], l: u32| {
+                matches!(
+                    s.get(net.d.link_tls_index[l as usize] as usize),
+                    Some(b'G' | b'g')
+                )
+            };
+            if !states.iter().any(|&c| matches!(c, b'G' | b'g'))
+                || states.iter().any(|&c| matches!(c, b'y' | b'Y' | b'u'))
+            {
+                continue;
+            }
+            // The phase after this one: a yellow to show the tram too (or green, if the
+            // green after it lets the tram go), or a green with it.
+            let q = if p + 1 >= b { a } else { p + 1 };
+            let next = net.d.phase_states[state_range(&net.d, q)].to_vec();
+            let next_yellow = next.iter().any(|&c| matches!(c, b'y' | b'Y'));
+            let q2 = if q + 1 >= b { a } else { q + 1 };
+            let after_next = net.d.phase_states[state_range(&net.d, q2)].to_vec();
+            let mut now = states.clone();
+            let mut after = next.clone();
+            for &lt in &trams {
+                let it = net.d.link_tls_index[lt as usize] as usize;
+                if green(&now, lt) || (!next_yellow && !green(&next, lt)) {
+                    continue;
+                }
+                let heading = approach_heading(net, lt);
+                let beside = links.iter().any(|&l| {
+                    road(l)
+                        && net.d.link_dir[l as usize] == dir::STRAIGHT
+                        && now.get(net.d.link_tls_index[l as usize] as usize) == Some(&b'G')
+                        && {
+                            let apart =
+                                (approach_heading(net, l) - heading).abs() % std::f32::consts::TAU;
+                            apart.min(std::f32::consts::TAU - apart) < PARALLEL_APPROACHES
+                        }
+                });
+                if !beside {
+                    continue;
+                }
+                let j = net.d.link_junction[lt as usize];
+                let rt = net.d.link_request[lt as usize] as u32;
+                let mut yielding = Vec::new();
+                let mut ok = true;
+                for &l in links {
+                    if l == lt || !green(&now, l) || net.d.link_junction[l as usize] != j {
+                        continue;
+                    }
+                    let r = net.d.link_request[l as usize] as u32;
+                    if !net.foes(j, rt).any(|x| x == r) && !net.foes(j, r).any(|x| x == rt) {
+                        continue;
+                    }
+                    if road(l)
+                        && net.d.link_dir[l as usize] != dir::STRAIGHT
+                        && net.response(j, r).any(|x| x == rt)
+                    {
+                        yielding.push(net.d.link_tls_index[l as usize] as usize);
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok {
+                    continue;
+                }
+                now[it] = b'G';
+                for i in yielding {
+                    if now[i] == b'G' {
+                        now[i] = b'g';
+                    }
+                }
+                if next_yellow && !matches!(after[it], b'G' | b'g') {
+                    after[it] = if green(&after_next, lt) { b'G' } else { b'y' };
+                }
+            }
+            if now != states {
+                changes.push((p, now));
+                if after != next {
+                    changes.push((q, after));
+                }
+            }
+        }
+        for (p, states) in changes {
+            let r = state_range(&net.d, p);
+            net.d.phase_states[r].copy_from_slice(&states);
+        }
+    }
+}
+
 /// Seconds to cover `d` metres from speed `v`, accelerating at `a` up to `vmax`.
 /// The state of `link` at `time` (see `Engine::link_state`), with the crossings' closures
 /// (`Engine::crossing_since`).
@@ -987,6 +1126,7 @@ impl Engine {
 
         let (tls_link_offsets, tls_links) = patch::tls_links(&net);
         merge_signal_phases(&mut net, &tls_link_offsets, &tls_links);
+        trams_with_traffic(&mut net, &tls_link_offsets, &tls_links);
         retime_signals(&mut net, &tls_link_offsets, &tls_links);
 
         let free_time: Vec<f32> = (0..n_edges)
@@ -1556,12 +1696,16 @@ impl Engine {
         let green = |p: usize, idx: usize| matches!(states(p).get(idx), Some(b'G' | b'g'));
         let links = &self.tls_links
             [self.tls_link_offsets[t] as usize..self.tls_link_offsets[t + 1] as usize];
+        let trams_only = self.tram_phase(t, phase);
         for &l in links {
             let idx = d.link_tls_index[l as usize] as usize;
             if !green(phase, idx) || except.is_some_and(|p| green(p, idx)) {
                 continue;
             }
             let from = d.link_from[l as usize] as usize;
+            if trams_only && !tram_track(d.lane_allow[from]) {
+                continue;
+            }
             let lane_len = d.lane_length[from];
             // Too short to hold the vehicle that waits for it, which stands in the junction
             // before (signals a few metres apart) or, a tram, at the signal before: the link
@@ -1606,6 +1750,47 @@ impl Engine {
             }
         }
         self.pedestrians_call(t, phase, except, called)
+    }
+
+    /// Whether `phase` of program `t` is a tram phase: it lets trams go and no road traffic
+    /// straight on, and every road link it lets go has as good a green in another phase too
+    /// (protected if protected here; M16b). Only trams call it and keep it, as tram
+    /// detectors do: road traffic turning beside them goes in its own phase.
+    fn tram_phase(&self, t: usize, phase: usize) -> bool {
+        let d = &self.net.d;
+        let (a, b) = self.phase_range(t);
+        let states = |p: usize| {
+            &d.phase_states
+                [d.phase_state_offsets[p] as usize..d.phase_state_offsets[p + 1] as usize]
+        };
+        let changing = |p: usize| states(p).iter().any(|c| matches!(c, b'y' | b'Y' | b'u'));
+        let links = &self.tls_links
+            [self.tls_link_offsets[t] as usize..self.tls_link_offsets[t + 1] as usize];
+        let mut trams = false;
+        for &l in links {
+            let idx = d.link_tls_index[l as usize] as usize;
+            let here = states(phase).get(idx).copied();
+            if !matches!(here, Some(b'G' | b'g')) {
+                continue;
+            }
+            let allow = d.lane_allow[d.link_from[l as usize] as usize];
+            if tram_track(allow) {
+                trams = true;
+                continue;
+            }
+            if d.link_dir[l as usize] == dir::STRAIGHT {
+                return false;
+            }
+            let as_good = |p: usize| match states(p).get(idx) {
+                Some(b'G') => true,
+                Some(b'g') => here == Some(b'g'),
+                _ => false,
+            };
+            if !(a..b).any(|p| p != phase && !changing(p) && as_good(p)) {
+                return false;
+            }
+        }
+        trams
     }
 
     /// Whether pedestrians at a crossing of signal program `t` that walk in `phase` (and not
