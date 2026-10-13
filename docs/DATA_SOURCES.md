@@ -94,6 +94,15 @@ The portal is <https://data.zagreb.hr>, a CKAN 2.10 instance with 199 datasets. 
 
 **Not published anywhere:** city traffic counts, a traffic-signal inventory or timing plans, speed limits, a routable official road network.
 
+### Local checks for the City's streets (M16, not committed)
+
+The owner's decision (2026-10-13): these sources carry no open licence, so they are used only to check the simulation locally, and none of their numbers is committed to the repository; the plan and the validation report describe the simulation's results against them in words and ratios.
+
+- Faculty of Transport and Traffic Sciences, *Prometna studija područja omeđenog željezničkom prugom, Avenijom Marina Držića, Ulicom grada Vukovara i Savskom cestom* (Gredelj, April 2018), on zagreb.hr: peak-hour totals at the five busiest junctions on Ulica grada Vukovara, counted in April and May 2017.
+- Elipsa - S.Z., *Prometna analiza postojećeg stanja - Ciglana i Tržnica Kustošija* (May 2022), on zagreb.hr: daily totals by approach at 14 junctions on Ilica, Prilaz baruna Filipovića and Selska cesta, estimated from peak-period counts in April and May 2022 with the peak hour at 8 % of the day.
+- Mireo's blog, *The fastest bridge in Zagreb* (2021): when the Sava bridges slow down on weekdays, by direction, from GPS traces.
+- Looked at and not usable: Hrvatske autoceste's maps of daily traffic by motorway section (labels too crowded around Zagreb to tell which section each belongs to); the City's strategic noise map (DARH 2, 2024: traffic from the Master Plan's 2017 model, and noise, not counts, at its 20 places measured in 2022); the impact study for the A11's link to Sarajevska cesta (IGH, 2016: counts at Hrvatske ceste's stations, already in use).
+
 ### Boundaries, addresses, population, land use
 
 Official DGU register of spatial units (RPJ), dated 2025-02-03, EPSG:3765:
