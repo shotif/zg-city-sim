@@ -360,7 +360,7 @@ fn main() {
     });
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"riders\": {riders}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
-         \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"removedBecause\": {:?}, \
+         \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"rounds\": {}, \"removedBecause\": {:?}, \
          \"removedAt\": [{}], \"transit\": {transit}, \"bikes\": {{\"departed\": {}, \"arrived\": {}, \"removed\": {}, \"km\": {:.0}}}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
@@ -370,6 +370,7 @@ fn main() {
         s.no_route,
         s.insert_failed,
         s.en_route_reroutes,
+        s.rounds,
         s.teleport_reasons,
         removed_at.join(", "),
         s.bike_departed,

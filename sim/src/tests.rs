@@ -2,7 +2,9 @@
 
 use crate::demand::{Demand, Gateway};
 use crate::edits::Edit;
-use crate::engine::{CLOSED_TIME, DT, Engine, LanePiece, Trip, stat, travel_time, trip};
+use crate::engine::{
+    CLOSED_TIME, DT, Engine, LanePiece, MAX_ROUNDS, Trip, stat, travel_time, trip,
+};
 use crate::idm;
 use crate::network::{LINK_STATE_CHARS, NONE, Network, NetworkData, dir, edge_flag, vclass};
 use crate::rng::Rng;
@@ -2370,6 +2372,69 @@ fn drivers_do_not_enter_a_roundabout_whose_exit_is_full() {
         "the eastbound car entered"
     );
     assert!(north_through, "the northbound car was held up on the ring");
+}
+
+#[test]
+fn a_driver_on_the_ring_goes_round_again_when_the_exit_fills() {
+    // The road out east is full. A car already on the ring bound for it goes round again
+    // instead of stopping at the exit, so the car behind it, heading north, gets out; after
+    // `MAX_ROUNDS` times round it waits at the exit.
+    let (ring, roads) = crossroads(true);
+    let [
+        _,
+        eb_out,
+        wb_in,
+        _,
+        _,
+        nb_out,
+        _,
+        _,
+        ring_n,
+        _,
+        ring_s,
+        ring_e,
+    ] = roads[..]
+    else {
+        unreachable!()
+    };
+    let mut engine = Engine::new(Network::build(ring).unwrap(), 3);
+    engine.set_time(0.0);
+    let lane = |engine: &Engine, e: u32| engine.net.edge_lanes(e).start;
+    let out = lane(&engine, eb_out);
+    let length = engine.net.d.lane_length[out as usize];
+    let car = &vtype::TYPES[vtype::CAR as usize];
+    let mut pos = length - 1.0;
+    while pos > car.length {
+        engine.insert_at(vtype::CAR, vec![eb_out, wb_in], out, pos, 0.0);
+        pos -= car.length + car.min_gap + 0.05;
+    }
+    let east = engine.insert_at(
+        vtype::CAR,
+        vec![ring_e, eb_out],
+        lane(&engine, ring_e),
+        8.0,
+        5.0,
+    );
+    let north = engine.insert_at(
+        vtype::CAR,
+        vec![ring_s, ring_e, ring_n, nb_out],
+        lane(&engine, ring_s),
+        5.0,
+        5.0,
+    );
+    let serial = engine.vehs[north as usize].serial;
+    let mut north_out = false;
+    run_until(&mut engine, 150.0, |e| {
+        let n = &e.vehs[north as usize];
+        if !n.alive() || n.serial != serial || n.route_idx >= 3 {
+            north_out = true;
+        }
+    });
+    assert!(north_out, "the northbound car was held up on the ring");
+    let e = &engine.vehs[east as usize];
+    assert_eq!(e.rounds, MAX_ROUNDS);
+    assert!(engine.net.is_roundabout_lane(e.lane as usize));
+    assert_eq!(engine.stats.teleported, 0);
 }
 
 #[test]

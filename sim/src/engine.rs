@@ -131,6 +131,8 @@ const LANE_CHANGE_ROOM: f32 = 150.0;
 const LANE_CHANGE_SECONDS: f32 = 10.0;
 /// How many short edges ahead lane choice looks through.
 const SHORT_EDGE_LOOKAHEAD: u32 = 4;
+/// Most times a driver goes round a roundabout again for a full exit in one trip (M16d).
+pub(crate) const MAX_ROUNDS: u8 = 3;
 /// Lane score of a lane that also leads into a lane of the next road that reaches the road
 /// after it (M16d): drivers sort into it while there is a gap, before a long road ends in
 /// lanes that split (Most mladosti's three lanes split two to one at Sarajevska cesta, and
@@ -295,6 +297,8 @@ pub struct Vehicle {
     pub weighs_tolls: bool,
     /// Timetabled trip of a bus or tram.
     pub transit: Option<Box<TransitRun>>,
+    /// Times the driver went round a roundabout again for a full exit (`MAX_ROUNDS`).
+    pub rounds: u8,
 }
 
 impl Vehicle {
@@ -332,6 +336,7 @@ impl Vehicle {
             trip_flags: 0,
             weighs_tolls: true,
             transit: None,
+            rounds: 0,
         }
     }
 
@@ -373,6 +378,8 @@ pub struct Stats {
     pub lane_reroutes: u64,
     /// Vehicles that took another way on their way because the roads ahead jammed.
     pub en_route_reroutes: u64,
+    /// Drivers who went round a roundabout again because their exit was full (M16d).
+    pub rounds: u64,
     /// Why removed vehicles were stuck (`Holdup` names).
     pub teleport_reasons: std::collections::BTreeMap<String, u64>,
     /// Details of the first few removals per reason (with `Engine::debug`).
@@ -1883,6 +1890,7 @@ impl Engine {
         if self.acc.len() < self.vehs.len() {
             self.acc.resize(self.vehs.len(), 0.0);
         }
+        let mut round = Vec::new();
         for i in 0..self.active_lanes.len() {
             let lane = self.active_lanes[i] as usize;
             let n = self.lane_vehs[lane].len();
@@ -1895,6 +1903,9 @@ impl Engine {
                     self.serve_stop(v, plan.missed_stop);
                 }
                 self.acc[v as usize] = plan.acc;
+                if k + 1 == n && plan.pass == Some(false) && self.net.is_roundabout_lane(lane) {
+                    round.push(v);
+                }
                 let veh = &mut self.vehs[v as usize];
                 if let Some(pass) = plan.pass {
                     veh.will_pass = pass;
@@ -1906,6 +1917,68 @@ impl Engine {
                 veh.coop = NONE;
             }
         }
+        for v in round {
+            self.go_round(v);
+        }
+    }
+
+    /// A driver on a roundabout whose exit is full goes round again rather than stop on
+    /// the ring and hold up everyone behind (M16d: Zabok's D14/D307 roundabout filled in a
+    /// circle, each ring piece's front vehicle waiting for room on the next, for hours). It
+    /// takes the ring on if there is room there and routes again from it, at most
+    /// `MAX_ROUNDS` times a trip.
+    fn go_round(&mut self, v: u32) {
+        let d = &self.net.d;
+        let veh = &self.vehs[v as usize];
+        let (lane, link) = (veh.lane, veh.next_link);
+        if veh.rounds >= MAX_ROUNDS || veh.transit.is_some() || link == NONE {
+            return;
+        }
+        let ring = |l: u32| {
+            self.net
+                .is_roundabout(d.lane_edge[d.link_to[l as usize] as usize])
+        };
+        if ring(link) || self.exit_has_room(link, veh) {
+            return;
+        }
+        let vclass = veh.params().vclass;
+        let need = veh.params().length + veh.params().min_gap;
+        let Some(on) = self.net.lane_links(lane).find(|&l| {
+            self.net.link_allow[l as usize] & vclass != 0
+                && ring(l)
+                && match self.ahead_of(d.link_to[l as usize], 0, false) {
+                    Some(u) => {
+                        let uv = &self.vehs[u as usize];
+                        uv.speed > 3.0 || uv.pos - uv.params().length >= need
+                    }
+                    None => true,
+                }
+        }) else {
+            return;
+        };
+        let Some(&dest) = veh.route.last() else {
+            return;
+        };
+        let (tolls, vtype) = (veh.weighs_tolls, veh.vtype);
+        let here = d.lane_edge[lane as usize];
+        let next = d.lane_edge[d.link_to[on as usize] as usize];
+        let times = self.times_for(vtype);
+        self.router.purpose = purpose::LANE;
+        let Some(route) = self.find_route(times, next, dest, vclass, tolls) else {
+            return;
+        };
+        let veh = &mut self.vehs[v as usize];
+        veh.route.clear();
+        veh.route.push(here);
+        veh.route.extend_from_slice(&route);
+        veh.route_idx = 0;
+        veh.next_link = on;
+        veh.will_pass = true;
+        veh.wait = 0.0;
+        veh.blocked = 0.0;
+        veh.plan_time = -1.0;
+        veh.rounds += 1;
+        self.stats.rounds += 1;
     }
 
     fn plan_vehicle(&self, v: u32, leader: Option<u32>) -> Plan {

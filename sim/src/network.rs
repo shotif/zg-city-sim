@@ -630,6 +630,11 @@ impl Network {
         self.d.edge_flags[edge as usize] & edge_flag::ROUNDABOUT != 0
     }
 
+    /// Whether `lane` is a piece of a roundabout's ring (not a lane inside a junction).
+    pub fn is_roundabout_lane(&self, lane: usize) -> bool {
+        !self.lane_internal[lane] && self.is_roundabout(self.d.lane_edge[lane])
+    }
+
     pub fn successors(&self, edge: u32) -> &[Successor] {
         &self.succ
             [self.succ_offset[edge as usize] as usize..self.succ_offset[edge as usize + 1] as usize]

@@ -5,93 +5,93 @@
  "demandScale": 0.8,
  "totals": {
   "today": {
-   "delayHours": 21841.1,
-   "vehicleKm": 3606764.0,
-   "arrived": 200907.5,
-   "tripMinutes": 22.02
+   "delayHours": 21191.2,
+   "vehicleKm": 3609270.5,
+   "arrived": 201404.0,
+   "tripMinutes": 21.85
   },
   "project": {
-   "delayHours": 22852.3,
-   "vehicleKm": 3623321,
-   "arrived": 200519,
-   "tripMinutes": 22.38
+   "delayHours": 22123.9,
+   "vehicleKm": 3624521,
+   "arrived": 201344,
+   "tripMinutes": 22.18
   }
  },
  "perHour": [
   {
    "hour": 6,
    "delayHours": [
-    4570.65,
-    4666.2
+    4507.7,
+    4567.5
    ],
    "vehicleKm": [
-    910552.0,
-    911386
+    915442.5,
+    913345
    ],
    "arrived": [
-    47512.5,
-    47280
+    47742.0,
+    47608
    ],
    "tripMinutes": [
-    20.11,
-    20.28
+    20.18,
+    20.09
    ]
   },
   {
    "hour": 7,
    "delayHours": [
-    6247.85,
-    6505.0
+    6075.35,
+    6369.6
    ],
    "vehicleKm": [
-    979024.0,
-    981732
+    976182.0,
+    980307
    ],
    "arrived": [
-    52552.5,
-    52424
+    52383.5,
+    52193
    ],
    "tripMinutes": [
-    22.555,
-    22.81
+    22.345,
+    22.75
    ]
   },
   {
    "hour": 8,
    "delayHours": [
-    5960.65,
-    6499.9
+    5809.75,
+    6250.9
    ],
    "vehicleKm": [
-    896849.0,
-    905352
+    900038.0,
+    905309
    ],
    "arrived": [
-    50809.5,
-    50798
+    51148.5,
+    51053
    ],
    "tripMinutes": [
-    23.740000000000002,
-    24.29
+    23.634999999999998,
+    24.16
    ]
   },
   {
    "hour": 9,
    "delayHours": [
-    5061.9,
-    5181.2
+    4798.35,
+    4935.9
    ],
    "vehicleKm": [
-    820339.0,
-    824851
+    817608.0,
+    825560
    ],
    "arrived": [
-    50033.0,
-    50017
+    50130.0,
+    50490
    ],
    "tripMinutes": [
-    21.509999999999998,
-    21.97
+    21.1,
+    21.55
    ]
   }
  ],
@@ -99,107 +99,107 @@
   "perHour": [
    {
     "hour": 7,
-    "mean": -0.0047
+    "mean": -0.0049
    },
    {
     "hour": 8,
-    "mean": 0.0624
+    "mean": 0.0281
    },
    {
     "hour": 9,
-    "mean": 0.0059
+    "mean": 0.0135
    },
    {
     "hour": 10,
-    "mean": -0.0107
+    "mean": -0.0135
    }
   ],
-  "mean": 0.0112,
+  "mean": 0.0043,
   "faster": [
    {
-    "from": "Trešnjevka – sjever",
-    "to": "Črnomerec",
-    "today": 361,
-    "project": 296
+    "from": "Trnje",
+    "to": "Peščenica – Žitnjak",
+    "today": 685,
+    "project": 599
    },
    {
     "from": "Trešnjevka – sjever",
     "to": "Trešnjevka – jug",
-    "today": 315,
-    "project": 266
-   },
-   {
-    "from": "Trešnjevka – jug",
-    "to": "Trešnjevka – sjever",
-    "today": 322,
-    "project": 281
-   }
-  ],
-  "slower": [
-   {
-    "from": "Novi Zagreb – istok",
-    "to": "Trnje",
-    "today": 476,
-    "project": 658
-   },
-   {
-    "from": "Novi Zagreb – zapad",
-    "to": "Trnje",
-    "today": 669,
-    "project": 878
+    "today": 287,
+    "project": 253
    },
    {
     "from": "Trnje",
     "to": "Novi Zagreb – istok",
-    "today": 583,
-    "project": 758
+    "today": 623,
+    "project": 552
+   }
+  ],
+  "slower": [
+   {
+    "from": "Stenjevec",
+    "to": "Trešnjevka – sjever",
+    "today": 408,
+    "project": 519
+   },
+   {
+    "from": "Trešnjevka – jug",
+    "to": "Trešnjevka – sjever",
+    "today": 312,
+    "project": 376
+   },
+   {
+    "from": "Donji grad",
+    "to": "Trešnjevka – sjever",
+    "today": 560,
+    "project": 670
    }
   ]
  },
  "roads": [
   {
    "name": "Zagrebačka avenija",
-   "today": 7276,
-   "project": 5687
+   "today": 7237,
+   "project": 5983
   },
   {
-   "name": "Slavonska avenija",
-   "today": 9337,
-   "project": 8115
+   "name": "Ulica grada Vukovara",
+   "today": 11659,
+   "project": 10696
   },
   {
    "name": "Šarengradska ulica",
    "today": 0,
-   "project": 861
-  },
-  {
-   "name": "Ulica grada Vukovara",
-   "today": 11517,
-   "project": 10826
+   "project": 845
   },
   {
    "name": "Ilica",
-   "today": 5450,
-   "project": 6106
-  },
-  {
-   "name": "Horvaćanska cesta",
-   "today": 7082,
-   "project": 6546
-  },
-  {
-   "name": "Jadranski most",
-   "today": 3881,
-   "project": 3502
+   "today": 5560,
+   "project": 6067
   },
   {
    "name": "Avenija Dubrovnik",
-   "today": 14633,
-   "project": 14987
+   "today": 14218,
+   "project": 14664
+  },
+  {
+   "name": "Selska cesta",
+   "today": 10475,
+   "project": 10158
+  },
+  {
+   "name": "Jadranski most",
+   "today": 3912,
+   "project": 3638
+  },
+  {
+   "name": "Ulica Damira Tomljanovića - Gavrana",
+   "today": 992,
+   "project": 1242
   }
  ],
  "noise": {
-  "delay": 0.0416,
-  "travel": 0.0374
+  "delay": 0.0345,
+  "travel": 0.0315
  }
 }

@@ -1115,6 +1115,10 @@ fn main() {
         "routes changed on the way, around jams ahead: {}",
         s.en_route_reroutes
     );
+    println!(
+        "went round a roundabout again for a full exit: {}",
+        s.rounds
+    );
     println!("removed vehicles were: {:?}", s.teleport_reasons);
     let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
     places.sort_unstable_by(|a, b| b.cmp(a));
