@@ -23,7 +23,9 @@
 //! buses signal priority (see `run.rs`).
 //! `SEED=2` runs the same day with another seed; `NO_PHASE_SKIP=1` runs actuated signals
 //! through every phase of their cycle; `NO_REROUTE=1` keeps drivers on the route they chose
-//! at the start, however the roads ahead jam.
+//! at the start, however the roads ahead jam. `WATCH_JUNCTIONS=j1,j2` with `WATCH_FROM=13`
+//! prints every simulated minute from 13:00 the stopped front vehicle of each queue into
+//! those junctions and why it waits (as the `run` example does), to watch a day that locks up.
 
 use std::time::Instant;
 
@@ -147,6 +149,15 @@ fn main() {
         std::collections::HashMap::new();
     let mut by_hour = vec![Vec::new(); 24];
     let mut speeds_by_hour = vec![Vec::new(); 24];
+    // WATCH_JUNCTIONS=j1,j2 and WATCH_FROM=13: from that hour of the day, every simulated
+    // minute, the stopped front vehicle of each queue into those junctions (as in `run`).
+    let watch: Vec<u32> = std::env::var("WATCH_JUNCTIONS")
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    let watch_from: usize = std::env::var("WATCH_FROM")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(START_HOUR);
     let mut speed_sum = vec![0u32; n];
     let mut speed_n = vec![0u8; n];
     let mut hours = Vec::new();
@@ -161,8 +172,14 @@ fn main() {
         let mut bikes = 0u64;
         speed_sum.fill(0);
         speed_n.fill(0);
+        let watching = !watch.is_empty() && k >= (watch_from + 24 - START_HOUR) % 24;
         for i in 0..steps {
             engine.step();
+            if watching && (i + 1) % (60.0 / DT) as u32 == 0 {
+                let minute = (i + 1) / (60.0 / DT) as u32;
+                println!("{hour:02}:{minute:02}");
+                run::print_watch(&engine, &watch);
+            }
             for &e in &select {
                 for lane in engine.net.edge_lanes(e) {
                     for &v in engine.vehicles_on(lane) {

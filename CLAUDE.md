@@ -87,7 +87,7 @@ Environment variables for the native runs:
 - `DEBUG_EDGES=123,456` logs the vehicles removed from those edges, with what they see ahead.
 - `SEED=2` (the `day` and `run` examples) runs the same day with another seed, to see how much days vary.
 - `GRAVITY_KM=10` and `GATEWAY_LOCAL_KM=10` (the `day` and `run` examples) set the distance decay of trips within the map and across its edge on roads other than motorways, to calibrate them; `GRAVITY_POWER=1` and `GATEWAY_POWER=1` set the power of distance their destinations also lose attractiveness by (M13, M14b), and `CANDIDATES=128` how many candidates trips within the map choose from.
-- `WATCH_JUNCTIONS=51800,51531` (the `run` example) prints those junctions' signal programs as the engine runs them, then every simulated minute the stopped front vehicle of each queue into them: why it waits, who it gives way to, and what holds up the vehicles inside the junction.
+- `WATCH_JUNCTIONS=51800,51531` (the `run` and `day` examples) prints those junctions' signal programs as the engine runs them (`run`), then every simulated minute the stopped front vehicle of each queue into them: why it waits, who it gives way to, and what holds up the vehicles inside the junction. In the `day` example `WATCH_FROM=13` starts at that hour, so a day that locks up can be replayed with its seed and watched.
 - `NO_PHASE_SKIP=1` (the `day` and `run` examples) runs actuated signals through every phase, as before M7d.
 - `NO_REROUTE=1` (the `day` and `run` examples) keeps drivers on the route they chose at the start, as before M7g.
 - `NO_PEDESTRIANS=1` (the `day`, `run` and `compare` examples) leaves pedestrians out, as before M8c; `PEDESTRIAN_SCALE=0.5` lets half of the estimated pedestrians arrive.
@@ -100,6 +100,7 @@ Environment variables for the native runs:
 - `CITY_POWER=0.5` (the `day`, `run` and `compare` examples) sets the power of distance for trips from the City alone, to calibrate (M16c; the browser's demand has no such setting).
 - `NO_MIRROR_HOME=1` (the `day`, `run` and `compare` examples) draws trips home from jobs to homes near them, as before M13, instead of as commutes driven back.
 - `SELECT_EDGES=12,34` (the `day` example) writes `select_link.csv`: where the cars and lorries driving onto those edges come from and go to, by town (M13).
+- `GREEN_AUDIT=51739,51846` (the `run` example) prints at the end what each lane into those junctions did with its green: seconds of green an hour, vehicles over the line, and the shares of green with nobody near the line (starved) or with the front vehicle standing at it, and why (M16d); `GREEN_AUDIT_AFTER=60` starts counting that many minutes in.
 - `ROUTE_LOG=dir` (the `run` example) logs every route search, with what it was for and the travel times it ran on, from `ROUTE_LOG_AFTER` minutes into the run (default 0), for `routes --replay dir [n] [--cch]`.
 - Also `NO_GATEWAYS`, `DUMP_QUEUES=file` and `DEBUG_TELEPORT`.
 
@@ -141,7 +142,7 @@ Environment variables for the native runs:
 | Phase skipping: lanes too short to show a call (`CALL_LANE`, plus a tram where trams run) | `sim/src/engine.rs` | 20 m (52 m) |
 | Tram junctions joined into road junctions within (`TRAM_JOIN_DIST`) | `pipeline/network.py` | 3 m |
 | Speed limits where OSM has none (`default_maxspeed`, `BUILT_UP_SHARE`) | `pipeline/network.py` | 50 km/h where a quarter of the land along the road is built up (ESA WorldCover) or it is named a street or square; 90 km/h outside on primary and secondary roads |
-| Room to change lanes: lane choice looks past shorter roads (`LANE_CHANGE_ROOM`, `LANE_CHANGE_SECONDS`) | `sim/src/engine.rs` | 150 m, or 10 s at the speed limit if longer |
+| Room to change lanes: lane choice looks past shorter roads (`LANE_CHANGE_ROOM`, `LANE_CHANGE_SECONDS`; `SOFT_LANE`) | `sim/src/engine.rs` | 150 m, or 10 s at the speed limit if longer; drivers move, into gaps there anyway, to a lane that also reaches the road after the next (M16d) |
 | Re-routing on the way (`REROUTE_CHECK`, `REROUTE_SLOWER`, `REROUTE_LOSS`, `REROUTE_GAIN`, `REROUTE_GAIN_TIME`, `REROUTE_LANE_ROOM`) | `sim/src/engine.rs` | every 60 s, when the rest takes 25 % and 60 s longer than expected; a new way that saves 10 % and 60 s; 100 m to change lanes |
 | Stuck-vehicle removal (`STUCK_TIME`) | `sim/src/engine.rs` | 300 s |
 | Looking out for traffic still crossing the junction before a short lane in (`LOOK_BACK`) | `sim/src/engine.rs` | lanes under 30 m (M12a: roundabouts' ring pieces) |

@@ -567,6 +567,184 @@ pub fn demand_scale(demand_dir: &str) -> f32 {
         .unwrap_or(1.0)
 }
 
+/// The stopped front vehicle of each queue into the `watch` junctions (`WATCH_JUNCTIONS`):
+/// why it waits, who it looks out for, and what holds up the vehicles inside the junction.
+pub fn print_watch(engine: &Engine, watch: &[u32]) {
+    let d = &engine.net.d;
+    for &j in watch {
+        for lane in 0..d.lane_edge.len() as u32 {
+            let edge = d.lane_edge[lane as usize] as usize;
+            if d.edge_to[edge] != j || engine.net.lane_internal[lane as usize] {
+                continue;
+            }
+            let Some(&front) = engine.vehicles_on(lane).last() else {
+                continue;
+            };
+            let fv = &engine.vehs[front as usize];
+            if fv.speed > 1.0 || d.lane_length[lane as usize] - fv.pos > 15.0 {
+                continue;
+            }
+            println!(
+                "  watch {j}: {} queued {}; {}",
+                engine.describe(front),
+                engine.vehicles_on(lane).len(),
+                engine.describe_conflicts(front)
+            );
+            for b in engine.describe_blockers(front) {
+                println!("    blocked by {b}");
+            }
+            if engine.diagnose(front) == Holdup::ExitFull {
+                println!("    queue:{}", engine.describe_queue_chain(front));
+            }
+        }
+    }
+}
+
+/// What each lane into some junctions does with its green (`GREEN_AUDIT`, M16d): seconds
+/// of green, vehicles over the stop line then, and green spent with nobody near the line
+/// (starved) or with the front vehicle standing at it (blocked, by why it stands).
+pub struct GreenAudit {
+    lanes: Vec<AuditLane>,
+    /// Each audited lane's vehicles a step ago.
+    before: Vec<Vec<u32>>,
+}
+
+#[derive(Default)]
+struct AuditLane {
+    junction: u32,
+    lane: u32,
+    /// The lane's moves (s, l, r, ...).
+    moves: String,
+    green: f64,
+    red: f64,
+    crossed_green: u32,
+    crossed: u32,
+    starved: f64,
+    blocked: HashMap<Holdup, f64>,
+    /// Greens that ended with a vehicle still standing within 30 m of the line.
+    greens: u32,
+    failed: u32,
+    was_green: bool,
+}
+
+/// Vehicles nearer the line than this count as waiting at it (m).
+const AUDIT_NEAR: f32 = 30.0;
+
+impl GreenAudit {
+    pub fn new(engine: &Engine, junctions: &[u32]) -> GreenAudit {
+        let d = &engine.net.d;
+        let mut lanes = Vec::new();
+        for lane in 0..d.lane_edge.len() as u32 {
+            let edge = d.lane_edge[lane as usize] as usize;
+            let j = d.edge_to[edge];
+            if !junctions.contains(&j) || engine.net.lane_internal[lane as usize] {
+                continue;
+            }
+            let links = engine.net.lane_links(lane);
+            if links.is_empty() || links.clone().all(|l| d.link_tls[l as usize] == u32::MAX) {
+                continue;
+            }
+            let moves = links
+                .map(|l| match d.link_dir[l as usize] {
+                    0 => 's',
+                    1 | 4 => 'l',
+                    2 | 5 => 'r',
+                    _ => 't',
+                })
+                .collect();
+            lanes.push(AuditLane {
+                junction: j,
+                lane,
+                moves,
+                ..Default::default()
+            });
+        }
+        let before = vec![Vec::new(); lanes.len()];
+        GreenAudit { lanes, before }
+    }
+
+    pub fn after_step(&mut self, engine: &Engine) {
+        let dt = DT as f64;
+        for (k, a) in self.lanes.iter_mut().enumerate() {
+            let green = engine
+                .net
+                .lane_links(a.lane)
+                .any(|l| matches!(engine.link_state(l), b'G' | b'g'));
+            let now = engine.vehicles_on(a.lane);
+            let gone = self.before[k].iter().filter(|v| !now.contains(v)).count() as u32;
+            a.crossed += gone;
+            let len = engine.net.d.lane_length[a.lane as usize];
+            let near = |v: u32| len - engine.vehs[v as usize].pos < AUDIT_NEAR;
+            let standing = now
+                .iter()
+                .any(|&v| near(v) && engine.vehs[v as usize].speed < 0.5);
+            if green {
+                a.green += dt;
+                if a.was_green {
+                    a.crossed_green += gone;
+                }
+                match now.last() {
+                    Some(&front) if near(front) => {
+                        if engine.vehs[front as usize].speed < 0.5 {
+                            *a.blocked.entry(engine.diagnose(front)).or_default() += dt;
+                        }
+                    }
+                    _ => a.starved += dt,
+                }
+            } else {
+                a.red += dt;
+                if a.was_green {
+                    a.greens += 1;
+                    if standing {
+                        a.failed += 1;
+                    }
+                }
+            }
+            a.was_green = green;
+            self.before[k].clear();
+            self.before[k].extend_from_slice(now);
+        }
+    }
+
+    pub fn report(&self, hours: f64) {
+        println!(
+            "green audit (per hour): lane, moves, green s, over the line in green (and in all), \
+             per lane-hour of green, starved and blocked shares of green, greens ending with \
+             a queue"
+        );
+        for a in &self.lanes {
+            let per = if a.green > 0.0 {
+                a.crossed_green as f64 / a.green * 3600.0
+            } else {
+                0.0
+            };
+            let mut why: Vec<_> = a.blocked.iter().collect();
+            why.sort_by(|x, y| y.1.total_cmp(x.1));
+            let blocked: f64 = a.blocked.values().sum();
+            let why: Vec<String> = why
+                .iter()
+                .take(3)
+                .map(|(k, s)| format!("{k:?} {:.0} %", **s / a.green.max(1.0) * 100.0))
+                .collect();
+            println!(
+                "  j{} lane {} {:5}: green {:4.0} s, {:4.0} ({:4.0}) veh, {:5.0}/lane-h green; starved {:3.0} %, blocked {:3.0} % ({}); {} of {} greens end with a queue",
+                a.junction,
+                a.lane,
+                a.moves,
+                a.green / hours,
+                a.crossed_green as f64 / hours,
+                a.crossed as f64 / hours,
+                per,
+                a.starved / a.green.max(1.0) * 100.0,
+                blocked / a.green.max(1.0) * 100.0,
+                why.join(", "),
+                a.failed,
+                a.greens
+            );
+        }
+    }
+}
+
 /// Route searches logged for replay (`ROUTE_LOG`): `queries.bin`, one record per search
 /// (`QUERY_BYTES`: from, to, vclass, tolls, purpose, found, settled, the route's hash and
 /// the travel times it ran on), and `times-<k>.bin`, the travel times (f32 per edge) each
@@ -751,6 +929,17 @@ fn main() {
     for &j in &watch {
         print!("junction {j}:\n{}", engine.describe_program(j));
     }
+    // GREEN_AUDIT=j1,j2 (M16d): what each lane into those junctions does with its green,
+    // printed at the end; GREEN_AUDIT_AFTER=60 starts counting that many minutes in.
+    let audit_junctions: Vec<u32> = std::env::var("GREEN_AUDIT")
+        .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect())
+        .unwrap_or_default();
+    let audit_after: u32 = std::env::var("GREEN_AUDIT_AFTER")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let mut audit =
+        (!audit_junctions.is_empty()).then(|| GreenAudit::new(&engine, &audit_junctions));
     // ROUTE_LOG=dir: every route search from ROUTE_LOG_AFTER minutes into the run on, with
     // the travel times it ran on, for the `routes` example to replay.
     let mut route_log = std::env::var("ROUTE_LOG").ok().map(|dir| {
@@ -775,6 +964,11 @@ fn main() {
             if let Some(log) = route_log.as_mut() {
                 log.after_step(&mut engine);
             }
+            if m > audit_after
+                && let Some(a) = audit.as_mut()
+            {
+                a.after_step(&engine);
+            }
             if tram_holdups && k % 10 == 0 {
                 for v in engine.live_vehicles() {
                     let veh = &engine.vehs[v as usize];
@@ -788,34 +982,7 @@ fn main() {
             }
         }
         total += t.elapsed().as_secs_f64();
-        for &j in &watch {
-            let d = &engine.net.d;
-            for lane in 0..d.lane_edge.len() as u32 {
-                let edge = d.lane_edge[lane as usize] as usize;
-                if d.edge_to[edge] != j || engine.net.lane_internal[lane as usize] {
-                    continue;
-                }
-                let Some(&front) = engine.vehicles_on(lane).last() else {
-                    continue;
-                };
-                let fv = &engine.vehs[front as usize];
-                if fv.speed > 1.0 || d.lane_length[lane as usize] - fv.pos > 15.0 {
-                    continue;
-                }
-                println!(
-                    "  watch {j}: {} queued {}; {}",
-                    engine.describe(front),
-                    engine.vehicles_on(lane).len(),
-                    engine.describe_conflicts(front)
-                );
-                for b in engine.describe_blockers(front) {
-                    println!("    blocked by {b}");
-                }
-                if engine.diagnose(front) == zg_sim::engine::Holdup::ExitFull {
-                    println!("    queue:{}", engine.describe_queue_chain(front));
-                }
-            }
-        }
+        print_watch(&engine, &watch);
         // WATCH_LANES=l1,l2: every 5 simulated minutes, the vehicles on those lanes.
         if m % 5 == 0 {
             for lane in std::env::var("WATCH_LANES")
@@ -1096,6 +1263,9 @@ fn main() {
             "  junction {j} at ({x:.0}, {z:.0}): {hours:.1} h lost; {}",
             parts.join(", ")
         );
+    }
+    if let Some(a) = &audit {
+        a.report((minutes.saturating_sub(audit_after)).max(1) as f64 / 60.0);
     }
     if tram_holdups {
         // By lane, the tram-hours stood still and the main reasons.

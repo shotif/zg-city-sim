@@ -131,6 +131,11 @@ const LANE_CHANGE_ROOM: f32 = 150.0;
 const LANE_CHANGE_SECONDS: f32 = 10.0;
 /// How many short edges ahead lane choice looks through.
 const SHORT_EDGE_LOOKAHEAD: u32 = 4;
+/// Lane score of a lane that also leads into a lane of the next road that reaches the road
+/// after it (M16d): drivers sort into it while there is a gap, before a long road ends in
+/// lanes that split (Most mladosti's three lanes split two to one at Sarajevska cesta, and
+/// drivers who joined the bridge in any lane stood at its end waiting to swap lanes).
+const SOFT_LANE: i32 = 3;
 /// Routing cost of a closed road (s): routes avoid it wherever there is another way.
 pub(crate) const CLOSED_TIME: f32 = 3_600.0;
 /// After an edit, every vehicle re-plans its route within this time (s); those whose way on
@@ -3028,25 +3033,29 @@ impl Engine {
 
     /// How well `lane` (on route edge `i`) suits the route: 0 it cannot reach the next edge,
     /// 1 it can, 2 it can and carries on along the route past the short edges ahead (too
-    /// short to change lanes on). Lanes that do not allow the class score -1.
+    /// short to change lanes on), 3 it also leads into a lane of the next edge that reaches
+    /// the edge after it (`SOFT_LANE`, M16d). Lanes that do not allow the class score -1.
     fn lane_score(&self, lane: u32, route: &[u32], i: usize, vclass: u16) -> i32 {
         let d = &self.net.d;
         if d.lane_allow[lane as usize] & vclass == 0 {
             return -1;
         }
         let Some(&next) = route.get(i + 1) else {
-            return 2;
+            return SOFT_LANE;
         };
+        let after = route.get(i + 2).copied();
         let mut best = 0;
         for l in self.net.lane_links(lane) {
             let to = d.link_to[l as usize];
             if self.net.link_allow[l as usize] & vclass == 0 || d.lane_edge[to as usize] != next {
                 continue;
             }
-            let s = if self.lane_continues(to, route, i + 1, vclass, SHORT_EDGE_LOOKAHEAD) {
-                2
-            } else {
+            let s = if !self.lane_continues(to, route, i + 1, vclass, SHORT_EDGE_LOOKAHEAD) {
                 1
+            } else if after.is_none_or(|after| self.lane_reaches(to, after, vclass)) {
+                SOFT_LANE
+            } else {
+                2
             };
             best = best.max(s);
         }
@@ -4014,13 +4023,17 @@ impl Engine {
         let here = scores[i as usize];
 
         if here < best {
-            // Strategic: head for the nearest lane that leads where we are going.
+            // Strategic: head for the nearest lane that leads where we are going. Toward a
+            // lane that only suits the road after the next one better (`SOFT_LANE`), only
+            // into a gap that is there anyway: there is room to change on the next road.
+            let soft = here >= SOFT_LANE - 1;
             let target_k = (0..n)
                 .filter(|&k| scores[k as usize] == best)
                 .min_by_key(|&k| (k as i32 - i as i32).abs())?;
             let step: i32 = if target_k > i { 1 } else { -1 };
             let changes = (target_k as i32 - i as i32).unsigned_abs() as f32;
-            let urgent = dist < 30.0 + 40.0 * changes || dist < veh.speed * 4.0 * changes;
+            let urgent =
+                !soft && (dist < 30.0 + 40.0 * changes || dist < veh.speed * 4.0 * changes);
             let mut t = (i as i32 + step) as u32;
             if scores[t as usize] < 0 {
                 // A lane closed to us (tram tracks, a bus lane) lies in between: cross it

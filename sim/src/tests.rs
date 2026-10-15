@@ -3510,6 +3510,46 @@ fn drivers_move_over_for_an_exit_lane_before_it_begins() {
 }
 
 #[test]
+fn drivers_sort_into_lanes_before_a_long_road_ends_in_lanes_that_split() {
+    // A three-lane bridge (800 m) runs on into a three-lane road (200 m) whose lanes split
+    // two to one at its end, as Most mladosti's do at Sarajevska cesta. A driver bound for
+    // the left-hand branch who joined the bridge in the right lane moves over on the
+    // bridge, where there is room, rather than crossing two lanes on the road beyond.
+    let mut b = Builder::default();
+    let a = b.junction(0.0, 0.0);
+    let m = b.junction(800.0, 0.0);
+    let x = b.junction(1_000.0, 0.0);
+    let r = b.junction(1_500.0, 0.0);
+    let l = b.junction(1_100.0, -300.0);
+    let bridge = b.road(a, m, 3, 13.9);
+    let beyond = b.road(m, x, 3, 13.9);
+    let ahead = b.road(x, r, 2, 13.9);
+    let left = b.road(x, l, 1, 13.9);
+    for k in 0..3 {
+        let (fl, tl) = (b.lane(bridge, k), b.lane(beyond, k));
+        b.connect(fl, tl, m, dir::STRAIGHT, b'M');
+    }
+    for k in 0..2 {
+        let (fl, tl) = (b.lane(beyond, k), b.lane(ahead, k));
+        b.connect(fl, tl, x, dir::STRAIGHT, b'M');
+    }
+    let (fl, tl) = (b.lane(beyond, 2), b.lane(left, 0));
+    b.connect(fl, tl, x, dir::LEFT, b'M');
+    let mut engine = Engine::new(b.build(), 5);
+    let right = engine.net.edge_lanes(bridge).start;
+    let v = engine.insert_at(vtype::CAR, vec![bridge, beyond, left], right, 10.0, 13.0);
+    let mut last_on_bridge = NONE;
+    run_until(&mut engine, 150.0, |e| {
+        let veh = &e.vehs[v as usize];
+        if veh.alive() && veh.lane != NONE && e.net.d.lane_edge[veh.lane as usize] == bridge {
+            last_on_bridge = veh.lane;
+        }
+    });
+    assert_eq!(last_on_bridge, right + 2);
+    assert_eq!((engine.stats.arrived, engine.stats.teleported), (1, 0));
+}
+
+#[test]
 fn regional_traffic_across_the_map_s_edge_stays_regional() {
     // A road leaves the map 2 km from a town and 24 km from a city with 20 times its jobs
     // and homes. On a regional road, much of the traffic coming in stops in the town; on a
