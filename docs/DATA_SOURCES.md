@@ -292,6 +292,7 @@ The city street network has no stations; the toll-free Zagreb bypass (A3 Jankomi
   - `turn:lanes` on 7 % of main roads.
   - About 1,300 traffic-signal nodes.
   - 133 km of tram track.
+  - 788 `railway=tram_level_crossing` nodes where roads cross tram tracks, often one per carriageway and track. Netconvert would make each a junction of its own, so the pipeline leaves the tag out (M16d).
   - 122k buildings, of which only ~1 % have a height.
 - **Cycleways (M8d):** 5,031 ways that are cycleways, paths or footways designated for bikes, or roads tagged with a cycle lane or track (`cycleway`, `cycleway:right`, `cycleway:left`, `cycleway:both`), used with the City's cycle lanes.
 - **Pedestrian crossings (M8c):** 9,773 `highway=crossing` nodes in the extract (October 2026): about 1,800 `crossing=marked`, 1,600 zebras, 1,500 with traffic signals, 1,100 uncontrolled, 600 unmarked and 1,300 with no kind. 8,095 lie on a drivable road the network has (unmarked ones left out: drivers need not give way there): 6,514 zebra or marked, 1,238 at a signalled junction and 343 with signals of their own.

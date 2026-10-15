@@ -60,7 +60,7 @@ pub const CAR_ORIGINS_PER_STEP: usize = 4;
 /// The logit: utility per generalised minute, and public transport's constant (calibrated:
 /// 45.8 % of motorised trips within the City by public transport).
 pub const BETA: f32 = 0.04;
-pub const ASC: f32 = 1.52;
+pub const ASC: f32 = 1.53;
 /// Trips drawn for the expected car trips by zone pair.
 pub const OD_SAMPLES: usize = 500_000;
 /// Origins whose journeys are worked out each simulation step.

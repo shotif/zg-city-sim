@@ -111,7 +111,24 @@ def wanted_way(tags: osmium.osm.TagList) -> bool:
 
 #: Version of the roads written for netconvert (`filter_roads`): bump it when they change, so
 #: cached networks are built again.
-ROADS_VERSION = 5
+ROADS_VERSION = 6
+
+#: Node tags left out of the roads written for netconvert (M16d). Where roads cross tram
+#: tracks, OpenStreetMap often has a `railway=tram_level_crossing` node on each carriageway
+#: and track (788 in the extract). Netconvert makes each a `rail_crossing` junction and
+#: never joins one into the junction around it, so Savska cesta at Ulica grada Vukovara was
+#: 16 junctions within 45 m, one of them signalled and the rest giving way, joined by road
+#: pieces 0.2 m long, where drivers stood inside one junction holding up another. Trams
+#: cross there by the junction's right of way and signals, as at any other junction.
+DROPPED_NODE_TAGS = {("railway", "tram_level_crossing")}
+
+
+def netconvert_node_tags(tags: dict[str, str]) -> dict[str, str] | None:
+    """A node's tags as written for netconvert, or None to keep them as they are."""
+    if not any(tags.get(k) == v for k, v in DROPPED_NODE_TAGS):
+        return None
+    return {k: v for k, v in tags.items() if (k, v) not in DROPPED_NODE_TAGS}
+
 
 #: Netconvert takes a railway as one-way in the direction it was drawn, so on many lines HŽ's
 #: trains could only run one way (in at Savski Marof but not out). Main-line tracks without a
@@ -317,7 +334,12 @@ def filter_roads(src: Path, dst: Path, patch: Patch | None = None) -> dict:
         if obj.is_node():
             if obj.id in node_ids:
                 extra = node_tags.get(obj.id)
-                writer.add_node(obj.replace(tags={**dict(obj.tags), **extra}) if extra else obj)
+                tags = netconvert_node_tags(dict(obj.tags))
+                if extra or tags is not None:
+                    tags = dict(obj.tags) if tags is None else tags
+                    writer.add_node(obj.replace(tags={**tags, **(extra or {})}))
+                else:
+                    writer.add_node(obj)
             continue
         if not nodes_done:
             finish_nodes()

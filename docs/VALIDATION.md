@@ -33,227 +33,227 @@ GEH compares a modelled flow M with a count C: √(2(M−C)²/(M+C)). Transport 
 
 | Station | Road | Count | PGDP | Working day | Simulated (80% demand) | At full demand | Difference | GEH | Hours GEH < 5 | Placed within |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1916 Lučko - jug | A1 | NB | 49,357 | 47,559 | 35,917 | 44,896 | -6% | 12 |  | 2 m |
-| 2043 Petina | D30 | NAB | 30,419 | 33,413 | 29,272 | 36,590 | +10% | 17 | 12/24 | 5 m |
-| 2014 Velika Mlaka | none | NAB | 27,614 | 30,848 | 14,110 | 17,638 | -43% | 85 | 1/24 | 7 m |
-| 1904 Zaprešić - sjever | A2 | NB | 27,397 | 26,641 | 21,632 | 27,040 | +1% | 2 |  | 2 m |
-| 1933 Sveta Nedelja | D231 | NAB | 22,764 | 25,620 | 16,189 | 20,236 | -21% | 36 | 8/24 | 1 m |
-| 1925 Zaprešić - istok | D225 | PAB | 21,161 | 22,841 | 17,654 | 22,068 | -3% | 5 |  | 1 m |
-| 1937 Pojatno | D1 | NAB | 17,459 | 19,408 | 17,274 | 21,592 | +11% | 15 | 14/24 | 1 m |
-| 2063 Popovec | D3 | PAB | 16,743 | 18,137 | 15,878 | 19,848 | +9% | 12 |  | 1 m |
-| 2002 Sveta Helena - sjever | A4 | NB | 17,586 | 16,815 | 14,883 | 18,604 | +11% | 13 |  | 2 m |
-| 2053 Rugvica | 3070 | NAB | 12,536 | 14,150 | 6,270 | 7,838 | -45% | 60 | 4/24 | 1 m |
-| 2050 Dugo Selo - zapad | 3034 | NAB | 13,194 | 14,130 | 9,351 | 11,689 | -17% | 21 | 11/24 | 1 m |
-| 2031 Mraclin - jug | A11 | NB | 12,422 | 13,432 | 9,285 | 11,606 | -14% | 16 |  | 1 m |
-| 2062 Selnica Šćitarjevska | D430 | NAB | 12,058 | 12,446 | 4,560 | 5,700 | -54% | 71 | 1/24 | 2 m |
-| 2047 Buševec - jug | A11 | NB | 11,126 | 12,026 | 7,928 | 9,910 | -18% | 20 |  | 1 m |
-| 1927 Veliko Trgovišće | D1 | NAB | 10,775 | 12,016 | 12,700 | 15,875 | +32% | 33 | 11/24 | 1 m |
-| 2032 Belovar | D3 | PAB | 11,076 | 11,916 | 4,858 | 6,072 | -49% | 62 |  | 1 m |
-| 1929 Klinča Sela | D1 | NAB | 11,708 | 11,888 | 6,505 | 8,131 | -32% | 38 | 9/24 | 1 m |
-| 1947 Bestovje | 3063 | NAB | 9,247 | 10,717 | 8,121 | 10,151 | -5% | 6 | 14/24 | 1 m |
-| 1935 Gornji Stupnik | D1 | NAB | 9,575 | 10,296 | 2,958 | 3,698 | -64% | 79 | 4/24 | 1 m |
-| 1932 Zaprešić - sjever | 2186 | NAB | 8,777 | 9,647 | 8,428 | 10,535 | +9% | 9 | 20/24 | 1 m |
-| 2003 Blažev Dol | D3 | NAB | 8,602 | 9,647 | 3,058 | 3,822 | -60% | 71 | 5/24 | 1 m |
-| 1950 Žitarka | 3061 | PAB | 8,976 | 9,642 | 6,562 | 8,202 | -15% | 15 |  | 2 m |
-| 2035 Velika Gorica sj. obilaz. | D408 | NAB | 7,653 | 9,079 | 1,915 | 2,394 | -74% | 88 | 0/24 | 2 m |
-| 1143 Mokrice | D14 | NAB | 8,207 | 8,905 | 4,953 | 6,191 | -30% | 31 | 12/24 | 3 m |
-| 1901 Stubičke Toplice | D307 | PAB | 7,654 | 8,270 | 6,270 | 7,838 | -5% | 5 |  | 1 m |
-| 2016 Kurilovec | D31 | NAB | 7,488 | 8,082 | 5,558 | 6,948 | -14% | 13 | 19/24 | 1 m |
-| 1150 Mokrice - zapad | D307 | NAB | 5,971 | 7,726 | 9,253 | 11,566 | +50% | 39 | 7/24 | 2 m |
-| 1936 Oroslavje | D307 | NAB | 6,158 | 6,604 | 7,061 | 8,826 | +34% | 25 | 6/24 | 1 m |
-| 1946 Rakitje | 3064 | NAB | 3,747 | 4,302 | 988 | 1,235 | -71% | 58 | 6/24 | 2 m |
-| 1941 Ivanec Bistranski | 2220 | NAB | 3,904 | 4,262 | 3,619 | 4,524 | +6% | 4 | 21/24 | 1 m |
-| 2052 Brezovec Zelinski | 3016 | NAB | 3,580 | 4,015 | 1,078 | 1,348 | -66% | 52 | 4/24 | 2 m |
-| 2004 Kašina | D29 | NAB | 3,819 | 3,982 | 3,617 | 4,521 | +14% | 8 | 22/24 | 2 m |
-| 1938 Stubička Slatina | 2217 | NAB | 3,659 | 3,961 | 4,554 | 5,692 | +44% | 25 | 8/24 | 1 m |
-| 2019 Lekenik | D30 | NAB | 3,355 | 3,700 | 2,861 | 3,576 | -3% | 2 | 21/24 | 6 m |
-| 1940 Pojatno - jug | 2195 | NAB | 2,834 | 3,669 | 2,336 | 2,920 | -20% | 13 | 14/24 | 2 m |
-| 1951 Donji Stupnik | 3067 | PAB | 2,855 | 3,017 | 1,045 | 1,306 | -57% | 37 |  | 1 m |
-| 1924 Šenkovec - istok | D225 | PAB | 2,718 | 2,913 | 484 | 605 | -79% | 55 |  | 2 m |
-| 1943 Donja Zdenčina | D543 | NAB | 2,665 | 2,831 | 6,770 | 8,462 | +199% | 75 | 0/24 | 2 m |
-| 1952 Stupnički Obrež | 31102 | PAB | 2,604 | 2,788 | 1,787 | 2,234 | -20% | 11 |  | 1 m |
-| 1923 Pisarovina - jug | D36 | NAB | 2,045 | 2,647 | 1,518 | 1,898 | -28% | 16 | 17/24 | 1 m |
-| 2049 Otok Svibovski | 1036 | NAB | 2,264 | 2,549 | 1,208 | 1,510 | -41% | 23 | 15/24 | 1 m |
-| 2058 Martin Breg | 31108 | PAB | 2,031 | 2,173 | 463 | 579 | -73% | 43 |  | 1 m |
-| 1944 Kupinec | 3106 | NAB | 2,013 | 2,161 | 1,702 | 2,128 | -2% | 1 | 24/24 | 1 m |
-| 1939 Bregana Pisarovinska | 1037 | NAB | 1,840 | 1,747 | 1,531 | 1,914 | +10% | 4 | 24/24 | 1 m |
-| 2054 Karivaroš | 2224 | PAB | 1,409 | 1,503 | 7,475 | 9,344 | +522% | 106 |  | 6 m |
-| 1236 Gusakovec | D307 | PAB | 812 | 869 | 2,525 | 3,156 | +263% | 51 |  | 11 m |
+| 1916 Lučko - jug | A1 | NB | 49,357 | 47,559 | 35,908 | 44,885 | -6% | 12 |  | 2 m |
+| 2043 Petina | D30 | NAB | 30,419 | 33,413 | 28,831 | 36,039 | +8% | 14 | 13/24 | 5 m |
+| 2014 Velika Mlaka | none | NAB | 27,614 | 30,848 | 14,258 | 17,822 | -42% | 83 | 2/24 | 7 m |
+| 1904 Zaprešić - sjever | A2 | NB | 27,397 | 26,641 | 21,981 | 27,476 | +3% | 5 |  | 2 m |
+| 1933 Sveta Nedelja | D231 | NAB | 22,764 | 25,620 | 16,402 | 20,502 | -20% | 34 | 9/24 | 1 m |
+| 1925 Zaprešić - istok | D225 | PAB | 21,161 | 22,841 | 17,061 | 21,326 | -7% | 10 |  | 1 m |
+| 1937 Pojatno | D1 | NAB | 17,459 | 19,408 | 17,331 | 21,664 | +12% | 16 | 15/24 | 1 m |
+| 2063 Popovec | D3 | PAB | 16,743 | 18,137 | 15,183 | 18,979 | +5% | 6 |  | 1 m |
+| 2002 Sveta Helena - sjever | A4 | NB | 17,586 | 16,815 | 14,855 | 18,569 | +10% | 13 |  | 2 m |
+| 2053 Rugvica | 3070 | NAB | 12,536 | 14,150 | 6,258 | 7,822 | -45% | 60 | 4/24 | 1 m |
+| 2050 Dugo Selo - zapad | 3034 | NAB | 13,194 | 14,130 | 9,328 | 11,660 | -17% | 22 | 13/24 | 1 m |
+| 2031 Mraclin - jug | A11 | NB | 12,422 | 13,432 | 9,116 | 11,395 | -15% | 18 |  | 1 m |
+| 2062 Selnica Šćitarjevska | D430 | NAB | 12,058 | 12,446 | 4,668 | 5,835 | -53% | 69 | 1/24 | 2 m |
+| 2047 Buševec - jug | A11 | NB | 11,126 | 12,026 | 7,901 | 9,876 | -18% | 21 |  | 1 m |
+| 1927 Veliko Trgovišće | D1 | NAB | 10,775 | 12,016 | 12,701 | 15,876 | +32% | 33 | 11/24 | 1 m |
+| 2032 Belovar | D3 | PAB | 11,076 | 11,916 | 4,636 | 5,795 | -51% | 65 |  | 1 m |
+| 1929 Klinča Sela | D1 | NAB | 11,708 | 11,888 | 6,452 | 8,065 | -32% | 38 | 7/24 | 1 m |
+| 1947 Bestovje | 3063 | NAB | 9,247 | 10,717 | 8,222 | 10,278 | -4% | 4 | 14/24 | 1 m |
+| 1935 Gornji Stupnik | D1 | NAB | 9,575 | 10,296 | 3,132 | 3,915 | -62% | 76 | 6/24 | 1 m |
+| 1932 Zaprešić - sjever | 2186 | NAB | 8,777 | 9,647 | 8,417 | 10,521 | +9% | 9 | 20/24 | 1 m |
+| 2003 Blažev Dol | D3 | NAB | 8,602 | 9,647 | 3,166 | 3,958 | -59% | 69 | 5/24 | 1 m |
+| 1950 Žitarka | 3061 | PAB | 8,976 | 9,642 | 6,147 | 7,684 | -20% | 21 |  | 2 m |
+| 2035 Velika Gorica sj. obilaz. | D408 | NAB | 7,653 | 9,079 | 1,841 | 2,301 | -75% | 90 | 1/24 | 2 m |
+| 1143 Mokrice | D14 | NAB | 8,207 | 8,905 | 5,279 | 6,599 | -26% | 26 | 13/24 | 3 m |
+| 1901 Stubičke Toplice | D307 | PAB | 7,654 | 8,270 | 6,272 | 7,840 | -5% | 5 |  | 1 m |
+| 2016 Kurilovec | D31 | NAB | 7,488 | 8,082 | 5,656 | 7,070 | -13% | 12 | 22/24 | 1 m |
+| 1150 Mokrice - zapad | D307 | NAB | 5,971 | 7,726 | 9,247 | 11,559 | +50% | 39 | 9/24 | 2 m |
+| 1936 Oroslavje | D307 | NAB | 6,158 | 6,604 | 7,097 | 8,871 | +34% | 26 | 8/24 | 1 m |
+| 1946 Rakitje | 3064 | NAB | 3,747 | 4,302 | 1,087 | 1,359 | -68% | 55 | 7/24 | 2 m |
+| 1941 Ivanec Bistranski | 2220 | NAB | 3,904 | 4,262 | 3,201 | 4,001 | -6% | 4 | 20/24 | 1 m |
+| 2052 Brezovec Zelinski | 3016 | NAB | 3,580 | 4,015 | 1,008 | 1,260 | -69% | 54 | 5/24 | 2 m |
+| 2004 Kašina | D29 | NAB | 3,819 | 3,982 | 3,740 | 4,675 | +17% | 11 | 19/24 | 2 m |
+| 1938 Stubička Slatina | 2217 | NAB | 3,659 | 3,961 | 4,923 | 6,154 | +55% | 31 | 10/24 | 1 m |
+| 2019 Lekenik | D30 | NAB | 3,355 | 3,700 | 2,813 | 3,516 | -5% | 3 | 23/24 | 6 m |
+| 1940 Pojatno - jug | 2195 | NAB | 2,834 | 3,669 | 2,190 | 2,738 | -25% | 16 | 14/24 | 2 m |
+| 1951 Donji Stupnik | 3067 | PAB | 2,855 | 3,017 | 1,027 | 1,284 | -57% | 37 |  | 1 m |
+| 1924 Šenkovec - istok | D225 | PAB | 2,718 | 2,913 | 504 | 630 | -78% | 54 |  | 2 m |
+| 1943 Donja Zdenčina | D543 | NAB | 2,665 | 2,831 | 6,486 | 8,108 | +186% | 71 | 0/24 | 2 m |
+| 1952 Stupnički Obrež | 31102 | PAB | 2,604 | 2,788 | 1,675 | 2,094 | -25% | 14 |  | 1 m |
+| 1923 Pisarovina - jug | D36 | NAB | 2,045 | 2,647 | 1,457 | 1,821 | -31% | 17 | 19/24 | 1 m |
+| 2049 Otok Svibovski | 1036 | NAB | 2,264 | 2,549 | 1,276 | 1,595 | -37% | 21 | 15/24 | 1 m |
+| 2058 Martin Breg | 31108 | PAB | 2,031 | 2,173 | 465 | 581 | -73% | 43 |  | 1 m |
+| 1944 Kupinec | 3106 | NAB | 2,013 | 2,161 | 1,614 | 2,018 | -7% | 3 | 24/24 | 1 m |
+| 1939 Bregana Pisarovinska | 1037 | NAB | 1,840 | 1,747 | 1,572 | 1,965 | +12% | 5 | 23/24 | 1 m |
+| 2054 Karivaroš | 2224 | PAB | 1,409 | 1,503 | 7,338 | 9,172 | +510% | 105 |  | 6 m |
+| 1236 Gusakovec | D307 | PAB | 812 | 869 | 2,489 | 3,111 | +258% | 50 |  | 11 m |
 | 2057 Paukovec | 31039 | PAB | 704 | 747 | 234 | 292 | -61% | 20 |  | 1 m |
 
-Summary: 23 of 47 within ±25 %, mean absolute difference 49%, total simulated / counted 0.89.
+Summary: 22 of 47 within ±25 %, mean absolute difference 49%, total simulated / counted 0.89.
 
 - Motorways: 5 of 5 within ±25 %, mean absolute difference 10%, total simulated / counted 0.96.
-- State roads: 9 of 23 within ±25 %, mean absolute difference 50%, total simulated / counted 0.91.
-- County, local and unnumbered roads: 9 of 19 within ±25 %, mean absolute difference 59%, total simulated / counted 0.80.
+- State roads: 9 of 23 within ±25 %, mean absolute difference 49%, total simulated / counted 0.90.
+- County, local and unnumbered roads: 8 of 19 within ±25 %, mean absolute difference 60%, total simulated / counted 0.80.
 
 ### Roads that leave the map (counts used as inputs)
 
 | Station | Road | Count | PGDP | Working day | Simulated (80% demand) | At full demand | Difference | GEH | Hours GEH < 5 | Placed within |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1931 Zdenčina - jug | A1 | NB | 48,691 | 46,420 | 35,810 | 44,762 | -4% | 8 |  | 5 m |
-| 2027 Zagreb (istok) - istok | A3 | NB | 37,638 | 38,537 | 30,527 | 38,159 | -1% | 2 |  | 1 m |
-| 2008 Sveta Helena | D10 | NAB | 18,270 | 19,140 | 15,617 | 19,521 | +2% | 3 | 21/24 | 2 m |
-| 1910 Bobovica - zapad | A3 | NB | 18,415 | 18,701 | 17,119 | 21,399 | +14% | 19 |  | 7 m |
-| 2051 Lonjica | 3034 | NAB | 4,308 | 5,580 | 4,554 | 5,692 | +2% | 2 | 20/24 | 1 m |
-| 2056 Gornja Greda | 3074 | PAB | 4,248 | 4,527 | 4,113 | 5,141 | +14% | 9 |  | 5 m |
-| 2037 Komin | D540 | NAB | 2,247 | 2,502 | 3,172 | 3,965 | +58% | 26 | 11/24 | 2 m |
+| 1931 Zdenčina - jug | A1 | NB | 48,691 | 46,420 | 36,119 | 45,149 | -3% | 6 |  | 5 m |
+| 2027 Zagreb (istok) - istok | A3 | NB | 37,638 | 38,537 | 30,194 | 37,742 | -2% | 4 |  | 1 m |
+| 2008 Sveta Helena | D10 | NAB | 18,270 | 19,140 | 15,348 | 19,185 | +0% | 0 | 22/24 | 2 m |
+| 1910 Bobovica - zapad | A3 | NB | 18,415 | 18,701 | 17,201 | 21,501 | +15% | 20 |  | 7 m |
+| 2051 Lonjica | 3034 | NAB | 4,308 | 5,580 | 4,610 | 5,762 | +3% | 2 | 21/24 | 1 m |
+| 2056 Gornja Greda | 3074 | PAB | 4,248 | 4,527 | 4,153 | 5,191 | +15% | 10 |  | 5 m |
+| 2037 Komin | D540 | NAB | 2,247 | 2,502 | 3,106 | 3,882 | +55% | 24 | 12/24 | 2 m |
 
-Summary: 6 of 7 within ±25 %, mean absolute difference 14%, total simulated / counted 1.02.
+Summary: 6 of 7 within ±25 %, mean absolute difference 13%, total simulated / counted 1.02.
 
 ### Hour by hour
 
-At the 33 stations with hourly charts, 49% of the station-hours have GEH below 5; the target of 85% of stations is met in 0 of 24 hours. All stations together, vehicles per hour and each hour's share of the day:
+At the 33 stations with hourly charts, 51% of the station-hours have GEH below 5; the target of 85% of stations is met in 1 of 24 hours. All stations together, vehicles per hour and each hour's share of the day:
 
 | Hour | Counted | Simulated (full demand) | Counted share | Simulated share | Stations GEH < 5 |
 |---|---:|---:|---:|---:|---:|
-| 00:00 | 1,805 | 1,599 | 0.6% | 0.6% | 79% |
-| 01:00 | 1,167 | 1,176 | 0.4% | 0.4% | 82% |
-| 02:00 | 1,142 | 1,146 | 0.4% | 0.4% | 79% |
-| 03:00 | 2,031 | 2,072 | 0.6% | 0.7% | 67% |
-| 04:00 | 5,295 | 6,372 | 1.6% | 2.3% | 52% |
-| 05:00 | 12,722 | 12,221 | 4.0% | 4.4% | 39% |
-| 06:00 | 19,067 | 16,712 | 5.9% | 6.0% | 52% |
-| 07:00 | 19,269 | 17,495 | 6.0% | 6.3% | 33% |
-| 08:00 | 17,307 | 15,712 | 5.4% | 5.6% | 52% |
-| 09:00 | 17,632 | 13,982 | 5.5% | 5.0% | 39% |
-| 10:00 | 18,429 | 14,544 | 5.7% | 5.2% | 36% |
-| 11:00 | 19,574 | 15,438 | 6.1% | 5.5% | 39% |
-| 12:00 | 20,804 | 15,920 | 6.5% | 5.7% | 33% |
-| 13:00 | 21,708 | 17,116 | 6.7% | 6.1% | 36% |
-| 14:00 | 23,552 | 18,822 | 7.3% | 6.8% | 33% |
-| 15:00 | 24,522 | 21,095 | 7.6% | 7.6% | 45% |
-| 16:00 | 22,282 | 20,219 | 6.9% | 7.3% | 42% |
-| 17:00 | 18,635 | 18,492 | 5.8% | 6.6% | 52% |
-| 18:00 | 15,849 | 15,038 | 4.9% | 5.4% | 36% |
-| 19:00 | 13,281 | 11,322 | 4.1% | 4.1% | 36% |
-| 20:00 | 10,069 | 8,622 | 3.1% | 3.1% | 45% |
-| 21:00 | 7,265 | 6,209 | 2.3% | 2.2% | 48% |
-| 22:00 | 5,102 | 4,340 | 1.6% | 1.6% | 48% |
-| 23:00 | 3,159 | 2,659 | 1.0% | 1.0% | 64% |
+| 00:00 | 1,805 | 1,520 | 0.6% | 0.5% | 82% |
+| 01:00 | 1,167 | 1,132 | 0.4% | 0.4% | 91% |
+| 02:00 | 1,142 | 1,139 | 0.4% | 0.4% | 79% |
+| 03:00 | 2,031 | 2,040 | 0.6% | 0.7% | 64% |
+| 04:00 | 5,295 | 6,406 | 1.6% | 2.3% | 55% |
+| 05:00 | 12,722 | 12,244 | 4.0% | 4.4% | 42% |
+| 06:00 | 19,067 | 16,419 | 5.9% | 5.9% | 48% |
+| 07:00 | 19,269 | 17,751 | 6.0% | 6.4% | 36% |
+| 08:00 | 17,307 | 16,008 | 5.4% | 5.7% | 48% |
+| 09:00 | 17,632 | 14,026 | 5.5% | 5.0% | 42% |
+| 10:00 | 18,429 | 14,659 | 5.7% | 5.3% | 33% |
+| 11:00 | 19,574 | 15,229 | 6.1% | 5.5% | 39% |
+| 12:00 | 20,804 | 15,846 | 6.5% | 5.7% | 39% |
+| 13:00 | 21,708 | 16,559 | 6.7% | 5.9% | 36% |
+| 14:00 | 23,552 | 19,222 | 7.3% | 6.9% | 45% |
+| 15:00 | 24,522 | 20,636 | 7.6% | 7.4% | 45% |
+| 16:00 | 22,282 | 20,002 | 6.9% | 7.2% | 42% |
+| 17:00 | 18,635 | 18,982 | 5.8% | 6.8% | 52% |
+| 18:00 | 15,849 | 15,545 | 4.9% | 5.6% | 39% |
+| 19:00 | 13,281 | 11,721 | 4.1% | 4.2% | 45% |
+| 20:00 | 10,069 | 8,734 | 3.1% | 3.1% | 42% |
+| 21:00 | 7,265 | 6,036 | 2.3% | 2.2% | 55% |
+| 22:00 | 5,102 | 4,000 | 1.6% | 1.4% | 58% |
+| 23:00 | 3,159 | 2,539 | 1.0% | 0.9% | 73% |
 
 Each station's busiest morning and afternoon hours, counted and simulated (full demand):
 
 | Station | Road | Morning peak counted | simulated | Afternoon peak counted | simulated | Hours GEH < 5 |
 |---|---|---|---:|---|---:|---:|
-| 2043 Petina | D30 | 06:00 2,113 | 2,314 | 15:00 2,456 | 2,459 | 12 |
-| 2014 Velika Mlaka | none | 07:00 2,004 | 1,038 | 15:00 2,313 | 1,348 | 1 |
-| 1933 Sveta Nedelja | D231 | 10:00 1,622 | 1,096 | 15:00 1,836 | 1,549 | 8 |
-| 1937 Pojatno | D1 | 06:00 1,224 | 1,178 | 15:00 1,547 | 1,656 | 14 |
-| 2008 Sveta Helena | D10 | 06:00 1,100 | 1,219 | 15:00 1,417 | 1,466 | 21 |
-| 2053 Rugvica | 3070 | 06:00 975 | 502 | 15:00 1,113 | 625 | 4 |
-| 2050 Dugo Selo - zapad | 3034 | 10:00 831 | 555 | 15:00 980 | 900 | 11 |
-| 2062 Selnica Šćitarjevska | D430 | 06:00 674 | 479 | 13:00 908 | 349 | 1 |
-| 1927 Veliko Trgovišće | D1 | 06:00 772 | 740 | 15:00 939 | 1,099 | 11 |
-| 1929 Klinča Sela | D1 | 07:00 695 | 494 | 15:00 926 | 578 | 9 |
-| 1947 Bestovje | 3063 | 10:00 726 | 540 | 14:00 805 | 645 | 14 |
-| 1935 Gornji Stupnik | D1 | 06:00 687 | 232 | 15:00 854 | 309 | 4 |
-| 1932 Zaprešić - sjever | 2186 | 06:00 582 | 619 | 15:00 732 | 884 | 20 |
-| 2003 Blažev Dol | D3 | 10:00 591 | 169 | 15:00 743 | 331 | 5 |
-| 2035 Velika Gorica sj. obilaz. | D408 | 07:00 592 | 116 | 15:00 766 | 198 | 0 |
-| 1143 Mokrice | D14 | 06:00 638 | 418 | 15:00 718 | 379 | 12 |
-| 2016 Kurilovec | D31 | 07:00 517 | 458 | 15:00 637 | 470 | 19 |
-| 1150 Mokrice - zapad | D307 | 10:00 486 | 768 | 15:00 628 | 892 | 7 |
-| 1936 Oroslavje | D307 | 10:00 448 | 574 | 15:00 507 | 675 | 6 |
-| 2051 Lonjica | 3034 | 07:00 346 | 346 | 14:00 426 | 448 | 20 |
-| 1946 Rakitje | 3064 | 07:00 316 | 65 | 15:00 372 | 144 | 6 |
-| 1941 Ivanec Bistranski | 2220 | 06:00 262 | 224 | 15:00 325 | 251 | 21 |
-| 2052 Brezovec Zelinski | 3016 | 06:00 244 | 71 | 15:00 332 | 142 | 4 |
-| 2004 Kašina | D29 | 06:00 254 | 322 | 15:00 340 | 371 | 22 |
-| 1938 Stubička Slatina | 2217 | 06:00 242 | 152 | 15:00 332 | 515 | 8 |
-| 2019 Lekenik | D30 | 07:00 230 | 195 | 15:00 282 | 260 | 21 |
-| 1940 Pojatno - jug | 2195 | 07:00 217 | 325 | 15:00 323 | 265 | 14 |
-| 1943 Donja Zdenčina | D543 | 07:00 175 | 469 | 15:00 223 | 691 | 0 |
-| 1923 Pisarovina - jug | D36 | 10:00 183 | 100 | 15:00 217 | 159 | 17 |
-| 2049 Otok Svibovski | 1036 | 07:00 176 | 71 | 15:00 211 | 161 | 15 |
-| 2037 Komin | D540 | 06:00 155 | 241 | 15:00 186 | 302 | 11 |
-| 1944 Kupinec | 3106 | 06:00 132 | 118 | 14:00 171 | 134 | 24 |
-| 1939 Bregana Pisarovinska | 1037 | 10:00 103 | 96 | 15:00 141 | 172 | 24 |
+| 2043 Petina | D30 | 06:00 2,113 | 2,234 | 15:00 2,456 | 2,325 | 13 |
+| 2014 Velika Mlaka | none | 07:00 2,004 | 1,094 | 15:00 2,313 | 1,328 | 2 |
+| 1933 Sveta Nedelja | D231 | 10:00 1,622 | 1,092 | 15:00 1,836 | 1,578 | 9 |
+| 1937 Pojatno | D1 | 06:00 1,224 | 1,209 | 15:00 1,547 | 1,398 | 15 |
+| 2008 Sveta Helena | D10 | 06:00 1,100 | 1,199 | 15:00 1,417 | 1,498 | 22 |
+| 2053 Rugvica | 3070 | 06:00 975 | 485 | 15:00 1,113 | 605 | 4 |
+| 2050 Dugo Selo - zapad | 3034 | 10:00 831 | 576 | 15:00 980 | 840 | 13 |
+| 2062 Selnica Šćitarjevska | D430 | 06:00 674 | 314 | 13:00 908 | 375 | 1 |
+| 1927 Veliko Trgovišće | D1 | 06:00 772 | 762 | 15:00 939 | 1,140 | 11 |
+| 1929 Klinča Sela | D1 | 07:00 695 | 528 | 15:00 926 | 619 | 7 |
+| 1947 Bestovje | 3063 | 10:00 726 | 482 | 14:00 805 | 726 | 14 |
+| 1935 Gornji Stupnik | D1 | 06:00 687 | 261 | 15:00 854 | 302 | 6 |
+| 1932 Zaprešić - sjever | 2186 | 06:00 582 | 615 | 15:00 732 | 808 | 20 |
+| 2003 Blažev Dol | D3 | 10:00 591 | 240 | 15:00 743 | 332 | 5 |
+| 2035 Velika Gorica sj. obilaz. | D408 | 07:00 592 | 114 | 15:00 766 | 179 | 1 |
+| 1143 Mokrice | D14 | 06:00 638 | 440 | 15:00 718 | 448 | 13 |
+| 2016 Kurilovec | D31 | 07:00 517 | 469 | 15:00 637 | 539 | 22 |
+| 1150 Mokrice - zapad | D307 | 10:00 486 | 735 | 15:00 628 | 945 | 9 |
+| 1936 Oroslavje | D307 | 10:00 448 | 595 | 15:00 507 | 732 | 8 |
+| 2051 Lonjica | 3034 | 07:00 346 | 388 | 14:00 426 | 414 | 21 |
+| 1946 Rakitje | 3064 | 07:00 316 | 62 | 15:00 372 | 121 | 7 |
+| 1941 Ivanec Bistranski | 2220 | 06:00 262 | 196 | 15:00 325 | 266 | 20 |
+| 2052 Brezovec Zelinski | 3016 | 06:00 244 | 58 | 15:00 332 | 106 | 5 |
+| 2004 Kašina | D29 | 06:00 254 | 295 | 15:00 340 | 406 | 19 |
+| 1938 Stubička Slatina | 2217 | 06:00 242 | 136 | 15:00 332 | 258 | 10 |
+| 2019 Lekenik | D30 | 07:00 230 | 208 | 15:00 282 | 235 | 23 |
+| 1940 Pojatno - jug | 2195 | 07:00 217 | 326 | 15:00 323 | 208 | 14 |
+| 1943 Donja Zdenčina | D543 | 07:00 175 | 484 | 15:00 223 | 674 | 0 |
+| 1923 Pisarovina - jug | D36 | 10:00 183 | 88 | 15:00 217 | 161 | 19 |
+| 2049 Otok Svibovski | 1036 | 07:00 176 | 118 | 15:00 211 | 184 | 15 |
+| 2037 Komin | D540 | 06:00 155 | 260 | 15:00 186 | 302 | 12 |
+| 1944 Kupinec | 3106 | 06:00 132 | 111 | 14:00 171 | 140 | 24 |
+| 1939 Bregana Pisarovinska | 1037 | 10:00 103 | 101 | 15:00 141 | 211 | 23 |
 
 ## The simulated day
 
-- Trips started: 880,916; finished: 888,437.
-- Removed after standing still for 5 minutes (gridlock): 4,191 (0.5% of trips).
-- Trips that found no route: 4,308; trips that could not start within their waiting time: 2,127.
-- Busiest hour: 16:00 with 31,819 vehicles on the road on average (10,670 of them coming from or going beyond the map), mean speed 37 km/h.
-- Bus runs started: 9,674 (2 could not start); they left 131,305 stops 164 s late on average, at most 138 min.
-- Tram runs started: 3,821 (0 could not start); they left 84,830 stops 140 s late on average, at most 62 min.
-- Train runs started: 290 (1 could not start); they left 2,560 stops 10 s late on average, at most 6 min.
+- Trips started: 880,839; finished: 888,158.
+- Removed after standing still for 5 minutes (gridlock): 4,403 (0.5% of trips).
+- Trips that found no route: 4,257; trips that could not start within their waiting time: 2,268.
+- Busiest hour: 16:00 with 31,602 vehicles on the road on average (10,676 of them coming from or going beyond the map), mean speed 37 km/h.
+- Bus runs started: 9,674 (2 could not start); they left 130,995 stops 159 s late on average, at most 132 min.
+- Tram runs started: 3,786 (35 could not start); they left 84,833 stops 55 s late on average, at most 21 min.
+- Train runs started: 290 (1 could not start); they left 2,558 stops 10 s late on average, at most 6 min.
 
 | Hour | Vehicles on the road | Crossing the map's edge | Mean speed (km/h) | Stopped | Trips started | Mean trip (min) | Mean trip (km) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| 00:00 | 2,460 | 815 | 48 | 238 | 4,708 | 21.5 | 20.1 |
-| 01:00 | 1,873 | 645 | 48 | 168 | 3,330 | 20.9 | 21.1 |
-| 02:00 | 1,859 | 660 | 48 | 170 | 3,453 | 18.6 | 20.1 |
-| 03:00 | 1,544 | 908 | 64 | 27 | 7,205 | 12.9 | 13.7 |
-| 04:00 | 5,175 | 2,838 | 61 | 191 | 18,725 | 17.0 | 17.3 |
-| 05:00 | 11,597 | 5,545 | 56 | 804 | 38,085 | 18.2 | 17.0 |
-| 06:00 | 18,272 | 7,780 | 50 | 2,120 | 52,016 | 20.4 | 17.6 |
-| 07:00 | 21,141 | 8,465 | 47 | 3,203 | 52,703 | 23.0 | 18.3 |
-| 08:00 | 19,339 | 7,327 | 47 | 2,883 | 47,683 | 23.5 | 18.7 |
-| 09:00 | 17,335 | 6,191 | 47 | 2,580 | 48,218 | 21.5 | 17.1 |
-| 10:00 | 17,372 | 6,424 | 48 | 2,457 | 50,382 | 20.1 | 16.4 |
-| 11:00 | 18,571 | 6,749 | 47 | 2,823 | 52,984 | 20.3 | 16.4 |
-| 12:00 | 19,752 | 7,014 | 46 | 3,133 | 55,527 | 20.8 | 16.4 |
-| 13:00 | 21,767 | 7,716 | 45 | 3,847 | 59,419 | 21.3 | 16.7 |
-| 14:00 | 26,100 | 9,291 | 43 | 5,294 | 65,508 | 23.3 | 17.4 |
-| 15:00 | 30,760 | 10,694 | 39 | 7,324 | 67,215 | 25.8 | 17.9 |
-| 16:00 | 31,819 | 10,670 | 37 | 8,557 | 60,826 | 28.9 | 18.8 |
-| 17:00 | 27,543 | 9,445 | 39 | 6,855 | 51,397 | 30.5 | 19.2 |
-| 18:00 | 18,940 | 7,035 | 45 | 3,412 | 42,119 | 26.8 | 18.6 |
-| 19:00 | 12,755 | 4,925 | 48 | 1,914 | 34,120 | 21.3 | 17.1 |
-| 20:00 | 9,671 | 3,786 | 48 | 1,367 | 25,953 | 20.0 | 16.8 |
-| 21:00 | 7,128 | 2,784 | 50 | 865 | 18,669 | 20.8 | 17.4 |
-| 22:00 | 4,994 | 1,790 | 51 | 449 | 12,752 | 20.2 | 17.8 |
-| 23:00 | 3,530 | 1,199 | 50 | 345 | 7,919 | 19.0 | 18.2 |
+| 00:00 | 2,408 | 798 | 48 | 252 | 4,704 | 20.7 | 19.5 |
+| 01:00 | 1,882 | 654 | 47 | 181 | 3,333 | 19.4 | 20.5 |
+| 02:00 | 1,840 | 665 | 47 | 183 | 3,449 | 20.8 | 21.3 |
+| 03:00 | 1,546 | 915 | 64 | 20 | 7,208 | 12.9 | 13.8 |
+| 04:00 | 5,158 | 2,837 | 61 | 170 | 18,744 | 17.0 | 17.5 |
+| 05:00 | 11,492 | 5,507 | 56 | 735 | 38,079 | 18.0 | 16.9 |
+| 06:00 | 17,969 | 7,712 | 51 | 1,951 | 52,062 | 20.1 | 17.5 |
+| 07:00 | 21,011 | 8,457 | 47 | 3,152 | 52,682 | 22.7 | 18.1 |
+| 08:00 | 19,598 | 7,359 | 47 | 2,916 | 47,677 | 23.9 | 18.8 |
+| 09:00 | 17,040 | 6,132 | 48 | 2,388 | 48,197 | 21.2 | 16.9 |
+| 10:00 | 17,000 | 6,366 | 49 | 2,211 | 50,357 | 19.5 | 16.4 |
+| 11:00 | 18,196 | 6,740 | 48 | 2,507 | 52,983 | 20.0 | 16.3 |
+| 12:00 | 19,367 | 7,009 | 47 | 2,954 | 55,571 | 20.1 | 16.1 |
+| 13:00 | 21,649 | 7,676 | 45 | 3,673 | 59,458 | 21.4 | 16.7 |
+| 14:00 | 25,797 | 9,216 | 43 | 5,107 | 65,500 | 23.0 | 17.4 |
+| 15:00 | 30,364 | 10,541 | 40 | 7,290 | 67,151 | 25.4 | 17.9 |
+| 16:00 | 31,602 | 10,676 | 37 | 8,249 | 60,880 | 28.8 | 18.6 |
+| 17:00 | 27,144 | 9,735 | 39 | 6,585 | 51,355 | 29.8 | 18.9 |
+| 18:00 | 19,821 | 7,783 | 43 | 4,153 | 41,982 | 26.6 | 18.3 |
+| 19:00 | 13,299 | 5,411 | 47 | 2,233 | 34,128 | 23.0 | 17.5 |
+| 20:00 | 9,485 | 3,653 | 50 | 1,088 | 25,979 | 21.5 | 17.3 |
+| 21:00 | 6,727 | 2,450 | 52 | 564 | 18,698 | 19.7 | 17.2 |
+| 22:00 | 4,861 | 1,725 | 52 | 408 | 12,749 | 18.2 | 17.3 |
+| 23:00 | 3,478 | 1,173 | 50 | 337 | 7,913 | 19.2 | 18.1 |
 
 ## Where vehicles get stuck
 
-Vehicles that stand still for 5 minutes are removed, as SUMO teleports them. The 25 road sections that lost the most account for 1,452 of the 4,191 removed; by place:
+Vehicles that stand still for 5 minutes are removed, as SUMO teleports them. The 25 road sections that lost the most account for 1,425 of the 4,403 removed; by place:
 
 | Place | Vehicles removed |
 |---|---:|
-| Slavonska avenija | 172 |
-| Savska cesta at Ulica grada Vukovara | 137 |
-| Savska cesta | 97 |
-| slip roads at Remetinečki rotor | 86 |
-| Jablanska ulica | 80 |
-| Ulica grada Vukovara at Savska cesta | 78 |
-| unnamed streets at Remetinečki rotor | 72 |
-| tram tracks at Avenija Marina Držića / Ulica grada Vukovara | 69 |
-| Fallerovo šetalište at Ilirska ulica / Zagrebačka avenija | 65 |
-| inside junctions at Savska cesta / Ulica grada Vukovara | 61 |
+| Slavonska avenija | 188 |
+| Zagrebačka avenija at Savska cesta / Slavonska avenija | 100 |
+| Froudeova ulica at Avenija Dubrovnik | 94 |
+| tram tracks at Avenija Marina Držića / Ulica grada Vukovara | 68 |
+| Ulica Dragutina Mandla at Avenija Gojka Šuška / Maksimirska cesta | 67 |
+| Ulica grada Vukovara at Avenija Marina Držića | 65 |
+| slip roads at Froudeova ulica | 64 |
+| Jablanska ulica | 63 |
+| inside junctions at Froudeova ulica / Siget | 61 |
+| slip roads at Remetinečki rotor | 59 |
 
 ## Where junctions lose time
 
 Every 5 s the run looks at the front vehicle of each queue within 15 m of its stop line, and charges every stopped vehicle in that queue to the junction ahead, by why the front vehicle waits. Waiting at a red light is expected; the rest is time the junction loses with a queue in front of it: the road beyond full, giving way to other traffic, a vehicle just past the line in the way, or the front vehicle in a lane that does not go where it is going. A queue waiting for room on a full road beyond is charged, in the table below, to where that road's own queue waits, following full roads downstream: the junction that holds the traffic up.
 
-Over the day vehicles queued at junctions for 60,429 vehicle-hours: exit full 52%, red light 28%, giving way 9%, blocked just past the line 3%, wrong lane 3%, other 3%, giving way to pedestrians 2%. Time lost other than at red lights peaks at 16:00 with 6,659 vehicle-hours in the hour.
+Over the day vehicles queued at junctions for 58,362 vehicle-hours: exit full 54%, red light 24%, giving way 11%, blocked just past the line 3%, wrong lane 3%, other 3%, giving way to pedestrians 2%. Time lost other than at red lights peaks at 16:00 with 6,624 vehicle-hours in the hour.
 
 The junctions holding up most traffic other than at red lights, with the queues they back up (vehicle-hours over the day; "Exit full": the full roads beyond go on for more than 12 junctions or round in a circle, as in a gridlock; "Slow road": the road beyond is full of traffic moving slowly, not of a queue at the next junction; "Standing mid-road": its queue stands away from any junction):
 
 | Junction | Control | Held up | Exit full | Giving way | Blocked past the line | Wrong lane | Slow road | Standing mid-road | Other |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Vrbik XIII. | priority | 427 | 5 | 199 | 6 |  | 4 |  | 213 |
-| Kruge / Slavonska avenija | priority | 352 |  | 212 | 14 | 70 | 24 |  | 31 |
-| Avenija Marina Držića / Lastovska ulica / Ulica Milke Trnine | priority | 323 |  | 275 | 6 | 2 | 14 |  | 26 |
-| Boškovićeva ulica / Petrinjska ulica | priority | 307 | 35 | 182 | 17 | 8 | 31 |  | 34 |
-| Savska cesta / Ulica grada Vukovara | priority | 279 |  | 78 | 32 | 1 |  |  | 167 |
-| Ulica grada Vukovara | priority | 277 |  | 4 | 19 |  | 19 |  | 236 |
-| Avenija Marina Držića / Lastovska ulica | priority | 267 | 2 | 206 | 7 | 9 | 23 |  | 20 |
-| Savska cesta / Ulica grada Vukovara | signals | 252 |  | 18 | 13 | 140 | 3 |  | 78 |
-| Kruge / Slavonska avenija | priority | 243 |  | 163 | 10 | 41 | 10 |  | 21 |
-| Avenija Marina Držića / Trg kralja Petra Krešimira IV. / Ulica kneza Branimira | priority | 233 |  | 198 | 7 | 11 | 3 | 1 | 12 |
-| Gajeva ulica / Ulica baruna Trenka | priority | 227 | 1 | 118 | 26 | 17 | 30 | 1 | 35 |
-| Dubravica / Huzjanova ulica / Sigetje | priority | 208 | 1 | 112 | 5 |  | 77 |  | 13 |
-| Ulica kneza Borne / Ulica kneza Domagoja | roundabout | 198 |  | 39 | 3 |  | 121 | 5 | 30 |
-| Slavonska avenija / Ulica Gordana Lederera / Ulica Siniše Glavaševića | signals | 197 |  | 9 | 85 | 49 | 47 |  | 6 |
-| Fallerovo šetalište / Ilirska ulica / Zagrebačka avenija | signals | 196 |  | 10 | 51 | 100 | 29 |  | 8 |
-| Mihanovićeva ulica / Miramarski podvožnjak / Ulica Eugena Kumičića | signals | 187 |  | 19 | 54 | 66 | 35 |  | 14 |
-| Remetinečka cesta / Remetinečki rotor | roundabout | 177 | 2 | 91 | 8 | 46 | 24 |  | 6 |
-| Avenija Marina Držića / Ulica grada Vukovara | signals | 167 |  | 75 | 44 |  | 33 | 1 | 14 |
-| D307 | roundabout | 160 | 94 |  | 5 |  | 48 |  | 13 |
-| 2220 | priority | 160 | 1 | 30 | 10 |  |  |  | 119 |
+| Vrbik XIII. | priority | 396 | 4 | 175 | 5 |  | 5 |  | 207 |
+| Kruge / Slavonska avenija | priority | 343 |  | 216 | 15 | 56 | 26 |  | 30 |
+| Boškovićeva ulica / Petrinjska ulica | priority | 340 | 51 | 189 | 19 | 9 | 35 |  | 37 |
+| Avenija Marina Držića / Lastovska ulica / Ulica Milke Trnine | priority | 313 |  | 271 | 5 | 4 | 14 |  | 19 |
+| Gajeva ulica / Ulica baruna Trenka | priority | 286 | 11 | 132 | 40 | 41 | 19 | 1 | 41 |
+| Avenija Marina Držića / Trg kralja Petra Krešimira IV. / Ulica kneza Branimira | priority | 265 |  | 221 | 12 | 12 | 3 | 1 | 15 |
+| Avenija Marina Držića / Lastovska ulica | priority | 256 | 3 | 201 | 8 | 7 | 19 |  | 18 |
+| Trg Josipa Jurja Strossmayera / Trg kralja Tomislava / Ulica Pavla Hatza | priority | 245 | 9 | 140 | 14 | 2 | 51 |  | 29 |
+| Dubravica / Huzjanova ulica / Sigetje | priority | 233 |  | 131 | 5 |  | 83 |  | 13 |
+| D225 | priority | 224 |  | 43 | 15 |  | 6 |  | 160 |
+| Nova cesta / Ulica grada Vukovara | priority | 223 |  | 195 | 5 |  | 12 |  | 12 |
+| D307 | roundabout | 215 | 144 |  | 5 |  | 55 |  | 12 |
+| D14 / D307 | roundabout | 209 | 32 | 91 | 16 |  | 58 |  | 12 |
+| Savska cesta | priority | 201 |  | 5 | 6 | 119 | 24 |  | 48 |
+| 2220 | priority | 201 |  | 24 | 21 |  |  |  | 156 |
+| Krapinska ulica / Ozaljska ulica / Trakošćanska ulica | priority | 198 |  | 164 | 5 |  | 9 |  | 20 |
+| Kruge / Slavonska avenija | priority | 192 | 1 | 111 | 12 | 35 | 10 |  | 23 |
+| D14 / D307 | roundabout | 185 | 116 |  | 7 |  | 52 |  | 10 |
+| Savska cesta / Ulica grada Vukovara | priority | 174 |  | 68 | 11 | 60 | 5 |  | 30 |
+| Avenija Dubrovnik / Trnsko / Ulica Radoslava Cimermana | priority | 172 | 1 | 120 | 26 | 11 | 7 |  | 6 |
 
 ## Places the news reports jams at
 
@@ -261,82 +261,82 @@ The app's news layer marks 39 places where Croatian news reported jams, roadwork
 
 | Place | Reports | 07:00-08:00 | lost | 16:00-17:00 | lost |
 |---|---:|---:|---:|---:|---:|
-| Jadranski most | 15 | 89% flowing | 0 min | 73% flowing | 0 min |
-| Slavonska avenija × Savska cesta (Vjesnik) | 7 | 49% slow | 1 min | 41% congested | 14 min |
-| Zagreb bypass (A3) | 7 | 86% flowing | 1 min | 84% flowing | 1 min |
-| Stadion Maksimir | 7 | 78% flowing | 0 min | 76% flowing | 0 min |
-| Selska cesta | 6 | 74% flowing | 9 min | 68% slow | 12 min |
-| Lučko toll plaza (A1) | 5 | 90% flowing | 0 min | 89% flowing | 0 min |
-| A4 into Zagreb, Sveta Helena – Zagreb istok | 5 | 90% flowing | 0 min | 89% flowing | 0 min |
-| Savska cesta × Ulica grada Vukovara | 5 | 46% slow | 3 min | 23% congested | 12 min |
-| A3 between Buzin and Lučko | 4 | 84% flowing | 1 min | 81% flowing | 1 min |
-| Ilica | 3 | 72% flowing | 4 min | 62% slow | 6 min |
-| Zagrebačka avenija × Selska cesta overpass | 3 | 73% flowing | 8 min | 62% slow | 12 min |
-| Slavonska avenija | 3 | 82% flowing | 7 min | 75% flowing | 25 min |
-| A3 between Kosnica and Zagreb istok | 3 | 87% flowing | 0 min | 85% flowing | 0 min |
-| Ribnjak | 2 | 77% flowing | 1 min | 90% flowing | 1 min |
-| Zvonimirova × Šubićeva | 2 | 57% slow | 3 min | 57% slow | 2 min |
-| Ulica grada Vukovara | 2 | 69% slow | 6 min | 58% slow | 26 min |
-| Remetinečki rotor | 2 | 78% flowing | 1 min | 78% flowing | 2 min |
-| Most slobode and the Sava bridges | 2 | 83% flowing | 1 min | 56% slow | 9 min |
-| Zagrebačka avenija | 2 | 76% flowing | 8 min | 68% slow | 14 min |
-| A3 between Zagreb zapad and Lučko | 2 | 88% flowing | 0 min | 89% flowing | 0 min |
-| Selska cesta underpass at Prilaz baruna Filipovića | 2 | 70% flowing | 1 min | 56% slow | 1 min |
-| Savska cesta | 1 | 77% flowing | 6 min | 71% flowing | 17 min |
-| Prilaz baruna Filipovića | 1 | 72% flowing | 1 min | 58% slow | 0 min |
-| Avenija Gojka Šuška | 1 | 82% flowing | 1 min | 81% flowing | 1 min |
-| Slavonska avenija × Avenija Marina Držića | 1 | 95% flowing | 0 min | 70% flowing | 2 min |
-| Zagrebačka cesta, Vrapče – Črnomerec | 1 | 67% slow | 9 min | 58% slow | 4 min |
-| Sarajevska cesta | 1 | 88% flowing | 1 min | 92% flowing | 0 min |
-| Selska cesta × Horvaćanska cesta | 1 | 70% flowing | 9 min | 72% flowing | 7 min |
-| Škorpikova underpass | 1 | 81% flowing | 1 min | 70% slow | 10 min |
-| Bukovačka cesta | 1 | 85% flowing | 0 min | 86% flowing | 3 min |
-| Avenija Marina Držića × Ulica grada Vukovara | 1 | 69% slow | 5 min | 62% slow | 6 min |
-| Zaprešić toll plaza (A2) | 1 | 91% flowing | 0 min | 91% flowing | 0 min |
-| Trešnjevački trg | 1 | 59% slow | 1 min | 62% slow | 3 min |
-| Aleja grada Bolonje underpass | 1 | 86% flowing | 1 min | 81% flowing | 10 min |
-| Avenija Većeslava Holjevca × Avenija Dubrovnik | 1 | 55% slow | 0 min | 63% slow | 1 min |
-| A1 at Donja Zdenčina | 1 | 88% flowing | 0 min | 88% flowing | 0 min |
-| Savska cesta × Tratinska ulica | 1 | 29% congested | 11 min | 10% jammed | 17 min |
-| Jagićeva × Ulica Republike Austrije | 1 | 58% slow | 4 min | 64% slow | 1 min |
-| Ulica Ljudevita Posavskog overpass, Sesvete | 1 | 82% flowing | 0 min | 76% flowing | 1 min |
+| Jadranski most | 15 | 95% flowing | 0 min | 75% flowing | 0 min |
+| Slavonska avenija × Savska cesta (Vjesnik) | 7 | 51% slow | 6 min | 44% congested | 20 min |
+| Zagreb bypass (A3) | 7 | 86% flowing | 1 min | 85% flowing | 1 min |
+| Stadion Maksimir | 7 | 84% flowing | 0 min | 76% flowing | 0 min |
+| Selska cesta | 6 | 77% flowing | 8 min | 66% slow | 11 min |
+| Lučko toll plaza (A1) | 5 | 90% flowing | 0 min | 90% flowing | 0 min |
+| A4 into Zagreb, Sveta Helena – Zagreb istok | 5 | 89% flowing | 0 min | 88% flowing | 0 min |
+| Savska cesta × Ulica grada Vukovara | 5 | 59% slow | 1 min | 37% congested | 20 min |
+| A3 between Buzin and Lučko | 4 | 84% flowing | 1 min | 82% flowing | 1 min |
+| Ilica | 3 | 75% flowing | 1 min | 66% slow | 11 min |
+| Zagrebačka avenija × Selska cesta overpass | 3 | 74% flowing | 8 min | 66% slow | 11 min |
+| Slavonska avenija | 3 | 81% flowing | 9 min | 75% flowing | 29 min |
+| A3 between Kosnica and Zagreb istok | 3 | 85% flowing | 0 min | 85% flowing | 0 min |
+| Ribnjak | 2 | 89% flowing | 0 min | 89% flowing | 0 min |
+| Zvonimirova × Šubićeva | 2 | 61% slow | 2 min | 63% slow | 3 min |
+| Ulica grada Vukovara | 2 | 72% flowing | 9 min | 59% slow | 27 min |
+| Remetinečki rotor | 2 | 69% slow | 2 min | 78% flowing | 3 min |
+| Most slobode and the Sava bridges | 2 | 87% flowing | 1 min | 67% slow | 4 min |
+| Zagrebačka avenija | 2 | 75% flowing | 16 min | 72% flowing | 20 min |
+| A3 between Zagreb zapad and Lučko | 2 | 90% flowing | 0 min | 89% flowing | 0 min |
+| Selska cesta underpass at Prilaz baruna Filipovića | 2 | 75% flowing | 0 min | 52% slow | 1 min |
+| Savska cesta | 1 | 80% flowing | 6 min | 71% flowing | 20 min |
+| Prilaz baruna Filipovića | 1 | 72% flowing | 1 min | 59% slow | 7 min |
+| Avenija Gojka Šuška | 1 | 81% flowing | 1 min | 78% flowing | 3 min |
+| Slavonska avenija × Avenija Marina Držića | 1 | 95% flowing | 0 min | 88% flowing | 0 min |
+| Zagrebačka cesta, Vrapče – Črnomerec | 1 | 66% slow | 2 min | 56% slow | 7 min |
+| Sarajevska cesta | 1 | 87% flowing | 1 min | 91% flowing | 0 min |
+| Selska cesta × Horvaćanska cesta | 1 | 82% flowing | 2 min | 68% slow | 10 min |
+| Škorpikova underpass | 1 | 82% flowing | 2 min | 68% slow | 10 min |
+| Bukovačka cesta | 1 | 86% flowing | 0 min | 85% flowing | 1 min |
+| Avenija Marina Držića × Ulica grada Vukovara | 1 | 66% slow | 9 min | 55% slow | 18 min |
+| Zaprešić toll plaza (A2) | 1 | 88% flowing | 0 min | 90% flowing | 0 min |
+| Trešnjevački trg | 1 | 65% slow | 7 min | 56% slow | 6 min |
+| Aleja grada Bolonje underpass | 1 | 84% flowing | 1 min | 82% flowing | 17 min |
+| Avenija Većeslava Holjevca × Avenija Dubrovnik | 1 | 69% slow | 0 min | 66% slow | 0 min |
+| A1 at Donja Zdenčina | 1 | 89% flowing | 0 min | 87% flowing | 0 min |
+| Savska cesta × Tratinska ulica | 1 | 38% congested | 2 min | 15% jammed | 10 min |
+| Jagićeva × Ulica Republike Austrije | 1 | 71% flowing | 4 min | 63% slow | 1 min |
+| Ulica Ljudevita Posavskog overpass, Sesvete | 1 | 84% flowing | 1 min | 77% flowing | 8 min |
 
 3 of 39 places are congested in at least one peak. On all main roads (motorways, trunk, primary and secondary roads), 1% of the length is congested at 07:00-08:00 and 2% at 16:00-17:00.
 
 ## Level crossings
 
-51 of the 77 level crossings closed for trains, 3,340 times, for 43 s on average (from 30 s before a train, an estimate, until 5 s after it has cleared the crossing). Where most traffic queued at the barriers (vehicle-hours standing at a red there over the day):
+51 of the 77 level crossings closed for trains, 3,339 times, for 43 s on average (from 30 s before a train, an estimate, until 5 s after it has cleared the crossing). Where most traffic queued at the barriers (vehicle-hours standing at a red there over the day):
 
 | Crossing | Closures | Mean closure (s) | Closed (min a day) | Queued (vehicle-hours) |
 |---|---:|---:|---:|---:|
-| M102 / Trnava I. | 187 | 41 | 129 | 5 |
+| M102 / Trnava I. | 186 | 42 | 129 | 5 |
 | M202 / Ulica dr. Luje Naletilića | 44 | 104 | 76 | 5 |
 | M102 / Strojarska cesta | 179 | 41 | 122 | 4 |
 | L202 / Ulica Viktora Šipeka | 38 | 59 | 37 | 2 |
-| M101 / Savska ulica / Ulica Dragutina Butorca | 104 | 56 | 97 | 2 |
-| M102 / Ulica Ive Politea | 177 | 41 | 122 | 2 |
-| III. Retkovec / M102 | 181 | 31 | 93 | 1 |
-| M101 / Sokolska ulica | 112 | 43 | 81 | 1 |
-| M404 / M502-1 / Mrkšina ulica | 61 | 37 | 38 | 1 |
+| M101 / Savska ulica / Ulica Dragutina Butorca | 104 | 54 | 94 | 2 |
+| M102 / Ulica Ive Politea | 178 | 41 | 123 | 2 |
 | M502-1 / Ulica Mladosti | 62 | 30 | 31 | 1 |
+| M404 / M502-1 / Mrkšina ulica | 61 | 37 | 38 | 1 |
+| III. Retkovec / M102 | 180 | 31 | 93 | 1 |
+| M101 / Sokolska ulica | 111 | 44 | 80 | 1 |
+| Jelkovečka cesta / M102 / M401 | 196 | 49 | 161 | 1 |
 | M101 / Vodovodna ulica | 156 | 36 | 93 | 1 |
-| Kolodvorska ulica / R201 | 45 | 49 | 37 | 1 |
 
 ## Cyclists
 
-41,759 bike trips started, 41,270 arrived and 437 were removed stuck; bikes rode 249,202 km. Bike trips are simulated in full (about 42,000 a weekday, an estimate), not at the share of demand cars run at.
+41,746 bike trips started, 41,204 arrived and 491 were removed stuck; bikes rode 248,404 km. Bike trips are simulated in full (about 42,000 a weekday, an estimate), not at the share of demand cars run at.
 
 The City counted bikes at these places in 2014 (daily means over the counting period, both ways; the City's ZG Cycle Unit report). Cycling has grown since, so the counts are a floor rather than a target. Simulated: bikes past the place on the street's nearest road, both ways.
 
 | Place | Counted a day (2014) | Simulated | Simulated / counted |
 |---|---:|---:|---:|
-| Trg Stjepana Radića | 1,034 | 1,722 | 1.67 |
-| Zagrebačka avenija | 1,205 | 1,448 | 1.20 |
-| Branimirova | 374 | 57 | 0.15 |
-| Savski most | 2,415 | 1,544 | 0.64 |
-| Most slobode | 1,062 | 2,439 | 2.30 |
-| SR Njemačke | 300 | 79 | 0.26 |
-| Božidara Magovca | 163 | 113 | 0.69 |
+| Trg Stjepana Radića | 1,034 | 1,681 | 1.63 |
+| Zagrebačka avenija | 1,205 | 1,508 | 1.25 |
+| Branimirova | 374 | 89 | 0.24 |
+| Savski most | 2,415 | 1,449 | 0.60 |
+| Most slobode | 1,062 | 2,390 | 2.25 |
+| SR Njemačke | 300 | 77 | 0.26 |
+| Božidara Magovca | 163 | 110 | 0.67 |
 
 ## Where commutes go
 
@@ -347,18 +347,18 @@ The 2021 census counts each town's employed residents and, of those who commute 
 | Zagreb | 355,008 | 97% | 94% | 3% | 6% |
 | Velika Gorica | 27,719 | 26% | 44% | 71% | 53% |
 | Zaprešić | 11,088 | 27% | 34% | 59% | 56% |
-| Sveta Nedelja | 8,702 | 24% | 36% | 64% | 52% |
+| Sveta Nedelja | 8,702 | 25% | 36% | 64% | 52% |
 | Dugo Selo | 7,974 | 24% | 35% | 64% | 56% |
-| Sveti Ivan Zelina | 6,385 | 26% | 52% | 67% | 43% |
+| Sveti Ivan Zelina | 6,385 | 26% | 52% | 66% | 43% |
 | Brdovec | 4,967 | 8% | 25% | 54% | 51% |
 | Rugvica | 3,105 | 11% | 31% | 76% | 59% |
-| Bistra | 2,911 | 2% | 26% | 80% | 58% |
-| Oroslavje | 2,588 | 8% | 36% | 69% | 34% |
+| Bistra | 2,911 | 1% | 26% | 79% | 58% |
+| Oroslavje | 2,588 | 9% | 36% | 68% | 34% |
 | Brckovljani | 2,332 | 6% | 27% | 69% | 49% |
 | Klinča Sela | 2,242 | 16% | 21% | 65% | 55% |
-| Donja Stubica | 2,210 | 3% | 37% | 80% | 28% |
+| Donja Stubica | 2,210 | 3% | 37% | 79% | 28% |
 | Lekenik | 2,187 | 6% | 26% | 66% | 60% |
-| Gornja Stubica | 1,995 | 4% | 25% | 86% | 40% |
+| Gornja Stubica | 1,995 | 4% | 25% | 85% | 40% |
 
 ## How to repeat
 
