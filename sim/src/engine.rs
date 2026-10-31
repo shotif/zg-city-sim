@@ -2268,19 +2268,21 @@ impl Engine {
         // of a dual carriageway's crossing, M16): only when that way is clear too, or the
         // driver stands across this junction waiting there.
         let can_wait = speed < 0.5 || speed * speed / (2.0 * p.decel) < dist;
-        !(near && can_wait && self.gives_way_just_beyond(v, veh, link, arrive, v_arrive))
+        !(near && can_wait && self.gives_way_just_beyond(v, veh, link, minor, arrive, v_arrive))
     }
 
     /// Whether a driver taking `link` (reaching it in `arrive` s at `v_arrive`) would have
-    /// to give way at a junction beyond before finding room to wait: roads in between
-    /// shorter than the vehicle (netconvert builds a dual carriageway's crossing as several
+    /// to stop at a junction beyond before finding room to wait: roads in between shorter
+    /// than the vehicle (netconvert builds a dual carriageway's crossing as several
     /// junctions whose areas touch, 0.2 m apart), and someone there it gives way to
-    /// arriving first.
+    /// arriving first, or, for a driver giving way at `link` (`minor`), anyone standing or
+    /// crawling in between, as it would queue behind them across this junction.
     fn gives_way_just_beyond(
         &self,
         v: u32,
         veh: &Vehicle,
         link: u32,
+        minor: bool,
         arrive: f32,
         v_arrive: f32,
     ) -> bool {
@@ -2300,6 +2302,22 @@ impl Engine {
             let next = self.choose_link_or_detour(to as u32, &veh.route, route_i, p.vclass);
             if next == NONE || d.link_tls[next as usize] != NONE {
                 return false;
+            }
+            if minor {
+                let slow = |lane: u32| {
+                    self.lane_vehs[lane as usize]
+                        .iter()
+                        .any(|&u| u != v && self.vehs[u as usize].speed < 3.0)
+                };
+                let mut via = d.link_via[next as usize];
+                let mut box_lanes = vec![to as u32];
+                while via != NONE && self.net.lane_internal[via as usize] && box_lanes.len() < 6 {
+                    box_lanes.push(via);
+                    via = d.lane_next[via as usize];
+                }
+                if box_lanes.into_iter().any(slow) {
+                    return true;
+                }
             }
             let v_next = self.link_speed(veh, next);
             t += travel_time(
