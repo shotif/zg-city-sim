@@ -2261,7 +2261,72 @@ impl Engine {
             );
         let minor = !matches!(state, b'G' | b'M' | b'O' | b'y' | b'r' | b'u');
         let can_stop = speed * speed / (2.0 * p.decel) < dist - 1.0;
-        !self.junction_conflict(v, veh, link, minor, arrive, leave, can_stop)
+        if self.junction_conflict(v, veh, link, minor, arrive, leave, can_stop) {
+            return false;
+        }
+        // Giving way just beyond, with a road too short to wait on in between (the halves
+        // of a dual carriageway's crossing, M16): only when that way is clear too, or the
+        // driver stands across this junction waiting there.
+        let can_wait = speed < 0.5 || speed * speed / (2.0 * p.decel) < dist;
+        !(near && can_wait && self.gives_way_just_beyond(v, veh, link, arrive, v_arrive))
+    }
+
+    /// Whether a driver taking `link` (reaching it in `arrive` s at `v_arrive`) would have
+    /// to give way at a junction beyond before finding room to wait: roads in between
+    /// shorter than the vehicle (netconvert builds a dual carriageway's crossing as several
+    /// junctions whose areas touch, 0.2 m apart), and someone there it gives way to
+    /// arriving first.
+    fn gives_way_just_beyond(
+        &self,
+        v: u32,
+        veh: &Vehicle,
+        link: u32,
+        arrive: f32,
+        v_arrive: f32,
+    ) -> bool {
+        let d = &self.net.d;
+        let p = veh.params();
+        if d.link_tls[link as usize] != NONE {
+            return false;
+        }
+        let mut need = p.length + p.min_gap;
+        let (mut link, mut t) = (link, arrive);
+        for route_i in (veh.route_idx + 1..).take(4) {
+            let to = d.link_to[link as usize] as usize;
+            let len = d.lane_length[to];
+            if len >= need {
+                return false;
+            }
+            let next = self.choose_link_or_detour(to as u32, &veh.route, route_i, p.vclass);
+            if next == NONE || d.link_tls[next as usize] != NONE {
+                return false;
+            }
+            let v_next = self.link_speed(veh, next);
+            t += travel_time(
+                self.net.link_via_length[link as usize] + len,
+                v_arrive,
+                p.accel,
+                v_next,
+            );
+            let state = self.link_state(next);
+            if !matches!(state, b'G' | b'M' | b'O' | b'y' | b'r' | b'u') {
+                let leave = t + travel_time(
+                    self.net.link_via_length[next as usize] + p.length,
+                    v_arrive.min(v_next),
+                    p.accel,
+                    v_next,
+                );
+                if self.junction_conflict(v, veh, next, true, t, leave, false) {
+                    return true;
+                }
+            }
+            need -= len + self.net.link_via_length[next as usize];
+            if need <= 0.0 {
+                return false;
+            }
+            link = next;
+        }
+        false
     }
 
     /// Whether a vehicle `dist` metres before the point inside a junction where its turn

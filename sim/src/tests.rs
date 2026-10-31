@@ -3615,6 +3615,71 @@ fn drivers_sort_into_lanes_before_a_long_road_ends_in_lanes_that_split() {
 }
 
 #[test]
+fn a_driver_crossing_both_carriageways_waits_clear_of_the_first() {
+    // A minor road crosses a dual carriageway at two junctions 13 m apart, the road between
+    // them 1 m long, as netconvert builds Avenija Marina Držića at Lastovska ulica. With the
+    // near carriageway empty and traffic close behind itself on the far one, a driver
+    // crossing both waits at its own stop line, not inside the first junction, across the
+    // near carriageway.
+    let mut b = Builder::default();
+    let a = b.junction(0.0, 0.0);
+    let bj = b.junction(-13.0, 0.0);
+    let [east, west, south_a, north_a, north_b, south_b] = [
+        b.junction(300.0, 0.0),
+        b.junction(-313.0, 0.0),
+        b.junction(0.0, 300.0),
+        b.junction(0.0, -300.0),
+        b.junction(-13.0, -300.0),
+        b.junction(-13.0, 300.0),
+    ];
+    let minor_in = b.road(east, a, 1, 13.9);
+    let between = b.road(a, bj, 1, 13.9);
+    let minor_out = b.road(bj, west, 1, 13.9);
+    let up_in = b.road(south_a, a, 1, 13.9);
+    let up_out = b.road(a, north_a, 1, 13.9);
+    let down_in = b.road(north_b, bj, 1, 13.9);
+    let down_out = b.road(bj, south_b, 1, 13.9);
+    for (node, (major_in, major_out), (side_in, side_out)) in [
+        (a, (up_in, up_out), (minor_in, between)),
+        (bj, (down_in, down_out), (between, minor_out)),
+    ] {
+        let (mi, mo, si, so) = (
+            b.lane(major_in, 0),
+            b.lane(major_out, 0),
+            b.lane(side_in, 0),
+            b.lane(side_out, 0),
+        );
+        b.connect(mi, mo, node, dir::STRAIGHT, b'M');
+        b.connect(si, so, node, dir::STRAIGHT, b'm');
+        b.set_logic(node, &[(0, 0b10), (0b01, 0b01)]);
+    }
+    let mut engine = Engine::new(b.build(), 5);
+    // The driver crossing waits at its line; a car on the far carriageway is due at the
+    // second junction about when the driver would get there.
+    let minor = engine.net.edge_lanes(minor_in).start;
+    let len = engine.net.d.lane_length[minor as usize];
+    let car = engine.insert_at(
+        vtype::CAR,
+        vec![minor_in, between, minor_out],
+        minor,
+        len - 0.5,
+        0.0,
+    );
+    let down = engine.net.edge_lanes(down_in).start;
+    let far = engine.insert_at(vtype::CAR, vec![down_in, down_out], down, len - 60.0, 13.9);
+    assert_ne!(far, NONE);
+    let serial = engine.vehs[car as usize].serial;
+    let mut stood_beyond = false;
+    run_until(&mut engine, 20.0, |e| {
+        let veh = &e.vehs[car as usize];
+        if veh.alive() && veh.serial == serial && veh.lane != NONE && veh.speed < 0.1 {
+            stood_beyond |= e.net.d.lane_edge[veh.lane as usize] != minor_in;
+        }
+    });
+    assert!(!stood_beyond, "the driver stood inside the first junction");
+}
+
+#[test]
 fn trips_from_the_city_go_further() {
     // Homes on the first of twenty roads 1 km long in a row, jobs on every one. Commutes
     // from a street in the City lose attractiveness with distance to `CITY_POWER`, not 1
