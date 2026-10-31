@@ -646,6 +646,20 @@ Known gaps:
 
 **Status (M17, closed 2026-10-31).** Nothing of M17 is kept; the network is built as M16 left it. Junctions in parts stay a known gap. Joining them is not the fix while a joined crossing has to be crossed in one go and its signals are netconvert's guesses. The owner's decision (2026-10-31): back to the game.
 
+**Plan (M18 Policies, chosen 2026-10-31).** The owner's order: policies (M18), then career mode (M19), then services (M20). Policies change what driving costs, not the roads. The player draws an area on the map, or takes a preset, and puts a congestion charge, a parking surcharge or a lorry ban on it. Every policy works through the simulation in three ways:
+- Routes count its money as time, at the €16 an hour behind the tolls and fuel (225 s a euro), so through traffic goes round the area.
+- The split between car and public transport (M9d's incremental logit) counts it on trips to and from the area, so some of them move to trams and buses.
+- Its income and costs go into the budget, and Before and after shows what it does.
+
+The policies' effects and costs are estimates, and the plan says from what. Each step is pushed to `main` when it works.
+- **M18a, congestion charge.** An area and a charge in euros, paid by cars and lorries each time they drive into the area during the charging hours (07:00-19:00 by default). Buses, trams and bikes don't pay.
+  - In the engine, the roads into the area are found from the junctions inside it. Car and lorry routes count the charge on them while it applies, and the hierarchy is customised again when the hours start and end.
+  - In the split, zone pairs with one end inside count half the charge on each leg, as a round trip into the area pays once. It is weighted by the share of the day's trips within the hours.
+  - Income is the charges paid on the simulated weekday, 250 weekdays a year (an estimate). Costs are cameras on every road in, and running costs as a share of the income, from the cities that charge.
+  - The native runs take policies from a file (`POLICY=file.json`). Checked with a day run against Stockholm, London and Milan, where a charge of a few euros cut traffic into the area by 15-30 %.
+- **M18b, parking surcharge.** Areas with a surcharge per hour on today's parking prices (the City's parking zones are not open data). Car trips to the area pay it for an estimated stay, and the split counts half of it on each leg. Income comes from the stays of the car trips that still end there.
+- **M18c, lorry ban.** Lorries may not cross the area's edge, except to reach or leave places inside it. Lorry routes count an hour for every crossing, so through lorries go round and deliveries still get in.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.
@@ -773,6 +787,9 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M15 Roads into the City** | Routes count fuel, so of two close ways drivers take the shorter: the roads from Dugo Selo, Sveta Nedelja and Lekenik fit their counts, 22-24 of 47 stations within ±25 %; drivers who weigh money differently tried and left out (done) |
 | **M16 Traffic within the City** | The City's junctions and corridors checked locally against its traffic studies' counts and GPS speeds on the bridges (their numbers not committed). Trams go with the traffic beside them, drivers sort into lanes earlier and go round full roundabouts, tram crossings no longer split junctions, and trips within the City are as long as Zagreb's. The counted junctions pass more, the bridges slow in the GPS data's order, and 21-26 of 47 stations are within ±25 % (done) |
 | **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: tried and left out, as joined crossings passed less and their guessed signals held up more (closed) |
+| **M18 Policies** | A congestion charge, parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget |
+| **M19 Career mode** | Reality for analysis and Career with goals (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots |
+| **M20 Services** | Schools and health centres that growing districts need, placed by the player, with trips to them and their running costs |
 
 ## Risks and open questions
 
