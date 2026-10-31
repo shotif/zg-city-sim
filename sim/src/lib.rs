@@ -17,6 +17,7 @@ pub mod ffi;
 pub mod idm;
 pub mod network;
 pub mod pedestrians;
+pub mod policy;
 pub mod riders;
 pub mod rng;
 pub mod router;

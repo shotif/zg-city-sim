@@ -21,6 +21,7 @@ use crate::edits::{self, Edit, Loaded};
 use crate::idm;
 use crate::network::{NONE, Network, NetworkData, dir, vclass};
 use crate::pedestrians::{self, MIN_WALK, OWN_SIGNAL_GAP, OWN_SIGNAL_YELLOW, Pedestrians};
+use crate::policy::Policies;
 use crate::riders::{CAR_ORIGINS_PER_STEP, Graph, NO_ZONE, Riders};
 use crate::rng::Rng;
 use crate::router::{LandmarkBuild, Landmarks, Query, Router, purpose, route_hash};
@@ -187,7 +188,11 @@ pub mod stat {
     pub const BIKES: usize = 21;
     /// How late the trams and buses running are on average (s; M10b).
     pub const TRANSIT_LATE: usize = 22;
-    pub const LEN: usize = 23;
+    /// Since the start: congestion charges paid (€) and the cars and lorries that paid them
+    /// (M18a).
+    pub const CHARGES_PAID: usize = 23;
+    pub const CHARGE_PAYERS: usize = 24;
+    pub const LEN: usize = 25;
 }
 
 /// Trip flags.
@@ -583,6 +588,10 @@ pub struct Engine {
     /// count and the edits changing the roads.
     riders_roads: Vec<u32>,
     riders_roads_today: Vec<u32>,
+    /// Policies in force (M18): congestion charges on areas, and what each edge's charge is
+    /// worth to car and lorry routes now (s).
+    pub policies: Policies,
+    charge_seconds: Vec<f32>,
     /// Scale applied to generated demand (1 = full).
     pub demand_scale: f32,
     /// How the weather changes driving (M6b).
@@ -1203,6 +1212,8 @@ impl Engine {
             riders_key: Vec::new(),
             riders_roads: Vec::new(),
             riders_roads_today: Vec::new(),
+            policies: Policies::default(),
+            charge_seconds: Vec::new(),
             demand_scale: 1.0,
             weather: Weather::CLEAR,
             stats: Stats::default(),
@@ -3921,6 +3932,12 @@ impl Engine {
                     self.edge_bikes[e] += 1;
                 } else {
                     self.edge_entered[e] += 1;
+                    let veh = &self.vehs[v as usize];
+                    let pays = veh.transit.is_none()
+                        && (veh.vtype == vtype::CAR || veh.vtype == vtype::TRUCK);
+                    if pays && !self.policies.is_empty() {
+                        self.policies.entered(e as u32);
+                    }
                 }
                 let veh = &self.vehs[v as usize];
                 let p = veh.params();
@@ -5213,6 +5230,21 @@ impl Engine {
                 s.mean_trip_km = (s.trip_km_sum / s.trip_count as f64) as f32;
             }
             self.update_edge_times();
+            if !self.policies.is_empty() && self.policies.refresh(self.time) {
+                self.apply_charges();
+            }
+        }
+    }
+
+    /// Count the charges in force in car and lorry routes (M18a).
+    fn apply_charges(&mut self) {
+        let mut seconds = std::mem::take(&mut self.charge_seconds);
+        self.policies
+            .route_seconds(&mut seconds, self.net.edge_count());
+        self.net.set_charges(&seconds);
+        self.charge_seconds = seconds;
+        if let Some(h) = self.hierarchy.as_mut() {
+            h.travel_changed();
         }
     }
 
@@ -5298,8 +5330,12 @@ impl Engine {
         let mut lines = Vec::new();
         let n_tls = self.tls_phase.len();
         let mut priority = vec![false; n_tls];
+        let mut charges = Vec::new();
         for edit in edits {
-            if let Edit::Frequency { route, factor } = *edit {
+            if let Edit::Charge(charge) = edit {
+                charges.push(charge.clone());
+                applied.push(edit.clone());
+            } else if let Edit::Frequency { route, factor } = *edit {
                 // Lines the timetable runs, as often as edits may set.
                 let runs = self.transit.as_ref().is_some_and(|tr| {
                     tr.data.trip_route[..tr.timetabled].contains(&(route as u16))
@@ -5327,6 +5363,13 @@ impl Engine {
         };
         self.net.refresh_speeds();
         self.net.refresh_links();
+        // Charges carry over what was paid; their roads in are found on the network now.
+        let (paid, payers) = (self.policies.paid, self.policies.payers);
+        self.policies = Policies::new(&self.net, charges);
+        self.policies.paid = paid;
+        self.policies.payers = payers;
+        self.policies.refresh(self.time);
+        self.apply_charges();
         for e in 0..self.free_time.len() {
             let free = self.net.edge_length[e] / self.net.edge_speed[e].max(1.0);
             if (free - self.free_time[e]).abs() > 1e-3 * self.free_time[e] {
@@ -5353,10 +5396,13 @@ impl Engine {
             }
             tr.set_service(&frequencies, &made, self.time - tr.day_start);
             self.transit = Some(tr);
-            // Riders again for the public transport edits in force.
+            // Riders again for the public transport edits and charges in force.
+            if let Some(riders) = self.riders.as_mut() {
+                riders.set_extra(self.policies.split_seconds(&riders.zones.centre));
+            }
             let key: Vec<u32> = applied
                 .iter()
-                .filter(|e| matches!(e, Edit::Frequency { .. } | Edit::Line(_)))
+                .filter(|e| matches!(e, Edit::Frequency { .. } | Edit::Line(_) | Edit::Charge(_)))
                 .flat_map(|e| e.encode())
                 .collect();
             self.riders_for_edits(key, &applied);
@@ -5668,6 +5714,8 @@ impl Engine {
         out[stat::TRAINS] = s.trains as f64;
         out[stat::BIKES] = s.bikes as f64;
         out[stat::TRANSIT_LATE] = s.transit_late / (s.trams + s.buses).max(1) as f64;
+        out[stat::CHARGES_PAID] = self.policies.paid;
+        out[stat::CHARGE_PAYERS] = self.policies.payers as f64;
         out
     }
 

@@ -196,6 +196,9 @@ pub struct Successor {
     pub toll: f32,
     /// Seconds the fuel to drive the edge it leads to is worth (`FUEL_TIME`).
     pub fuel: f32,
+    /// Seconds a congestion charge for driving onto the edge it leads to is worth to car
+    /// and lorry routes (M18a, `Network::set_charges`), 0 where none applies.
+    pub charge: f32,
 }
 
 pub struct Network {
@@ -591,6 +594,7 @@ impl Network {
                 penalty,
                 toll,
                 fuel: FUEL_TIME * length,
+                charge: 0.0,
             });
         }
         for e in 0..n_edges {
@@ -598,6 +602,14 @@ impl Network {
         }
         self.succ_offset = succ_offset;
         self.succ = succ;
+    }
+
+    /// Charges for driving onto each edge (s; `seconds[e]`, none past its end), counted by
+    /// car and lorry routes (M18a).
+    pub fn set_charges(&mut self, seconds: &[f32]) {
+        for s in &mut self.succ {
+            s.charge = seconds.get(s.edge as usize).copied().unwrap_or(0.0);
+        }
     }
 
     pub fn lane_count(&self) -> usize {

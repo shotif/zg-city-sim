@@ -20,6 +20,7 @@
 //! those the split adds to them. When edits change public transport, each zone pair's car
 //! trips are kept (or added to) in the ratio of the car's share then to its share today, an
 //! incremental logit: without edits nothing is drawn and the traffic stays as calibrated.
+//! Policies (M18) add what they cost a car between two zones to its time there (`extra`).
 //! The figures are estimates: the weights, penalties, car times and `BETA` are typical
 //! values, not measured in Zagreb; `ASC` is calibrated to the Transport Master Plan's split.
 
@@ -713,6 +714,10 @@ pub struct Riders {
     car_today: Option<Vec<f32>>,
     car_now: Option<Vec<f32>>,
     car_job: Option<(Vec<f32>, usize, bool)>,
+    /// What policies add to a car's journey between two zones (s of generalised time; none:
+    /// nothing), and the car's times now with it, once worked out for a job.
+    extra: Option<Vec<f32>>,
+    car_with_extra: Option<Vec<f32>>,
     /// The zone whose busiest street each edge is (`NO_ZONE`: none).
     edge_zone: Vec<u32>,
     /// Routes (for boardings by route).
@@ -766,6 +771,8 @@ impl Riders {
             car_today: None,
             car_now: None,
             car_job: Some((vec![f32::INFINITY; n * n], 0, true)),
+            extra: None,
+            car_with_extra: None,
             edge_zone,
             routes,
             summary: Summary::default(),
@@ -789,6 +796,13 @@ impl Riders {
         Some((times, now))
     }
 
+    /// What policies add to a car's journey between every two zones (s; none: nothing), for
+    /// the next `set_now`.
+    pub fn set_extra(&mut self, extra: Option<Vec<f32>>) {
+        let n = self.zones.len();
+        self.extra = extra.filter(|e| e.len() == n * n);
+    }
+
     /// Public transport runs as `graph` now (none: as today), and the roads are as today or
     /// changed (`roads`; then `graph` is the network public transport runs on now, edited or
     /// not): work the journeys out again.
@@ -800,6 +814,7 @@ impl Riders {
         }
         let n = self.zones.len();
         self.car_now = None;
+        self.car_with_extra = None;
         self.car_job = roads.then(|| (vec![f32::INFINITY; n * n], 0, false));
         match graph {
             Some(g) => {
@@ -869,6 +884,13 @@ impl Riders {
         if self.car_job.is_some() {
             return false;
         }
+        let editing = self.job.as_ref().is_some_and(|(_, is_today)| !is_today);
+        if let (true, None, Some(extra), Some(car_today)) =
+            (editing, &self.car_with_extra, &self.extra, &self.car_today)
+        {
+            let car = self.car_now.as_ref().unwrap_or(car_today);
+            self.car_with_extra = Some(car.iter().zip(extra).map(|(c, e)| c + e).collect());
+        }
         let Riders {
             job,
             zones,
@@ -876,12 +898,20 @@ impl Riders {
             today,
             car_today,
             car_now,
+            car_with_extra,
             ..
         } = self;
         let (Some((skim, is_today)), Some(car_today)) = (job.as_mut(), car_today.as_deref()) else {
             return false;
         };
-        let car = car_now.as_deref().unwrap_or(car_today);
+        let car = if *is_today {
+            car_today
+        } else {
+            car_with_extra
+                .as_deref()
+                .or(car_now.as_deref())
+                .unwrap_or(car_today)
+        };
         let base = if *is_today {
             None
         } else {
@@ -908,7 +938,11 @@ impl Riders {
         }
         let today = self.today.as_deref().unwrap_or(&[]);
         let car_today = self.car_today.as_deref().unwrap_or(&[]);
-        let car_now = self.car_now.as_deref().unwrap_or(car_today);
+        let car_now = self
+            .car_with_extra
+            .as_deref()
+            .or(self.car_now.as_deref())
+            .unwrap_or(car_today);
         let n = self.zones.len();
         let mut factor = vec![1f32; n * n];
         let mut moved = 0.0;

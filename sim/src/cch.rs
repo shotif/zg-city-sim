@@ -358,7 +358,7 @@ impl Metric {
 
     /// Times for travel times `times` (s per edge): moving from one edge onto the next
     /// takes the next one's time, plus the turn's penalty and, if they count, its toll and
-    /// fuel, as `Router::route` counts it.
+    /// fuel and any congestion charge, as `Router::route` counts it.
     pub fn customize(&mut self, cch: &Cch, net: &Network, times: &[f32]) {
         let m = cch.arcs();
         let n = cch.len();
@@ -379,8 +379,13 @@ impl Metric {
                 continue;
             }
             let toll = if self.tolls { s.toll } else { 0.0 };
-            let fuel = if self.fuel { s.fuel } else { 0.0 };
-            let w = times[s.edge as usize] + s.penalty + toll + fuel;
+            // Charges count where fuel does: car and lorry routes (M18a).
+            let (fuel, charge) = if self.fuel {
+                (s.fuel, s.charge)
+            } else {
+                (0.0, 0.0)
+            };
+            let w = times[s.edge as usize] + s.penalty + toll + fuel + charge;
             let slot = if cch.input_up[i] {
                 &mut self.up[a as usize]
             } else {

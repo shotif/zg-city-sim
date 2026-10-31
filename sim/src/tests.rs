@@ -4937,3 +4937,223 @@ fn commuters_drive_home_to_the_town_they_came_from() {
         "{near} went home to the town drawn near the jobs"
     );
 }
+
+/// A square area of `half` metres round (x, z).
+fn square(x: f32, z: f32, half: f32) -> Vec<(f32, f32)> {
+    vec![
+        (x - half, z - half),
+        (x + half, z - half),
+        (x + half, z + half),
+        (x - half, z + half),
+    ]
+}
+
+#[test]
+fn a_congestion_charge_sends_routes_round_its_area_while_it_applies() {
+    use crate::cch::{Cch, Metric, Query};
+    use crate::policy::Charge;
+    // From the road in, 1 km straight through B (72 s) or 1.4 km round through C (102 s);
+    // B is in the charged area, so the straight way pays €1 (225 s).
+    let mut b = Builder::default();
+    let s0 = b.junction(-200.0, 0.0);
+    let a = b.junction(0.0, 0.0);
+    let bj = b.junction(500.0, 0.0);
+    let m = b.junction(1000.0, 0.0);
+    let c = b.junction(500.0, 500.0);
+    let z = b.junction(1200.0, 0.0);
+    let into = b.road(s0, a, 1, 13.9);
+    let ab = b.road(a, bj, 1, 13.9);
+    let bm = b.road(bj, m, 1, 13.9);
+    let up = b.road(a, c, 1, 13.9);
+    let down = b.road(c, m, 1, 13.9);
+    let last = b.road(m, z, 1, 13.9);
+    for (from, to, j) in [
+        (into, ab, a),
+        (into, up, a),
+        (ab, bm, bj),
+        (up, down, c),
+        (bm, last, m),
+        (down, last, m),
+    ] {
+        let (fl, tl) = (b.lane(from, 0), b.lane(to, 0));
+        b.connect(fl, tl, j, dir::STRAIGHT, b'M');
+    }
+    let mut engine = Engine::new(b.build(), 3);
+    let route = |e: &Engine| {
+        let mut router = Router::new(e.net.edge_count());
+        let a_star = router.route(&e.net, &e.travel_time, into, last, vclass::PASSENGER);
+        let cch = Cch::build(&e.net);
+        let mut metric = Metric::with_paths(vclass::PASSENGER, true, true, true);
+        metric.customize(&cch, &e.net, &e.travel_time);
+        let hierarchy = Query::new(&cch)
+            .route(&cch, &metric, into, last)
+            .map(|(r, _)| r);
+        assert_eq!(a_star, hierarchy);
+        a_star.unwrap()
+    };
+    assert_eq!(route(&engine), vec![into, ab, bm, last]);
+    // Charged from 07:00 to 19:00; the engine starts at midnight.
+    let charge = Charge {
+        area: square(500.0, 0.0, 100.0),
+        euros: 1.0,
+        from: 7.0 * 3600.0,
+        to: 19.0 * 3600.0,
+    };
+    assert_eq!(engine.set_edits(&[Edit::Charge(charge.clone())]), 1);
+    assert_eq!(engine.policies.entries, vec![vec![ab]]);
+    assert_eq!(route(&engine), vec![into, ab, bm, last]);
+    // From 07:00 it applies, and the way round is cheaper.
+    engine.time = 7.0 * 3600.0;
+    engine.set_edits(&[Edit::Charge(charge.clone())]);
+    assert_eq!(route(&engine), vec![into, up, down, last]);
+    // The hours are refreshed as the engine runs: at 19:00 it is lifted.
+    engine.time = 19.0 * 3600.0 - 30.0;
+    run_until(&mut engine, 120.0, |_| {});
+    assert_eq!(route(&engine), vec![into, ab, bm, last]);
+    // Nothing charged, nothing counted.
+    engine.set_edits(&[]);
+    assert!(engine.policies.is_empty());
+}
+
+#[test]
+fn cars_and_lorries_pay_the_charge_and_bikes_do_not() {
+    use crate::policy::Charge;
+    let (b, e0, e1) = straight_road(300.0, 1);
+    let mut engine = Engine::new(b.build(), 4);
+    // J1 (x = 300 m) and J2 (600 m) are in the area: e0 leads into it.
+    let charge = Charge {
+        area: square(450.0, 0.0, 200.0),
+        euros: 2.5,
+        from: 0.0,
+        to: 86_400.0,
+    };
+    engine.set_edits(&[Edit::Charge(charge)]);
+    assert_eq!(engine.policies.entries, vec![vec![e0]]);
+    // Only J2 is in this one: e1 leads into it, and vehicles setting off on e0 drive onto
+    // it. A car and a lorry pay; a bike does not (nor buses and trams, on their timetable).
+    let charge = Charge {
+        area: square(600.0, 0.0, 50.0),
+        euros: 2.5,
+        from: 0.0,
+        to: 86_400.0,
+    };
+    engine.set_edits(&[Edit::Charge(charge)]);
+    assert_eq!(engine.policies.entries, vec![vec![e1]]);
+    for (i, vt) in [vtype::CAR, vtype::TRUCK, vtype::BIKE]
+        .into_iter()
+        .enumerate()
+    {
+        engine.add_trip(Trip {
+            depart: i as f64 * 10.0,
+            from: e0,
+            to: e1,
+            vtype: vt,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 200.0, |_| {});
+    assert_eq!(engine.stats.arrived + engine.stats.bike_arrived, 3);
+    assert_eq!(engine.policies.payers, 2);
+    assert!((engine.policies.paid - 5.0).abs() < 1e-6);
+    let s = engine.stats_array();
+    assert_eq!(s[stat::CHARGE_PAYERS], 2.0);
+    assert!((s[stat::CHARGES_PAID] - 5.0).abs() < 1e-6);
+    // What was paid carries over new edits.
+    engine.set_edits(&[]);
+    assert_eq!(engine.policies.payers, 2);
+}
+
+#[test]
+fn charges_round_trip_through_records_and_count_half_on_each_leg_of_the_split() {
+    use crate::policy::{Charge, Policies, SECONDS_PER_EURO, inside};
+    let charge = Charge {
+        area: square(0.0, 0.0, 1000.0),
+        euros: 4.0,
+        from: 7.0 * 3600.0,
+        to: 19.5 * 3600.0,
+    };
+    let edit = Edit::Charge(charge.clone());
+    let words = edit.encode();
+    assert_eq!(words.len(), 4 * 5);
+    assert_eq!(Edit::decode(&words), vec![edit]);
+    // Too few points, or a charge out of range, is skipped.
+    let mut bad = words.clone();
+    bad[1] = 2;
+    assert!(Edit::decode(&bad[..12]).is_empty());
+    let mut dear = words.clone();
+    dear[3] = 500f32.to_bits();
+    assert!(Edit::decode(&dear).is_empty());
+
+    assert!(inside(&charge.area, (10.0, -10.0)));
+    assert!(!inside(&charge.area, (1500.0, 0.0)));
+    // Most of the day's trips start between 07:00 and 19:30.
+    let share = charge.day_share();
+    assert!(share > 0.7 && share < 0.9, "{share}");
+    let (b, _, _) = straight_road(300.0, 1);
+    let policies = Policies::new(&b.build(), vec![charge]);
+    let centres = [(0.0, 0.0), (5000.0, 0.0), (100.0, 100.0)];
+    let extra = policies.split_seconds(&centres).unwrap();
+    let leg = 0.5 * 4.0 * SECONDS_PER_EURO * share;
+    // In and out of the area pay half each way; within it, or outside it, nothing.
+    assert!((extra[1] - leg).abs() < 1e-3 && (extra[3] - leg).abs() < 1e-3);
+    assert_eq!(
+        (extra[0], extra[2], extra[4], extra[8]),
+        (0.0, 0.0, 0.0, 0.0)
+    );
+    assert!((extra[5] - leg).abs() < 1e-3 && (extra[7] - leg).abs() < 1e-3);
+}
+
+#[test]
+fn a_charge_on_one_zone_moves_car_trips_to_and_from_it_to_the_bus() {
+    use crate::policy::Charge;
+    let (mut engine, _, _) = two_zones();
+    engine.set_time(0.0);
+    engine.start_riders(None);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    let (east, west) = if riders.zones.centre[0].0 < riders.zones.centre[1].0 {
+        (0, 1)
+    } else {
+        (1, 0)
+    };
+    let today = riders.summary.trips_today;
+    let centre = riders.zones.centre[west];
+    // €3 for driving into the western zone, all day.
+    let charge = Charge {
+        area: square(centre.0, centre.1, 400.0),
+        euros: 3.0,
+        from: 0.0,
+        to: 86_400.0,
+    };
+    engine.set_edits(&[Edit::Charge(charge.clone())]);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    let factor = riders.factor.clone().expect("car trips moved");
+    let to_west = factor[east * 2 + west];
+    assert!(to_west < 1.0 && to_west > 0.5, "{to_west}");
+    // No bus runs the other way, so nobody can leave the car there.
+    assert_eq!(factor[west * 2 + east], 1.0);
+    assert!(riders.summary.trips_now > today);
+    // A dearer charge moves more.
+    engine.set_edits(&[Edit::Charge(Charge {
+        euros: 10.0,
+        ..charge
+    })]);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let dearer = engine.riders.as_ref().unwrap().factor.clone().unwrap();
+    assert!(dearer[east * 2 + west] < to_west);
+    // Lifted: as today.
+    engine.set_edits(&[]);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    assert!(riders.factor.is_none());
+    assert_eq!(riders.summary.trips_now, today);
+}

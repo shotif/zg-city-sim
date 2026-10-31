@@ -1,7 +1,7 @@
 //! Network edits applied to the running simulation: closed roads and lanes, speed limits,
 //! lanes reserved for some vehicle classes (bus lanes), banned turns and signal timings,
-//! how often a public transport line runs (M9b), new lines (M9c) and signal priority for
-//! trams and buses (M10b).
+//! how often a public transport line runs (M9b), new lines (M9c), signal priority for
+//! trams and buses (M10b) and congestion charges on areas (M18a, `policy.rs`).
 //!
 //! Edits always apply to the network as loaded: `Engine::set_edits` restores the loaded lane
 //! speeds, permissions and signal timings, applies the whole list, and rebuilds what depends
@@ -9,6 +9,7 @@
 //! is setting the list without it, in any order.
 
 use crate::network::{Network, vclass};
+use crate::policy::{CHARGE_RANGE, Charge, MAX_POINTS};
 
 /// Classes a closed road or lane keeps: buses and trams stay on their timetabled routes.
 pub const CLOSED_KEEPS: u16 = vclass::BUS | vclass::TRAM | vclass::RAIL;
@@ -44,6 +45,8 @@ pub enum Edit {
     /// seconds from `first` to `last` (s after midnight). Its route index comes after the
     /// timetable's; both ways of a line share one.
     Line(Line),
+    /// A congestion charge on an area (M18a).
+    Charge(Charge),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +75,11 @@ pub mod kind {
     pub const LINE_HOURS: u32 = 9;
     pub const LINE_STOP: u32 = 10;
     pub const PRIORITY: u32 = 11;
+    /// A congestion charge takes several records: CHARGE (number of points, the hours as
+    /// minutes after midnight `from | to << 16`, euros), then an AREA_POINT (0, x, z as f32
+    /// bits) for each point of its area.
+    pub const CHARGE: u32 = 12;
+    pub const AREA_POINT: u32 = 13;
 }
 
 impl Edit {
@@ -103,6 +111,30 @@ impl Edit {
                             .collect(),
                     }));
                     k += n + 1;
+                }
+                continue;
+            }
+            if r[0] == kind::CHARGE {
+                let n = r[1] as usize;
+                let rest = &records[k..];
+                if (3..=MAX_POINTS).contains(&n)
+                    && rest.len() >= n
+                    && rest[..n].iter().all(|s| s[0] == kind::AREA_POINT)
+                {
+                    let euros = f32::from_bits(r[3]);
+                    let (lo, hi) = CHARGE_RANGE;
+                    if (lo..=hi).contains(&euros) {
+                        out.push(Edit::Charge(Charge {
+                            area: rest[..n]
+                                .iter()
+                                .map(|s| (f32::from_bits(s[2]), f32::from_bits(s[3])))
+                                .collect(),
+                            euros,
+                            from: (r[2] & 0xffff).min(1440) as f32 * 60.0,
+                            to: (r[2] >> 16).min(1440) as f32 * 60.0,
+                        }));
+                    }
+                    k += n;
                 }
                 continue;
             }
@@ -185,6 +217,20 @@ impl Edit {
                 ];
                 for &(edge, frac) in &line.stops {
                     out.extend([kind::LINE_STOP, edge, 0, frac.to_bits()]);
+                }
+                return out;
+            }
+            Edit::Charge(ref charge) => {
+                let hours =
+                    (charge.from / 60.0).round() as u32 | ((charge.to / 60.0).round() as u32) << 16;
+                let mut out = vec![
+                    kind::CHARGE,
+                    charge.area.len() as u32,
+                    hours,
+                    charge.euros.to_bits(),
+                ];
+                for &(x, z) in &charge.area {
+                    out.extend([kind::AREA_POINT, 0, x.to_bits(), z.to_bits()]);
                 }
                 return out;
             }
@@ -305,7 +351,9 @@ pub fn apply(net: &mut Network, edit: &Edit) -> bool {
             d.phase_min_dur[p] = d.phase_min_dur[p].min(seconds);
             d.phase_max_dur[p] = d.phase_max_dur[p].max(seconds);
         }
-        Edit::Frequency { .. } | Edit::Line(_) | Edit::Priority { .. } => return false,
+        Edit::Frequency { .. } | Edit::Line(_) | Edit::Priority { .. } | Edit::Charge(_) => {
+            return false;
+        }
     }
     true
 }
