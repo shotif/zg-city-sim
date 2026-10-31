@@ -709,7 +709,9 @@ test('draws a new road that traffic takes, and takes it away again', async ({ pa
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   }
   await page.getByRole('button', { name: 'Finish road' }).click();
-  await expect(page.locator('.build-draw-status')).toContainText('Not enough money');
+  await expect(
+    page.locator('.build-draw-status').filter({ hasText: 'Not enough money' }),
+  ).toBeVisible();
   expect(await page.evaluate(() => window.__ZG__!.network!.edgeCount)).toBe(before);
 
   // The Budget panel: the balance, a year's flows and the balance over time.
