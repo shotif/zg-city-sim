@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { RoadEdit } from '../src/edit/builder';
 import {
   BASE_INCOME,
+  CHARGE_DAYS,
+  CHARGE_GATE,
+  CHARGE_RUNNING,
+  CHARGE_SYSTEM,
   BRIDGE_M2,
   Budget,
   FEE_POINT,
@@ -218,7 +222,15 @@ describe('the balance', () => {
   it('flows a year a simulated day, pays for building and refuses what it cannot', () => {
     const budget = new Budget();
     expect(budget.balance).toBe(BASE_INCOME);
-    budget.yearly = { base: BASE_INCOME, tax: 1e6, fee: 2e5, upkeep: 2e5, service: 0, fares: 0 };
+    budget.yearly = {
+      base: BASE_INCOME,
+      tax: 1e6,
+      fee: 2e5,
+      upkeep: 2e5,
+      service: 0,
+      fares: 0,
+      charges: 0,
+    };
     budget.tick(6 * 3600);
     budget.tick(18 * 3600);
     // Half a day: half a year's income less upkeep.
@@ -266,5 +278,39 @@ describe('the balance', () => {
     expect(euros(198_900)).toBe('€198,900');
     expect(euros(-1_250_000)).toBe('-€1.3 million');
     expect(euros(2.75e9)).toBe('€2.75 billion');
+  });
+});
+
+describe('a congestion charge', () => {
+  it('costs cameras on each road in, and pays in what drivers pay, a year of weekdays', () => {
+    const charge = {
+      kind: 'charge' as const,
+      name: 'Donji grad',
+      area: [
+        { x: 0, z: 0 },
+        { x: 100, z: 0 },
+        { x: 100, z: 100 },
+      ],
+      euros: 3,
+      from: 420,
+      to: 1140,
+    };
+    expect(editCost(charge, undefined, undefined, () => 40).build).toBe(
+      CHARGE_SYSTEM + 40 * CHARGE_GATE,
+    );
+    const budget = new Budget();
+    budget.chargesPaid(0, 7 * 3600);
+    budget.chargesPaid(1000, 8 * 3600);
+    const year = 1000 * CHARGE_DAYS * (1 - CHARGE_RUNNING);
+    expect(budget.balance).toBeCloseTo(BASE_INCOME + year);
+    expect(budget.yearly.charges).toBeCloseTo(year);
+    // Charges are paid in as drivers pay them, not again over the day.
+    budget.tick(7 * 3600);
+    budget.yearly.base = 0;
+    budget.tick(9 * 3600);
+    expect(budget.balance).toBeCloseTo(BASE_INCOME + year);
+    // A new engine counts from nothing again.
+    budget.chargesPaid(10, 9 * 3600);
+    expect(budget.balance).toBeCloseTo(BASE_INCOME + year);
   });
 });

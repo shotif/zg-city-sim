@@ -110,6 +110,18 @@ fn main() {
     let seed: u64 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(1);
 
     let mut engine = engine_for(root, seed);
+    // POLICY=file: congestion charges (M18), with public transport's riders, as the charges
+    // move car trips to it.
+    let policies = run::policy_edits();
+    if !policies.is_empty() {
+        let districts = run::load_districts(&format!("{root}/demand"));
+        engine.start_riders((!districts.is_empty()).then_some(&districts[..]));
+        println!(
+            "policies: {} of {} applied",
+            engine.set_edits(&policies),
+            policies.len()
+        );
+    }
     let edges = place_edges(&engine.net);
     engine.set_time(((from - 1) * 3600) as f64);
     for _ in 0..(3600.0 / DT) as u32 {

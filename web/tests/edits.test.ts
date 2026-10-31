@@ -255,3 +255,41 @@ describe('edits', () => {
     expect(await decodeEditsFromUrl(encoded)).toEqual(loaded);
   });
 });
+
+describe('a congestion charge', () => {
+  const index = new RoadIndex(junction());
+  const charge: Edit = {
+    kind: 'charge',
+    name: 'Donji grad',
+    area: [
+      { x: 80, z: -20 },
+      { x: 120, z: -20 },
+      { x: 120, z: 20 },
+      { x: 80, z: 20 },
+    ],
+    euros: 3,
+    from: 420,
+    to: 1140,
+  };
+
+  it('becomes the records the engine reads, with the roads into its area drawn', () => {
+    const { resolved, missing } = resolveEdits(index, [charge]);
+    expect(missing).toEqual([]);
+    expect(resolved[0].edges).toEqual([0]);
+    const words = editWords(resolved);
+    expect(words.length).toBe(4 * 5);
+    expect([words[0], words[1], words[2]]).toEqual([12, 4, 420 | (1140 << 16)]);
+    expect(new Float32Array(words.buffer)[3]).toBe(3);
+    expect([words[4], new Float32Array(words.buffer)[6]]).toEqual([13, 80]);
+    // Out of range: not sent.
+    expect(resolveEdits(index, [{ ...charge, euros: 80 }]).missing).toHaveLength(1);
+  });
+
+  it('is saved, described and replaced by another charge on the same area', () => {
+    expect(parseEdits(serializeEdits([charge]))).toEqual([charge]);
+    expect(describeEdit(charge)).toBe('Congestion charge on Donji grad: €3 from 07:00 to 19:00');
+    const dearer = { ...charge, euros: 5 };
+    expect(withEdit([charge], dearer)).toEqual([dearer]);
+    expect(editCost(charge, undefined, undefined, () => 1).build).toBeGreaterThan(0);
+  });
+});

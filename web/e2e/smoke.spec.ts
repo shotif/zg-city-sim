@@ -1250,3 +1250,42 @@ test("shows Zagreb's weather, and drives and looks as the weather picked", async
 
   expect(errors).toEqual([]);
 });
+
+test('charges for driving into Donji grad, and drivers pay it', async ({ page }, testInfo) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.goto('./?speed=16');
+  await page.waitForFunction(
+    () => window.__ZG__?.sim?.ready === true && window.__ZG__?.charges !== undefined,
+    null,
+    { timeout: 150_000 },
+  );
+  // €5 all day on Donji grad (the Build panel's Policies).
+  await page.keyboard.press('b');
+  await page.getByLabel('Charge').selectOption('5');
+  await page.getByLabel('Hours').selectOption({ label: 'All day' });
+  await page.getByRole('button', { name: 'Donji grad', exact: true }).click();
+  await expect(page.locator('.build-list li')).toContainText('Congestion charge on Donji grad: €5');
+  // Cameras on the roads into it, and the system: a few million euros.
+  const spent = await page.evaluate(() => window.__ZG__!.budget!.budget.spent);
+  expect(spent).toBeGreaterThan(2_000_000);
+  expect(spent).toBeLessThan(40_000_000);
+  // Cars and lorries pay it as they drive in.
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__!.sim!.stats![23] ?? 0), {
+      timeout: 180_000,
+      intervals: [5_000],
+    })
+    .toBeGreaterThan(0);
+  await expect(page.locator('.build-draw p').last()).toContainText('Paid so far today');
+  await page.evaluate(() => window.__ZG__?.lookAt(250, 500, 4000));
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: testInfo.outputPath('charge.png') });
+
+  expect(errors).toEqual([]);
+});

@@ -7,6 +7,7 @@ import {
   type FrequencyEdit,
   type JunctionRef,
   type LineEdit,
+  type ChargeEdit,
   type ResolvedEdit,
   type TransitMatch,
   decodeEditsFromUrl,
@@ -88,6 +89,8 @@ import {
 } from './world/transitLines';
 import { ProjectsSection } from './ui/projectsSection';
 import { junctionName } from './edit/signals';
+import { roadsInto } from './edit/policies';
+import { ChargeSection } from './ui/chargeSection';
 import { RoadDrawer } from './ui/roadDrawer';
 import { BuildingLayer, buildingCentres, loadBuildings } from './world/buildingLayer';
 import {
@@ -98,7 +101,7 @@ import {
   placeClosures,
   zagrebNow,
 } from './world/closures';
-import { DrawLayer, EDIT_COLORS, EditLayer } from './world/editLayer';
+import { AreaLayer, DrawLayer, EDIT_COLORS, EditLayer } from './world/editLayer';
 import { WorldFrame } from './world/frame';
 import type { HeightFn } from './world/roadGeometry';
 import { RoadLayer } from './world/roadLayer';
@@ -352,6 +355,8 @@ export interface DebugApi {
   drawn?: { roads: number[][]; problems: BuiltNetwork['problems'] };
   /** The tool for drawing roads. */
   drawer?: RoadDrawer;
+  /** The congestion charge in the Build panel (M18a). */
+  charges?: ChargeSection;
   /** The ground point under a screen point (CSS pixels in the canvas). */
   groundAt?(x: number, y: number): { x: number; z: number } | undefined;
   /** The Zones tool, once the lots are loaded. */
@@ -415,6 +420,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
    * engine says how far new lines run; the roads (tracks) new lines' stops go on. */
   let changeEdits: (change: (list: Edit[]) => Edit[]) => void = () => {};
   let refreshCosts = () => {};
+  /** The congestion charge's section of the Build panel, once built (M18a). */
+  let chargeSection: ChargeSection | undefined;
   let stopRoadsNow: ((mode: LineMode) => RoadIndex) | undefined;
   /** Trains, pedestrians and cyclists drawn (M8e). */
   const shown = new Set<Shown>(['trains', 'pedestrians', 'bikes']);
@@ -795,7 +802,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
         const route = isNew ? timetable.newRoute(line, mode) : timetable.routeIndex(line, mode);
         return route === undefined ? undefined : timetable.km(route);
       };
-      const costs = (list: readonly Edit[]) => editsCost(list, hasLights, lineKm);
+      // A congestion charge's cameras stand on the roads into its area (M18a).
+      const gates = (charge: ChargeEdit) => roadsInto(current.net, charge.area).length;
+      const costs = (list: readonly Edit[]) => editsCost(list, hasLights, lineKm, gates);
       const stopIndexes = new WeakMap<RoadNetwork, Map<LineMode, RoadIndex>>();
       const stopRoads = (mode: LineMode): RoadIndex => {
         const byMode = stopIndexes.get(current.net) ?? new Map<LineMode, RoadIndex>();
@@ -837,6 +846,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
       scene.add(layer.object);
       const drawLayer = new DrawLayer(surface);
       scene.add(drawLayer.object);
+      const areaLayer = new AreaLayer(surface);
+      scene.add(areaLayer.object);
       let resolved: ResolvedEdit[] = [];
       const redraw = () => {
         const groups: { edges: number[]; color: number; width?: number }[] = (
@@ -856,6 +867,11 @@ export async function startApp(container: HTMLElement): Promise<void> {
           groups.push({ color: EDIT_COLORS.selected, edges: [selected], width: 8 });
         }
         layer.show(groups);
+        areaLayer.show(
+          edits.flatMap((e) =>
+            e.kind === 'charge' ? [{ points: e.area, color: EDIT_COLORS.charge }] : [],
+          ),
+        );
         invalidate();
       };
       /** The network loaded with these roads and junctions (built once per list). */
@@ -1015,6 +1031,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const drawer = new RoadDrawer(panel.drawSlot, {
         onDrawing: (on) => {
           if (on) panel.select(undefined);
+          if (on && charges.active) charges.cancel();
           invalidate();
         },
         onPoints: (points) => {
@@ -1024,6 +1041,27 @@ export async function startApp(container: HTMLElement): Promise<void> {
         onRoad: (road) => tryNetworkEdit(road),
       });
       debug.drawer = drawer;
+      // Policies (M18a): a congestion charge on an area.
+      const charges = new ChargeSection(panel.drawSlot, {
+        onDrawing: (on) => {
+          if (on) panel.select(undefined);
+          if (on && drawer.active) drawer.cancel();
+          invalidate();
+        },
+        onPoints: (points) => {
+          drawLayer.show(points);
+          invalidate();
+        },
+        onCharge: (charge) => {
+          const list = withEdit(edits, charge);
+          const unpaid = budgetTool.afford(costs(list).build);
+          if (unpaid) return unpaid;
+          apply(list);
+          return undefined;
+        },
+      });
+      debug.charges = charges;
+      chargeSection = charges;
       if (projects.length) {
         new ProjectsSection(panel.element, projects, project?.id, {
           onOpen: (id) => location.assign(projectUrl(location.href, id)),
@@ -1055,9 +1093,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
         if (!panel.visible || !down || event.button !== 0) return;
         const moved = Math.hypot(event.offsetX - down.x, event.offsetY - down.y);
         if (moved > 6 || performance.now() - down.t > 600) return;
-        if (drawer.active) {
+        if (drawer.active || charges.active) {
           const p = groundAt(event.offsetX, event.offsetY);
-          if (p) drawer.addPoint(p);
+          if (p) (drawer.active ? drawer : charges).addPoint(p);
           return;
         }
         const edge = pickAt(event.offsetX, event.offsetY);
@@ -1711,6 +1749,15 @@ export async function startApp(container: HTMLElement): Promise<void> {
               if (running.cur) {
                 zoning?.tick(running.cur.time);
                 budgetTool.tick(running.cur.time);
+                // Congestion charges paid (M18a).
+                const s = running.stats;
+                const paid = s?.[STAT.chargesPaid] ?? 0;
+                budgetTool.chargesPaid(paid, running.cur.time);
+                chargeSection?.setPaid(
+                  paid,
+                  s?.[STAT.chargePayers] ?? 0,
+                  edits.some((e) => e.kind === 'charge'),
+                );
               }
             };
             running.onEdgeSpeeds = (latest) => {

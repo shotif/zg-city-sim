@@ -23,6 +23,7 @@ export const EDIT_COLORS: Record<Exclude<Edit['kind'], 'frequency' | 'line'> | '
     road: 0x12a4a0,
     roundabout: 0x12a4a0,
     signal: 0x2fbf71,
+    charge: 0x9b59d0,
   };
 
 /** Roads changed by edits, and the road being edited, drawn over the map. */
@@ -113,5 +114,49 @@ export class DrawLayer {
     lines.frustumCulled = false;
     lines.renderOrder = 5;
     this.object.add(lines);
+  }
+}
+
+/** Areas of policies in force (M18): their outlines over the ground. */
+export class AreaLayer {
+  readonly object = new THREE.Group();
+
+  constructor(private readonly height: HeightFn) {
+    this.object.name = 'areas';
+  }
+
+  show(areas: readonly { points: readonly { x: number; z: number }[]; color: number }[]): void {
+    for (const child of [...this.object.children]) {
+      this.object.remove(child);
+      if (child instanceof LineSegments2) {
+        child.geometry.dispose();
+        (child.material as THREE.Material).dispose();
+      }
+    }
+    for (const { points, color } of areas) {
+      const positions: number[] = [];
+      // Each side in steps of 40 m at most, so the outline follows the ground.
+      for (let i = 0; i < points.length; i++) {
+        const [a, b] = [points[i], points[(i + 1) % points.length]];
+        const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 40));
+        for (let k = 0; k < steps; k++) {
+          for (const f of [k / steps, (k + 1) / steps]) {
+            const x = a.x + (b.x - a.x) * f;
+            const z = a.z + (b.z - a.z) * f;
+            positions.push(x, this.height(x, z) + LIFT + 1, z);
+          }
+        }
+      }
+      if (positions.length === 0) continue;
+      const geometry = new LineSegmentsGeometry();
+      geometry.setPositions(new Float32Array(positions));
+      const lines = new LineSegments2(
+        geometry,
+        new THREE.Line2NodeMaterial({ color, linewidth: 4, worldUnits: false }),
+      );
+      lines.frustumCulled = false;
+      lines.renderOrder = 4;
+      this.object.add(lines);
+    }
   }
 }

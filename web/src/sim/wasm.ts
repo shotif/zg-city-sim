@@ -88,6 +88,10 @@ export const STAT = {
   bikes: 21,
   /** How late the trams and buses running are on average (s; M10b). */
   transitLate: 22,
+  /** Since the start: congestion charges paid (€) and the cars and lorries that paid them
+   * (M18a). */
+  chargesPaid: 23,
+  chargePayers: 24,
 } as const;
 
 /** Words per vehicle slot in the render buffer and what they hold (engine::write_render). */

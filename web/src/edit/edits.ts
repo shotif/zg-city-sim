@@ -1,6 +1,6 @@
 /**
  * The edit model: changes to the road network the player makes (M4a), to how often public
- * transport lines run (M9b) and new lines (M9c), kept as a list.
+ * transport lines run (M9b), new lines (M9c) and congestion charges (M18a), kept as a list.
  *
  * Edits name roads by a point on them and their heading, not by edge id: CI rebuilds the
  * network from newer OpenStreetMap data on every deploy, and ids change with it. A saved or
@@ -17,6 +17,7 @@ import {
 } from './builder';
 import { FREQUENCIES, MODE_NAME, type Mode, frequencyLabel } from '../world/transitLines';
 import { type LineMode, type LineStop, lineWords, placeStops } from './lines';
+import { type AreaPoint, MAX_AREA_POINTS, clock, roadsInto } from './policies';
 import type { RoadIndex } from './roadIndex';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
@@ -68,6 +69,8 @@ export type Edit =
   | FrequencyEdit
   /** A new public transport line. */
   | LineEdit
+  /** A congestion charge on an area (M18a). */
+  | ChargeEdit
   /** A new road, a junction made a roundabout, a junction's traffic lights as the player
    * sets them (edit/builder.ts): built into the network before the other edits apply. */
   | RoadEdit
@@ -80,6 +83,20 @@ export interface FrequencyEdit {
   mode: Mode;
   factor: number;
 }
+
+/** A congestion charge (M18a): `euros` for each car or lorry driving into the area named
+ * `name` from `from` to `to` (minutes after midnight). Buses, trams and bikes don't pay. */
+export interface ChargeEdit {
+  kind: 'charge';
+  name: string;
+  area: AreaPoint[];
+  euros: number;
+  from: number;
+  to: number;
+}
+
+/** Charges the engine takes (€; sim/src/policy.rs `CHARGE_RANGE`). */
+export const CHARGE_RANGE = [0, 50] as const;
 
 /** A new bus or tram line: its stops in order, and back again in reverse where `both`; a
  * trip from the first stop every `headway` seconds from `first` to `last` (s after
@@ -123,6 +140,8 @@ const KIND = {
   green: 6,
   frequency: 7,
   priority: 11,
+  charge: 12,
+  areaPoint: 13,
 } as const;
 /** Headways (s) and hours a new line may have (sim/src/transit.rs `LINE_HEADWAY`). */
 export const LINE_HEADWAY = [120, 7200] as const;
@@ -187,6 +206,16 @@ function resolveEdit(
       );
       const record = ways.flatMap((w) => lineWords(route, edit.mode, edit, w.placed));
       return { edit, edges: [], record, ways: ways.map((w) => w.stops) };
+    }
+    case 'charge': {
+      const n = edit.area.length;
+      const [lo, hi] = CHARGE_RANGE;
+      if (n < 3 || n > MAX_AREA_POINTS || !(edit.euros >= lo && edit.euros <= hi)) return undefined;
+      const hours = (edit.from & 0xffff) | ((edit.to & 0xffff) << 16);
+      const record = [KIND.charge, n, hours >>> 0, floatBits(edit.euros)];
+      for (const p of edit.area) record.push(KIND.areaPoint, 0, floatBits(p.x), floatBits(p.z));
+      // Drawn: the roads into the area, where its cameras stand.
+      return { edit, edges: roadsInto(index.net, edit.area), record };
     }
     case 'frequency': {
       const route = transit?.route(edit.line, edit.mode);
@@ -276,6 +305,8 @@ export function sameTarget(a: Edit, b: Edit): boolean {
       return a.line === (b as typeof a).line && a.mode === (b as typeof a).mode;
     case 'line':
       return a.name === (b as typeof a).name && a.mode === (b as typeof a).mode;
+    case 'charge':
+      return a.name === (b as typeof a).name;
     case 'road': {
       const q = (b as typeof a).points;
       return a.points.length === q.length && a.points.every((p, i) => near(p, q[i]));
@@ -313,6 +344,8 @@ export function describeEdit(edit: Edit): string {
       return `${edit.junction.name ?? 'Signals'}: priority for trams and buses`;
     case 'frequency':
       return `${MODE_NAME[edit.mode]} ${edit.line}: ${frequencyLabel(edit.factor).toLowerCase()}`;
+    case 'charge':
+      return `Congestion charge on ${edit.name}: €${edit.euros} from ${clock(edit.from)} to ${clock(edit.to)}`;
     case 'line': {
       const ends = `${edit.stops[0]?.name ?? ''} - ${edit.stops.at(-1)?.name ?? ''}`;
       const every = Math.round((edit.headway / 60) * 10) / 10;
@@ -386,6 +419,8 @@ function compact(edit: Edit): Edit {
       return { ...edit, points: edit.points.map((p) => ({ x: round(p.x), z: round(p.z) })) };
     case 'frequency':
       return edit;
+    case 'charge':
+      return { ...edit, area: edit.area.map((p) => ({ x: Math.round(p.x), z: Math.round(p.z) })) };
     case 'line':
       return {
         ...edit,
@@ -414,6 +449,7 @@ const KINDS = new Set([
   'signal',
   'frequency',
   'line',
+  'charge',
 ]);
 
 /** Edits from a saved list; throws if it is not one. Unknown kinds are dropped. */
@@ -468,6 +504,23 @@ export function parseEdits(text: string): Edit[] {
         );
       case 'roundabout':
         return isJunction(e.junction) && (e.lanes === 1 || e.lanes === 2);
+      case 'charge':
+        return (
+          typeof e.name === 'string' &&
+          Array.isArray(e.area) &&
+          e.area.length >= 3 &&
+          e.area.length <= MAX_AREA_POINTS &&
+          e.area.every((p) => Number.isFinite(p?.x) && Number.isFinite(p?.z)) &&
+          Number.isFinite(e.euros) &&
+          e.euros >= CHARGE_RANGE[0] &&
+          e.euros <= CHARGE_RANGE[1] &&
+          Number.isInteger(e.from) &&
+          Number.isInteger(e.to) &&
+          e.from >= 0 &&
+          e.from <= 1440 &&
+          e.to >= 0 &&
+          e.to <= 1440
+        );
       case 'line':
         return (
           typeof e.name === 'string' &&

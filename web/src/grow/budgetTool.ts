@@ -56,6 +56,11 @@ export class BudgetTool {
     this.show();
   }
 
+  /** Congestion charges paid in the engine so far (€) at simulated time `now` (M18a). */
+  chargesPaid(total: number, now: number): void {
+    this.budget.chargesPaid(total, now);
+  }
+
   /** Simulated time now (s). */
   tick(now: number): void {
     const minute = Math.floor(now / 60);

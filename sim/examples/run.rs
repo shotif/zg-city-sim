@@ -331,6 +331,46 @@ pub fn frequency_edits(engine: &Engine, factor: f32) -> Vec<Edit> {
         .collect()
 }
 
+/// Policies from the file `POLICY` names (M18), if set: a line per policy, `#` for comments.
+/// `charge 3 07:00 19:00 x,z x,z x,z ...`: €3 for driving into the area with those corners
+/// (scene coordinates, m) from 07:00 to 19:00.
+pub fn policy_edits() -> Vec<Edit> {
+    let Ok(path) = std::env::var("POLICY") else {
+        return Vec::new();
+    };
+    let text = std::fs::read_to_string(&path).expect("read POLICY");
+    let clock = |s: &str| -> f32 {
+        let (h, m) = s.split_once(':').unwrap_or((s, "0"));
+        (h.parse::<f32>().expect("hour") * 60.0 + m.parse::<f32>().expect("minute")) * 60.0
+    };
+    let mut edits = Vec::new();
+    for line in text.lines().map(str::trim) {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if words.is_empty() || words[0].starts_with('#') {
+            continue;
+        }
+        match words[0] {
+            "charge" if words.len() >= 7 => {
+                let area = words[4..]
+                    .iter()
+                    .map(|p| {
+                        let (x, z) = p.split_once(',').expect("x,z");
+                        (x.parse().expect("x"), z.parse().expect("z"))
+                    })
+                    .collect();
+                edits.push(Edit::Charge(zg_sim::policy::Charge {
+                    area,
+                    euros: words[1].parse().expect("euros"),
+                    from: clock(words[2]),
+                    to: clock(words[3]),
+                }));
+            }
+            _ => panic!("POLICY: cannot read {line:?}"),
+        }
+    }
+    edits
+}
+
 /// Signal priority for trams and buses (M10b): `which` is `all` (every signal a tram or bus
 /// crosses) or routes (the timetable's indices, comma-separated: tram 6 is 5).
 pub fn priority_edits(engine: &mut Engine, which: &str) -> Vec<Edit> {
@@ -901,6 +941,12 @@ fn main() {
         let priority = priority_edits(&mut engine, &which);
         println!("priority for trams and buses at {} signals", priority.len());
         edits.extend(priority);
+    }
+    // POLICY=file: congestion charges (M18).
+    let policies = policy_edits();
+    if !policies.is_empty() {
+        println!("policies: {}", policies.len());
+        edits.extend(policies);
     }
     if !edits.is_empty() {
         let applied = engine.set_edits(&edits);

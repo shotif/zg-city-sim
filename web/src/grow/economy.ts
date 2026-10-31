@@ -60,7 +60,7 @@
  * weekdays a year as above.
  */
 import type { Point } from '../edit/builder';
-import type { Edit } from '../edit/edits';
+import type { ChargeEdit, Edit } from '../edit/edits';
 import type { Mode, Riders } from '../world/transitLines';
 import { ARCHETYPES, type Grown, NET_AREA, heights, occupants } from './growth';
 
@@ -99,6 +99,15 @@ export const PRIORITY_UPKEEP = 600;
 export const VEHICLE_KM: Record<Mode, number> = { tram: 7.0, bus: 4.9, train: 0 };
 export const SERVICE_DAYS: Record<Mode, number> = { tram: 244, bus: 308, train: 0 };
 export const FARE = 0.21;
+/** A congestion charge (M18a): cameras on each road into its area (€100,000 a road) and a
+ * system to run it (€2 million), estimates; running costs take 30 % of what is paid
+ * (Stockholm's about 7 %, Milan's Area C about a third); paid on 250 weekdays a year. */
+export const CHARGE_GATE = 100_000;
+export const CHARGE_SYSTEM = 2_000_000;
+export const CHARGE_RUNNING = 0.3;
+export const CHARGE_DAYS = 250;
+/** Roads into a charge's area (`edit/policies.ts` `roadsInto`). */
+export type Gates = (edit: ChargeEdit) => number;
 
 /** Fares a year from the boardings the edits gain (lose, negative): by route, its mode
  * (`modeOf`; none: left out). */
@@ -167,16 +176,24 @@ export interface EditCost {
 }
 
 /** What an edit costs to build (€), its upkeep a year and its service a year. */
-export function editCost(edit: Edit, hasLights: HasLights = () => true, lineKm?: LineKm): EditCost {
-  return { service: 0, ...buildAndUpkeep(edit, hasLights, lineKm) };
+export function editCost(
+  edit: Edit,
+  hasLights: HasLights = () => true,
+  lineKm?: LineKm,
+  gates?: Gates,
+): EditCost {
+  return { service: 0, ...buildAndUpkeep(edit, hasLights, lineKm, gates) };
 }
 
 function buildAndUpkeep(
   edit: Edit,
   hasLights: HasLights,
   lineKm?: LineKm,
+  gates?: Gates,
 ): { build: number; upkeep: number; service?: number } {
   switch (edit.kind) {
+    case 'charge':
+      return { build: CHARGE_SYSTEM + CHARGE_GATE * (gates?.(edit) ?? 0), upkeep: 0 };
     case 'frequency': {
       const km = lineKm?.(edit.line, edit.mode, false) ?? 0;
       const service = (edit.factor - 1) * km * SERVICE_DAYS[edit.mode] * VEHICLE_KM[edit.mode];
@@ -218,10 +235,11 @@ export function editsCost(
   edits: readonly Edit[],
   hasLights?: HasLights,
   lineKm?: LineKm,
+  gates?: Gates,
 ): EditCost {
   const sum: EditCost = { build: 0, upkeep: 0, service: 0 };
   for (const e of edits) {
-    const c = editCost(e, hasLights, lineKm);
+    const c = editCost(e, hasLights, lineKm, gates);
     sum.build += c.build;
     sum.upkeep += c.upkeep;
     sum.service += c.service;
@@ -239,6 +257,10 @@ export interface Yearly {
   service: number;
   /** Fares from riders gained (lost, negative) by public transport edits. */
   fares: number;
+  /** Congestion charges less running costs: the last simulated day's, a year of weekdays
+   * (M18a). Paid into the balance as drivers pay them (`Budget.chargesPaid`), not by
+   * `tick`. */
+  charges: number;
 }
 
 export interface SavedBudget {
@@ -265,7 +287,17 @@ export class Budget {
   /** Cost of the edits in force, as paid. */
   spent: number;
   readonly history: [number, number][];
-  yearly: Yearly = { base: BASE_INCOME, tax: 0, fee: 0, upkeep: 0, service: 0, fares: 0 };
+  yearly: Yearly = {
+    base: BASE_INCOME,
+    tax: 0,
+    fee: 0,
+    upkeep: 0,
+    service: 0,
+    fares: 0,
+    charges: 0,
+  };
+  /** Congestion charges paid in the engine so far (€), and when (s), over the last day. */
+  private paid: [number, number][] = [];
   /** Communal contributions paid since the page was opened. */
   contributions = 0;
   private last?: number;
@@ -291,6 +323,20 @@ export class Budget {
   setSpent(total: number): void {
     this.balance -= total - this.spent;
     this.spent = total;
+  }
+
+  /** Drivers have paid `total` euros of congestion charges in the engine so far, at
+   * simulated time `now`: what they paid since stands for a year of weekdays, less running
+   * costs (M18a). */
+  chargesPaid(total: number, now: number): void {
+    const last = this.paid.at(-1);
+    if (last && (total < last[1] || now < last[0])) this.paid = [];
+    const prev = this.paid.at(-1);
+    if (prev) this.balance += (total - prev[1]) * CHARGE_DAYS * (1 - CHARGE_RUNNING);
+    this.paid.push([now, total]);
+    while (this.paid.length > 2 && this.paid[1][0] <= now - 86_400) this.paid.shift();
+    const first = this.paid[0];
+    this.yearly.charges = (total - first[1]) * CHARGE_DAYS * (1 - CHARGE_RUNNING);
   }
 
   /** A building finished: its communal contribution. */
