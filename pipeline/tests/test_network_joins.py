@@ -127,3 +127,19 @@ def test_joins_sharing_a_node_are_merged():
     trams = [["1", "2", "5"]]
     splits = [["2", "7"], ["8", "9"]]
     assert merge_joins(trams, splits) == [["1", "2", "5", "7"], ["8", "9"]]
+
+
+def test_a_small_loop_is_not_joined_into_one_junction(tmp_path: Path):
+    # A one-way loop of four junctions, three pieces of it 2 m long and the fourth 30 m,
+    # with a road into each junction: joining them would leave the long piece running from
+    # the joined junction back to itself.
+    net = tmp_path / "net.xml"
+    parts = [node("1", 0, 0), node("2", 2, 0), node("3", 2, 30), node("4", 0, 30)]
+    parts += [node(f"x{i}", 100 * i, -100) for i in range(1, 5)]
+    parts += [piece("a", "1", "2", 2), piece("b", "2", "3", 2)]
+    parts += [piece("c", "3", "4", 2), piece("d", "4", "1", 30)]
+    parts += [piece(f"in{i}", f"x{i}", str(i), 100) for i in range(1, 5)]
+    net.write_text("<net>" + "".join(parts) + "</net>")
+    joined = tmp_path / "joined.xml"
+    joined.write_text("<nodes>\n</nodes>\n")
+    assert split_joins(net, joined) == []

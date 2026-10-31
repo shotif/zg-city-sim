@@ -499,7 +499,8 @@ def split_joins(net_file: Path, join_output: Path) -> list[list[str]]:
     across the lanes of the first carriageway. Road junctions where three or more roads
     meet, joined by a road piece shorter than `SPLIT_JOIN_PIECE`, are joined into one,
     unless the group is larger than `SPLIT_JOIN_MAX` junctions or `SPLIT_JOIN_RADIUS`
-    across, or holds a level crossing. Tracks count among the roads. Returns the OSM node
+    across, holds a level crossing or part of a roundabout, or two of its junctions are
+    also joined by a longer road or track. Tracks count among the roads. Returns the OSM node
     lists to join."""
     clusters = read_clusters(join_output)
     net = parse_net(net_file)
@@ -508,17 +509,23 @@ def split_joins(net_file: Path, join_output: Path) -> list[list[str]]:
     where = {j.id: (j.x, j.z) for j in net.junctions}
     neighbours: dict[str, set[str]] = {}
     short: list[tuple[str, str]] = []
+    long: list[tuple[str, str]] = []
+    ring: set[str] = set()
     for edge in net.edges:
         if edge.internal:
             continue
+        if edge.id in net.roundabout_edges:
+            ring.update((edge.from_node, edge.to_node))
         # Tracks count among the ways meeting at a junction: where a road crosses tram
         # tracks between the carriageways, that crossing is a junction of the group.
         a, b = edge.from_node, edge.to_node
         neighbours.setdefault(a, set()).add(b)
         neighbours.setdefault(b, set()).add(a)
         lanes = [net.lanes[lane] for lane in edge.lanes]
-        drivable = any(lane.allow & road for lane in lanes)
-        if drivable and max(lane.length for lane in lanes) < SPLIT_JOIN_PIECE:
+        length = max(lane.length for lane in lanes)
+        if length >= SPLIT_JOIN_PIECE:
+            long.append((a, b))
+        elif any(lane.allow & road for lane in lanes):
             short.append((a, b))
     parent: dict[str, str] = {}
 
@@ -535,6 +542,13 @@ def split_joins(net_file: Path, join_output: Path) -> list[list[str]]:
     groups: dict[str, list[str]] = {}
     for j in linked:
         groups.setdefault(find(j), []).append(j)
+    # A longer road or track between two junctions of a group would join a junction to
+    # itself (netconvert crashes on a small loop joined whole); roundabouts stay as built.
+    for a, b in long:
+        if a in linked and b in linked and find(a) == find(b):
+            groups.pop(find(a), None)
+    for j in ring & linked:
+        groups.pop(find(j), None)
     joins = []
     for members in groups.values():
         types = {kind.get(j, "") for j in members}
@@ -582,9 +596,8 @@ def network_key(pbf: Path, extra: str = "") -> str:
     """Cache key of a network built from this OSM extract (and a project's `extra`)."""
     text = pbf.name + json.dumps(NETCONVERT_OPTIONS) + f"roads {ROADS_VERSION}"
     text += f" tram joins {TRAM_JOIN_DIST}"
-    text += (
-        f" split joins {SPLIT_JOIN_PIECE} {SPLIT_JOIN_MAX} {SPLIT_JOIN_RADIUS} {SPLIT_JOIN_SIGNALS}"
-    )
+    text += f" split joins 2 {SPLIT_JOIN_PIECE} {SPLIT_JOIN_MAX} {SPLIT_JOIN_RADIUS}"
+    text += f" {SPLIT_JOIN_SIGNALS}"
     text += extra
     return hashlib.sha1(text.encode()).hexdigest()[:10]
 
