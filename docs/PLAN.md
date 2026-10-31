@@ -117,6 +117,7 @@ Known gaps:
 - Drawn roads join other roads only at their ends, and the junctions they make have no signals until the player sets some (a road joining a signalled junction gets a phase there). The tram lines planned on Jarunski most and Sarajevska cesta are not built.
 - Junctions with tram or rail tracks through them cannot be made roundabouts, and a roundabout's ring is a fixed template (14 m radius with one lane, 18 m with two, larger where roads meet at sharp angles), not drawn by the player.
 - A project's numbers come from the morning peak only, with today as the mean of two runs; more runs, and the afternoon, would narrow the noise.
+- A congestion charge (M18a) cuts traffic into Donji grad about twice as much as charges did in London, Stockholm and Milan: every driver counts €1 as 225 s, so nearly all through traffic goes round, and trips are not dropped, retimed or sent elsewhere.
 
 **Plan (M4 Build, 2026-10-06).** Netconvert builds the network offline and cannot run in the browser, so edits take their own path: the engine changes the arrays it already has (lanes, links, signal programs, the routing graph) while it runs. Steps, each pushed to `main` when it works:
 
@@ -652,11 +653,23 @@ Known gaps:
 - Its income and costs go into the budget, and Before and after shows what it does.
 
 The policies' effects and costs are estimates, and the plan says from what. Each step is pushed to `main` when it works.
-- **M18a, congestion charge.** An area and a charge in euros, paid by cars and lorries each time they drive into the area during the charging hours (07:00-19:00 by default). Buses, trams and bikes don't pay.
-  - In the engine, the roads into the area are found from the junctions inside it. Car and lorry routes count the charge on them while it applies, and the hierarchy is customised again when the hours start and end.
-  - In the split, zone pairs with one end inside count half the charge on each leg, as a round trip into the area pays once. It is weighted by the share of the day's trips within the hours.
-  - Income is the charges paid on the simulated weekday, 250 weekdays a year (an estimate). Costs are cameras on every road in, and running costs as a share of the income, from the cities that charge.
-  - The native runs take policies from a file (`POLICY=file.json`). Checked with a day run against Stockholm, London and Milan, where a charge of a few euros cut traffic into the area by 15-30 %.
+- **M18a, congestion charge** (done 2026-10-31). An area and a charge in euros, paid by cars and lorries each time they drive into the area during the charging hours (07:00-19:00 by default). Buses, trams and bikes don't pay.
+  - The engine (`sim/src/policy.rs`) finds the roads into the area from the junctions inside it. Junctions within 40 m of the area's edge count as outside it, so the roads along the edge are free (`EDGE_FREE`), as London's ring road was. Car and lorry routes count the charge on the roads in while it applies (`Successor::charge`, 225 s a euro), and the hierarchy is customised again when the hours start and end. Payers are counted as they drive onto a road in.
+  - The split with public transport counts half the charge on each leg of trips between a zone inside the area and one outside, weighted by the share of the day's trips within the hours (`Riders::set_extra`).
+  - In the app, the Build panel's Congestion charge sets the charge (€1-20) and its hours, then puts it on Donji grad or on an area drawn on the map. Donji grad is the City's district from its register, simplified: 3.0 km², with 28 roads in for cars. The area and its roads in are drawn on the map, the charge is listed with the other edits, and the panel shows what has been paid today.
+  - The budget pays for the cameras (€100,000 a road in) and the system (€2 million). It counts what is paid on the simulated weekday as 250 weekdays a year, less 30 % running costs (estimates; Milan's Area C kept about two thirds of what it took).
+  - The native runs take policies from a file (`POLICY=file`), and `day.json` reports what was paid.
+  - Checked with day runs at 80 % on today's network: €3 on Donji grad from 07:00 to 19:00, seeds 1 and 2, against M16c's seeds 1 and 2 (a run with no charge matches M16c's exactly).
+    - Cars and lorries driving into the area from 07:00 to 19:00: 41,300-42,300 (95,500-96,000), 56-57 % fewer. They paid €123,500-126,300 a day, 41,200-42,100 drivers. At €6 (seed 1): 33,800, 65 % fewer, paying €201,600.
+    - 5,566 car trips a day move to public transport (11,008 at €6). The rest of the fall is through traffic going round the area: Ulica Vjekoslava Heinzela carries 5,300-6,100 more vehicles in the hours (8,300-8,400), Ulica grada Vukovara 2,400-3,300 more, and the steep streets above Gornji grad (Tuškanac, Streljačka ulica, Jurjevska ulica, Cmrok, Mlinarska cesta) about twice their traffic.
+    - Over the whole network: 6,737 and 8,412 vehicles removed (6,839-6,979), 89,400 and 103,500 vehicle-hours queued (89,600-91,000). The queues clear by night.
+    - The first runs, before the edge was free, charged drivers going along Vlaška ulica and Ilica and through Kvaternikov trg, where the district's edge runs down the street: 53 % fewer then.
+  - Against the cities that charge, the fall is about twice as large: London's first year had 18 % fewer vehicles entering, Stockholm more than 20 % less car traffic into the centre, and Milan 28.5 % fewer private vehicles. Reasons, as far as the runs show:
+    - Donji grad is small (3.0 km², against Milan's 8.2 km² and Stockholm's 24 km²), and about half the cars driving into it are passing through.
+    - Every driver counts €1 as 225 s and knows every way round, so nearly all through traffic goes round, some of it over residential streets.
+    - Nobody drops a trip, goes at another time or goes elsewhere because of the charge. Only the split with public transport moves trips.
+  - Income at €3: about €21.6 million a year after running costs, for €4.8 million of cameras and system (Milan's Area C took about €20 million in 2012).
+  - Open: drivers who weigh money differently (as M15d tried for tolls) would keep some through traffic paying.
 - **M18b, parking surcharge.** Areas with a surcharge per hour on today's parking prices (the City's parking zones are not open data). Car trips to the area pay it for an estimated stay, and the split counts half of it on each leg. Income comes from the stays of the car trips that still end there.
 - **M18c, lorry ban.** Lorries may not cross the area's edge, except to reach or leave places inside it. Lorry routes count an hour for every crossing, so through lorries go round and deliveries still get in.
 
@@ -787,7 +800,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M15 Roads into the City** | Routes count fuel, so of two close ways drivers take the shorter: the roads from Dugo Selo, Sveta Nedelja and Lekenik fit their counts, 22-24 of 47 stations within ±25 %; drivers who weigh money differently tried and left out (done) |
 | **M16 Traffic within the City** | The City's junctions and corridors checked locally against its traffic studies' counts and GPS speeds on the bridges (their numbers not committed). Trams go with the traffic beside them, drivers sort into lanes earlier and go round full roundabouts, tram crossings no longer split junctions, and trips within the City are as long as Zagreb's. The counted junctions pass more, the bridges slow in the GPS data's order, and 21-26 of 47 stations are within ±25 % (done) |
 | **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: tried and left out, as joined crossings passed less and their guessed signals held up more (closed) |
-| **M18 Policies** | A congestion charge, parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget |
+| **M18 Policies** | A congestion charge (done: M18a), parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget |
 | **M19 Career mode** | Reality for analysis and Career with goals (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots |
 | **M20 Services** | Schools and health centres that growing districts need, placed by the player, with trips to them and their running costs |
 
