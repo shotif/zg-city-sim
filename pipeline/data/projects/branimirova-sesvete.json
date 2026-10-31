@@ -1,97 +1,97 @@
 {
- "computed": "2026-10-15",
+ "computed": "2026-10-31",
  "fromHour": 6,
  "hours": 4,
  "demandScale": 0.8,
  "totals": {
   "today": {
-   "delayHours": 20162.7,
-   "vehicleKm": 3603976.5,
-   "arrived": 201312.5,
-   "tripMinutes": 21.55
+   "delayHours": 28405.2,
+   "vehicleKm": 3811352.0,
+   "arrived": 198146.5,
+   "tripMinutes": 24.94
   },
   "project": {
-   "delayHours": 20437.6,
-   "vehicleKm": 3600403,
-   "arrived": 201513,
-   "tripMinutes": 21.61
+   "delayHours": 28047.7,
+   "vehicleKm": 3815771,
+   "arrived": 197865,
+   "tripMinutes": 24.85
   }
  },
  "perHour": [
   {
    "hour": 6,
    "delayHours": [
-    4377.799999999999,
-    4171.7
+    5186.6,
+    5123.3
    ],
    "vehicleKm": [
-    913574.0,
-    914316
+    950516.5,
+    953325
    ],
    "arrived": [
-    47710.0,
-    47962
+    46421.0,
+    46461
    ],
    "tripMinutes": [
-    19.945,
-    19.78
+    21.615,
+    21.63
    ]
   },
   {
    "hour": 7,
    "delayHours": [
-    5843.35,
-    5870.5
+    7792.05,
+    7785.1
    ],
    "vehicleKm": [
-    980789.5,
-    975686
+    1025836.0,
+    1024085
    ],
    "arrived": [
-    52731.5,
-    52417
+    51388.5,
+    51094
    ],
    "tripMinutes": [
-    22.310000000000002,
-    22.22
+    25.0,
+    24.8
    ]
   },
   {
    "hour": 8,
    "delayHours": [
-    5402.549999999999,
-    5709.6
+    8285.45,
+    7994.1
    ],
    "vehicleKm": [
-    894510.5,
-    893130
+    951879.0,
+    957462
    ],
    "arrived": [
-    51222.5,
-    50728
+    50306.5,
+    50644
    ],
    "tripMinutes": [
-    23.14,
-    23.16
+    27.225,
+    27.13
    ]
   },
   {
    "hour": 9,
    "delayHours": [
-    4538.9,
-    4685.8
+    7140.950000000001,
+    7145.2
    ],
    "vehicleKm": [
-    815102.5,
-    817271
+    883120.5,
+    880899
    ],
    "arrived": [
-    49648.5,
-    50406
+    50030.5,
+    49666
    ],
    "tripMinutes": [
-    20.625,
-    21.14
+    25.68,
+    25.6
    ]
   }
  ],
@@ -99,107 +99,107 @@
   "perHour": [
    {
     "hour": 7,
-    "mean": 0.0246
+    "mean": -0.0063
    },
    {
     "hour": 8,
-    "mean": -0.0071
+    "mean": -0.0018
    },
    {
     "hour": 9,
-    "mean": 0.0449
+    "mean": 0.0431
    },
    {
     "hour": 10,
-    "mean": 0.0026
+    "mean": -0.0052
    }
   ],
-  "mean": 0.0149,
+  "mean": 0.0054,
   "faster": [
-   {
-    "from": "Zaprešić",
-    "to": "Sesvete",
-    "today": 2196,
-    "project": 2018
-   },
    {
     "from": "Gornja Dubrava",
     "to": "Sesvete",
-    "today": 755,
-    "project": 696
+    "today": 759,
+    "project": 683
    },
    {
-    "from": "Zaprešić",
-    "to": "Dugo Selo",
-    "today": 2507,
-    "project": 2342
+    "from": "Stenjevec",
+    "to": "Sesvete",
+    "today": 1892,
+    "project": 1756
+   },
+   {
+    "from": "Donja Dubrava",
+    "to": "Sesvete",
+    "today": 708,
+    "project": 667
    }
   ],
   "slower": [
    {
     "from": "Sesvete",
     "to": "Trnje",
-    "today": 1272,
-    "project": 1424
-   },
-   {
-    "from": "Trešnjevka – jug",
-    "to": "Sesvete",
-    "today": 1647,
-    "project": 1776
+    "today": 1406,
+    "project": 1597
    },
    {
     "from": "Sesvete",
-    "to": "Stenjevec",
-    "today": 1636,
-    "project": 1751
+    "to": "Novi Zagreb – istok",
+    "today": 1229,
+    "project": 1321
+   },
+   {
+    "from": "Sesvete",
+    "to": "Zaprešić",
+    "today": 1864,
+    "project": 1986
    }
   ]
  },
  "roads": [
   {
    "name": "Ulica kneza Branimira",
-   "today": 2933,
-   "project": 8558
+   "today": 3401,
+   "project": 9323
   },
   {
    "name": "Varaždinska cesta",
-   "today": 4320,
-   "project": 1922
-  },
-  {
-   "name": "Zagrebačka obilaznica",
-   "today": 25492,
-   "project": 27261
+   "today": 4480,
+   "project": 2248
   },
   {
    "name": "Zagrebačka cesta",
-   "today": 5916,
-   "project": 4430
+   "today": 6398,
+   "project": 4882
+  },
+  {
+   "name": "Zagrebačka obilaznica",
+   "today": 26550,
+   "project": 27641
   },
   {
    "name": "Vugrovečka cesta",
-   "today": 1107,
-   "project": 2258
+   "today": 1097,
+   "project": 2121
   },
   {
    "name": "Varaždinska ulica",
-   "today": 2283,
-   "project": 1457
+   "today": 2395,
+   "project": 1767
   },
   {
-   "name": "Sesvetska cesta",
-   "today": 1296,
-   "project": 1719
+   "name": "Bjelovarska ulica",
+   "today": 1400,
+   "project": 1815
   },
   {
    "name": "Kašinska cesta",
-   "today": 788,
-   "project": 1206
+   "today": 761,
+   "project": 1146
   }
  ],
  "noise": {
-  "delay": 0.0607,
-  "travel": 0.04
+  "delay": 0.0089,
+  "travel": 0.0421
  }
 }

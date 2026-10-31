@@ -3615,6 +3615,43 @@ fn drivers_sort_into_lanes_before_a_long_road_ends_in_lanes_that_split() {
 }
 
 #[test]
+fn trips_from_the_city_go_further() {
+    // Homes on the first of twenty roads 1 km long in a row, jobs on every one. Commutes
+    // from a street in the City lose attractiveness with distance to `CITY_POWER`, not 1
+    // (M16c), so they go further; the City's streets are told by their district.
+    let mut b = Builder::default();
+    let j: Vec<u32> = (0..=20)
+        .map(|k| b.junction(k as f32 * 1_000.0, 0.0))
+        .collect();
+    let roads: Vec<u32> = (0..20).map(|k| b.road(j[k], j[k + 1], 1, 13.9)).collect();
+    let net = b.build();
+    let mut home = vec![0.0; 20];
+    home[0] = 1.0;
+    let work = vec![1.0; 20];
+    let mean_km = |district: &[u8]| {
+        let mut demand = Demand::new(&net, roads.clone(), &home, &work, 1_000.0);
+        demand.city_edge = crate::demand::city_edges(&roads, district, net.edge_count());
+        let mut rng = Rng::new(3);
+        let (mut sum, mut n) = (0.0, 0);
+        for _ in 0..4_000 {
+            if let Some((o, d)) = demand.draw_commute(&mut rng) {
+                sum += d.abs_diff(o) as f64;
+                n += 1;
+            }
+        }
+        sum / n as f64
+    };
+    // District 1 is outside the City (the largest value); the first road is in district 0.
+    let mut in_city = vec![1u8; 20];
+    in_city[0] = 0;
+    let (city, town) = (mean_km(&in_city), mean_km(&[1u8; 20]));
+    assert!(
+        city > 1.3 * town,
+        "{city:.1} km from the City, {town:.1} km from a town"
+    );
+}
+
+#[test]
 fn regional_traffic_across_the_map_s_edge_stays_regional() {
     // A road leaves the map 2 km from a town and 24 km from a city with 20 times its jobs
     // and homes. On a regional road, much of the traffic coming in stops in the town; on a

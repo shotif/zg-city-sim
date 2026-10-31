@@ -49,6 +49,12 @@ const CANDIDATES: usize = 8;
 const TRIP_CANDIDATES: usize = 128;
 const TRIP_DECAY: f32 = 10_000.0;
 const TRIP_POWER: f32 = 1.0;
+/// Trips from the City lose attractiveness with distance to this power instead (M16c): at
+/// 1 they were short (4.7 km in a straight line on average, 29 % within 2 km of home),
+/// where the survey's car trips within the City take about half an hour, and the City's
+/// counted junctions passed a third to a half of their counts. At 0.5 they pass 0.37-0.70,
+/// with 0.8 % of trips removed from gridlock over a day (0.45 % at 1).
+pub const CITY_POWER: f32 = 0.5;
 /// Candidates for traffic across the map's edge on other roads: with 8, drawn from the
 /// whole map's jobs and homes, a regional road's traffic at Zabok nearly all headed for
 /// Zagreb, 25 km on.
@@ -188,9 +194,10 @@ pub struct Demand {
     pub candidates: usize,
     /// Trips home drawn as commutes driven back (M13), not from jobs to homes near them.
     pub mirror_home: bool,
-    /// Per demand edge, the power of distance its trips' destinations lose attractiveness
-    /// by, where it differs from `power` (empty: `power` everywhere).
-    pub origin_power: Vec<f32>,
+    /// Whether each edge (by id) is in the City, whose trips' destinations lose
+    /// attractiveness with distance to `city_power` instead of `power` (M16c; empty: none).
+    pub city_edge: Vec<bool>,
+    pub city_power: f32,
     hourly_sum: f32,
     acc: f64,
     gateways: Vec<Gateway>,
@@ -302,6 +309,25 @@ fn pick(weights: [f32; 3], rng: &mut Rng) -> usize {
     2
 }
 
+/// The City's edges by id (M16c), from each demand edge's district (`demandDistrict`: the
+/// City's districts, then one value, the largest, for the streets outside it). Empty when
+/// the arrays do not match or every street has the same value.
+pub fn city_edges(edges: &[u32], district: &[u8], edge_count: usize) -> Vec<bool> {
+    let (Some(&outside), Some(&least)) = (district.iter().max(), district.iter().min()) else {
+        return Vec::new();
+    };
+    if district.len() != edges.len() || outside == least {
+        return Vec::new();
+    }
+    let mut city = vec![false; edge_count];
+    for (&e, &d) in edges.iter().zip(district) {
+        if (e as usize) < edge_count && d != outside {
+            city[e as usize] = true;
+        }
+    }
+    city
+}
+
 fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
     ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
 }
@@ -356,7 +382,8 @@ impl Demand {
             power: TRIP_POWER,
             candidates: TRIP_CANDIDATES,
             mirror_home: true,
-            origin_power: Vec::new(),
+            city_edge: Vec::new(),
+            city_power: CITY_POWER,
             hourly_sum: HOURLY.iter().sum(),
             acc: 0.0,
             gateways: Vec::new(),
@@ -438,7 +465,8 @@ impl Demand {
             (&self.any_cum, &self.any_alias)
         };
         let o = sample(from_cum, rng)?;
-        let power = self.origin_power.get(o).copied().unwrap_or(self.power);
+        let in_city = self.city_edge.get(self.edges[o] as usize) == Some(&true);
+        let power = if in_city { self.city_power } else { self.power };
         Some(
             self.near(self.pos[o], o, to, self.decay, power, self.candidates, rng)
                 .map(|d| (o, d)),

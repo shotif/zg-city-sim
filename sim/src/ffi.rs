@@ -9,7 +9,7 @@
 use std::sync::Mutex;
 
 use crate::cch::{RoutingGraph, order_words};
-use crate::demand::{Demand, Gateway};
+use crate::demand::{Demand, Gateway, city_edges};
 use crate::edits::Edit;
 use crate::engine::{DT, Engine, LanePiece, RENDER_STRIDE, Trip, stat};
 use crate::network::{Network, NetworkData};
@@ -193,8 +193,12 @@ pub extern "C" fn zg_build(seed: u32, daily_trips: f64) -> i32 {
             && s.demand_home.len() == s.demand_edges.len()
             && s.demand_work.len() == s.demand_edges.len()
         {
+            let city = city_edges(&s.demand_edges, &s.demand_district, net.edge_count());
             let edges = std::mem::take(&mut s.demand_edges);
-            Demand::new(&net, edges, &s.demand_home, &s.demand_work, daily_trips)
+            let mut demand = Demand::new(&net, edges, &s.demand_home, &s.demand_work, daily_trips);
+            // Trips from the City go further (M16c).
+            demand.city_edge = city;
+            demand
         } else {
             Demand::from_network(&net, daily_trips)
         };

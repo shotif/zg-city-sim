@@ -480,7 +480,11 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
                 "demand: {} edges, {residents:.0} residents, {daily:.0} car trips a day",
                 d.edges.len()
             );
+            // The City's streets, whose trips go further (M16c).
+            let city =
+                zg_sim::demand::city_edges(&d.edges, &load_districts(demand_dir), net.edge_count());
             let mut demand = Demand::new(net, d.edges, &d.home, &d.work, daily);
+            demand.city_edge = city;
             // GRAVITY_KM=4, GRAVITY_POWER=1 and CANDIDATES=128: the distance decay of trips
             // within the map, its power of distance and the candidates destinations are
             // chosen from, to calibrate (M13).
@@ -496,24 +500,10 @@ pub fn demand_for(net: &Network, demand_dir: &str, trips: f64) -> Demand {
             }
             // NO_MIRROR_HOME=1: trips home from jobs to homes near them, as before M13.
             demand.mirror_home = std::env::var("NO_MIRROR_HOME").is_err();
-            // CITY_POWER=0: the power of distance for trips from the town with the most
-            // homes (the City) alone, to calibrate (M16c).
+            // CITY_POWER=1: the power of distance for trips from the City, to calibrate
+            // (M16c; 0.5 calibrated).
             if let Some(city_power) = env("CITY_POWER") {
-                let towns = load_towns(demand_dir);
-                let mut homes = std::collections::HashMap::new();
-                for (&t, &h) in towns.iter().zip(&d.home) {
-                    *homes.entry(t).or_insert(0.0f32) += h;
-                }
-                if let Some((&city, _)) = homes
-                    .iter()
-                    .filter(|&(&t, _)| t != u16::MAX)
-                    .max_by(|a, b| a.1.total_cmp(b.1))
-                {
-                    demand.origin_power = towns
-                        .iter()
-                        .map(|&t| if t == city { city_power } else { demand.power })
-                        .collect();
-                }
+                demand.city_power = city_power;
             }
             // GATEWAY_LOCAL_KM=10: another decay for traffic across the map's edge on roads
             // other than motorways, to calibrate.
