@@ -430,12 +430,7 @@ def tram_joins(net_file: Path, join_output: Path) -> list[list[str]]:
     junction within `TRAM_JOIN_DIST` of a road junction's area (its outline's convex hull)
     is joined into the nearest such road junction, with the OSM nodes netconvert joined
     into that junction. Returns the node lists to join."""
-    clusters: dict[str, list[str]] = {}
-    for line in join_output.read_text().splitlines():
-        line = line.strip()
-        if line.startswith("<join nodes="):
-            nodes = line.split('"')[1].split()
-            clusters[cluster_id(nodes)] = nodes
+    clusters = read_clusters(join_output)
     net = parse_net(net_file)
     tram, road = VCLASS_BITS["tram"], VCLASS_BITS["passenger"] | VCLASS_BITS["bus"]
     allow: dict[str, int] = {}
@@ -471,6 +466,113 @@ def tram_joins(net_file: Path, join_output: Path) -> list[list[str]]:
     return [clusters.get(roads[r].id, [roads[r].id]) + sorted(ids) for r, ids in into.items()]
 
 
+#: Road junctions joined by a road piece shorter than this (m), too short for a car to wait
+#: on, are one junction split in parts and are joined (`split_joins`, M17).
+SPLIT_JOIN_PIECE = 7.5
+#: At most this many junctions are joined into one, all within this distance (m) of their
+#: middle; larger groups are interchanges and complexes of junctions, left as they are.
+SPLIT_JOIN_MAX = 6
+SPLIT_JOIN_RADIUS = 40.0
+#: Whether groups with a signalled junction are joined too (into one signalled junction).
+SPLIT_JOIN_SIGNALS = True
+
+
+def read_clusters(join_output: Path) -> dict[str, list[str]]:
+    """The OSM nodes netconvert joined into each junction, by the junction's id."""
+    clusters: dict[str, list[str]] = {}
+    for line in join_output.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("<join nodes="):
+            nodes = line.split('"')[1].split()
+            clusters[cluster_id(nodes)] = nodes
+    return clusters
+
+
+def split_joins(net_file: Path, join_output: Path) -> list[list[str]]:
+    """Junctions to join where netconvert left one junction in parts.
+
+    Netconvert leaves apart junctions a few metres from each other where joining them
+    would bring two roads in side by side, as where a bus lane mapped as a road of its own
+    runs beside a carriageway. The crossing of a dual carriageway is then two or more
+    junctions joined by road pieces under a metre long (Avenija Marina Držića at Lastovska
+    ulica), and a driver giving way at the far half stands with its tail in the near one,
+    across the lanes of the first carriageway. Road junctions where three or more roads
+    meet, joined by a road piece shorter than `SPLIT_JOIN_PIECE`, are joined into one,
+    unless the group is larger than `SPLIT_JOIN_MAX` junctions or `SPLIT_JOIN_RADIUS`
+    across, or holds a level crossing. Tracks count among the roads. Returns the OSM node
+    lists to join."""
+    clusters = read_clusters(join_output)
+    net = parse_net(net_file)
+    road = VCLASS_BITS["passenger"]
+    kind = {j.id: j.type for j in net.junctions}
+    where = {j.id: (j.x, j.z) for j in net.junctions}
+    neighbours: dict[str, set[str]] = {}
+    short: list[tuple[str, str]] = []
+    for edge in net.edges:
+        if edge.internal:
+            continue
+        # Tracks count among the ways meeting at a junction: where a road crosses tram
+        # tracks between the carriageways, that crossing is a junction of the group.
+        a, b = edge.from_node, edge.to_node
+        neighbours.setdefault(a, set()).add(b)
+        neighbours.setdefault(b, set()).add(a)
+        lanes = [net.lanes[lane] for lane in edge.lanes]
+        drivable = any(lane.allow & road for lane in lanes)
+        if drivable and max(lane.length for lane in lanes) < SPLIT_JOIN_PIECE:
+            short.append((a, b))
+    parent: dict[str, str] = {}
+
+    def find(a: str) -> str:
+        while parent.get(a, a) != a:
+            a = parent[a]
+        return a
+
+    linked: set[str] = set()
+    for a, b in short:
+        if a != b and len(neighbours[a]) >= 3 and len(neighbours[b]) >= 3:
+            parent[find(a)] = find(b)
+            linked.update((a, b))
+    groups: dict[str, list[str]] = {}
+    for j in linked:
+        groups.setdefault(find(j), []).append(j)
+    joins = []
+    for members in groups.values():
+        types = {kind.get(j, "") for j in members}
+        if len(members) > SPLIT_JOIN_MAX or "rail_crossing" in types or "rail_signal" in types:
+            continue
+        if not SPLIT_JOIN_SIGNALS and any(t.startswith("traffic_light") for t in types):
+            continue
+        x = sum(where[j][0] for j in members) / len(members)
+        z = sum(where[j][1] for j in members) / len(members)
+        if any(
+            (where[j][0] - x) ** 2 + (where[j][1] - z) ** 2 > SPLIT_JOIN_RADIUS**2 for j in members
+        ):
+            continue
+        joins.append(sorted(n for j in members for n in clusters.get(j, [j])))
+    return sorted(joins)
+
+
+def merge_joins(*lists: list[list[str]]) -> list[list[str]]:
+    """Node lists to join, with lists that share a node merged into one."""
+    parent: dict[str, str] = {}
+
+    def find(a: str) -> str:
+        while parent.get(a, a) != a:
+            a = parent[a]
+        return a
+
+    for joins in lists:
+        for nodes in joins:
+            for n in nodes:
+                parent.setdefault(n, n)
+            for n in nodes[1:]:
+                parent[find(n)] = find(nodes[0])
+    merged: dict[str, list[str]] = {}
+    for n in parent:
+        merged.setdefault(find(n), []).append(n)
+    return sorted(sorted(nodes) for nodes in merged.values())
+
+
 def write_joins(joins: list[list[str]], path: Path) -> None:
     lines = [f'    <join nodes="{" ".join(nodes)}"/>' for nodes in joins]
     path.write_text("<nodes>\n" + "\n".join(lines) + "\n</nodes>\n")
@@ -479,14 +581,19 @@ def write_joins(joins: list[list[str]], path: Path) -> None:
 def network_key(pbf: Path, extra: str = "") -> str:
     """Cache key of a network built from this OSM extract (and a project's `extra`)."""
     text = pbf.name + json.dumps(NETCONVERT_OPTIONS) + f"roads {ROADS_VERSION}"
-    text += f" tram joins {TRAM_JOIN_DIST}" + extra
+    text += f" tram joins {TRAM_JOIN_DIST}"
+    text += (
+        f" split joins {SPLIT_JOIN_PIECE} {SPLIT_JOIN_MAX} {SPLIT_JOIN_RADIUS} {SPLIT_JOIN_SIGNALS}"
+    )
+    text += extra
     return hashlib.sha1(text.encode()).hexdigest()[:10]
 
 
 def build_sumo_network() -> Path:
     """Cached SUMO network for the current OSM extract and netconvert options, built twice:
     the second time with tram-only junctions joined into the road junctions around them
-    (`tram_joins`, written next to it for the projects to use)."""
+    (`tram_joins`) and junctions split in parts joined (`split_joins`), written next to it
+    for the projects to use."""
     pbf = fetch_osm()
     net_file = CACHE_DIR / "network" / f"zagreb_{network_key(pbf)}.net.xml.gz"
     joins = junction_joins_file(net_file)
@@ -499,9 +606,10 @@ def build_sumo_network() -> Path:
     first = net_file.with_name("first-" + net_file.name)
     joined = net_file.with_name("joined-" + joins.name)
     run_netconvert(roads, first, join_output=joined)
-    found = tram_joins(first, joined)
-    log.info("joining tram junctions into %d road junctions", len(found))
-    write_joins(found, joins)
+    trams, splits = tram_joins(first, joined), split_joins(first, joined)
+    log.info("joining tram junctions into %d road junctions", len(trams))
+    log.info("joining %d junctions split in parts", len(splits))
+    write_joins(merge_joins(trams, splits), joins)
     run_netconvert(roads, net_file, joins=joins)
     first.unlink()
     joined.unlink()
@@ -509,7 +617,7 @@ def build_sumo_network() -> Path:
 
 
 def junction_joins_file(net_file: Path) -> Path:
-    """The joins (`tram_joins`) the network was built with."""
+    """The joins (`tram_joins`, `split_joins`) the network was built with."""
     return net_file.with_name(net_file.name.split(".")[0] + ".joins.nod.xml")
 
 

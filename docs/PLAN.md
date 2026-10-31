@@ -636,6 +636,9 @@ Known gaps:
   - crossings of dual carriageways split into two junctions, such as Avenija Marina Držića at Lastovska ulica;
   - Zabok's roundabouts, which jam on some afternoons.
 
+**Plan (M17 Junctions in parts, chosen 2026-10-31).** Netconvert joins OpenStreetMap's nodes within 15 m of each other into one junction, but not where joining them would bring two roads in side by side. It refused 509 such groups, 317 of them for parallel roads in, such as a bus lane mapped as a road of its own beside a carriageway (Avenija Marina Držića at Lastovska ulica). A crossing of a dual carriageway is then two to six junctions joined by road pieces under a metre long, and drivers giving way stand inside one junction waiting for the next (M16e). In M16c's day runs, junctions joined by road pieces shorter than 7.5 m (a car and its gap) hold up about 30,000 of the 90,000 vehicle-hours queued at junctions a day. About 12,000 of them are where every part gives way, and 16,000 where one part is signalled. M17 joins them in the network build, as M7d joined the tram junctions. Each step is checked with day runs at 80 % on four seeds, against the counts and M16's local checks, and pushed to `main` when it holds.
+- **M17a, junctions in parts joined** (in progress). Road junctions where three or more roads or tracks meet, joined by a road piece shorter than 7.5 m, are joined into one (`split_joins`). Groups of more than six junctions, or more than 40 m across, are left alone (interchanges), and so are groups with a level crossing. That makes 1,273 groups where every part gives way, and 50 with a signalled part, which become one signalled junction. The two are tried apart, first on two seeds.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.
@@ -762,6 +765,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M14 Route choice** | The A1's toll plaza at Lučko cleared and regional traffic across the map's edge kept regional: 20-21 of 47 stations within ±25 %, less gridlock; speeds as built and trips beyond the edge tried and left out (done) |
 | **M15 Roads into the City** | Routes count fuel, so of two close ways drivers take the shorter: the roads from Dugo Selo, Sveta Nedelja and Lekenik fit their counts, 22-24 of 47 stations within ±25 %; drivers who weigh money differently tried and left out (done) |
 | **M16 Traffic within the City** | The City's junctions and corridors checked locally against its traffic studies' counts and GPS speeds on the bridges (their numbers not committed). Trams go with the traffic beside them, drivers sort into lanes earlier and go round full roundabouts, tram crossings no longer split junctions, and trips within the City are as long as Zagreb's. The counted junctions pass more, the bridges slow in the GPS data's order, and 21-26 of 47 stations are within ±25 % (done) |
+| **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: the crossings of dual carriageways above all |
 
 ## Risks and open questions
 
