@@ -5065,7 +5065,7 @@ fn cars_and_lorries_pay_the_charge_and_bikes_do_not() {
 
 #[test]
 fn charges_round_trip_through_records_and_count_half_on_each_leg_of_the_split() {
-    use crate::policy::{Charge, Policies, SECONDS_PER_EURO, inside};
+    use crate::policy::{Charge, Policies, SECONDS_PER_EURO, inside, within};
     let charge = Charge {
         area: square(0.0, 0.0, 1000.0),
         euros: 4.0,
@@ -5086,6 +5086,9 @@ fn charges_round_trip_through_records_and_count_half_on_each_leg_of_the_split() 
 
     assert!(inside(&charge.area, (10.0, -10.0)));
     assert!(!inside(&charge.area, (1500.0, 0.0)));
+    // Junctions along the edge are free: 30 m inside it is not in the area, 50 m is.
+    assert!(inside(&charge.area, (970.0, 0.0)) && !within(&charge.area, (970.0, 0.0)));
+    assert!(within(&charge.area, (0.0, -950.0)));
     // Most of the day's trips start between 07:00 and 19:30.
     let share = charge.day_share();
     assert!(share > 0.7 && share < 0.9, "{share}");

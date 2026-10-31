@@ -17,7 +17,7 @@ import {
 } from './builder';
 import { FREQUENCIES, MODE_NAME, type Mode, frequencyLabel } from '../world/transitLines';
 import { type LineMode, type LineStop, lineWords, placeStops } from './lines';
-import { type AreaPoint, MAX_AREA_POINTS, clock, roadsInto } from './policies';
+import { type AreaPoint, MAX_AREA_POINTS, hoursText, roadsInto } from './policies';
 import type { RoadIndex } from './roadIndex';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
@@ -345,7 +345,7 @@ export function describeEdit(edit: Edit): string {
     case 'frequency':
       return `${MODE_NAME[edit.mode]} ${edit.line}: ${frequencyLabel(edit.factor).toLowerCase()}`;
     case 'charge':
-      return `Congestion charge on ${edit.name}: €${edit.euros} from ${clock(edit.from)} to ${clock(edit.to)}`;
+      return `Congestion charge on ${edit.name}: €${edit.euros} ${hoursText(edit.from, edit.to)}`;
     case 'line': {
       const ends = `${edit.stops[0]?.name ?? ''} - ${edit.stops.at(-1)?.name ?? ''}`;
       const every = Math.round((edit.headway / 60) * 10) / 10;

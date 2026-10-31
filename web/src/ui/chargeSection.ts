@@ -1,5 +1,12 @@
 import { CHARGE_RANGE, type ChargeEdit } from '../edit/edits';
-import { AREA_PRESETS, type AreaPoint, MAX_AREA_POINTS, areaOf, clock } from '../edit/policies';
+import {
+  AREA_PRESETS,
+  type AreaPoint,
+  MAX_AREA_POINTS,
+  areaOf,
+  clock,
+  hoursText,
+} from '../edit/policies';
 import { button, el } from './buildPanel';
 
 /** Charges on offer (€). */
@@ -48,8 +55,9 @@ export class ChargeSection {
     el('h3', 'build-count', this.element).textContent = 'Congestion charge';
     el('p', 'build-note', this.element).textContent =
       'Cars and lorries pay each time they drive into the area while it applies; buses, ' +
-      'trams and bikes do not. Drivers count €1 as about 4 minutes, so some go round the ' +
-      'area and some trips into it move to trams and buses.';
+      'trams and bikes do not, and roads along its edge are free. Drivers count €1 as ' +
+      'about 4 minutes, so through traffic goes round the area and some trips into it move ' +
+      'to trams and buses.';
     const options = el('div', 'build-row', this.element);
     const select = (label: string, values: [string, string][]) => {
       const wrap = el('label', 'build-label', options);
@@ -195,8 +203,7 @@ export class ChargeSection {
       to: hours.to,
     });
     this.status.textContent =
-      problem ??
-      `€${euros} for driving into ${name} from ${clock(hours.from)} to ${clock(hours.to)}.`;
+      problem ?? `€${euros} for driving into ${name} ${hoursText(hours.from, hours.to)}.`;
     return problem === undefined;
   }
 }

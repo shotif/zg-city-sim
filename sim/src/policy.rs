@@ -1,9 +1,11 @@
 //! Policies on areas the player draws (M18): a congestion charge for driving into an area.
 //!
 //! An area is a polygon in scene coordinates (x east, z south, metres). Its junctions are
-//! those whose position is inside it, and the roads into it are the edges from a junction
-//! outside to one inside. A charge is paid by cars and lorries each time they drive onto a
-//! road into the area during its hours; buses, trams and bikes do not pay.
+//! those whose position is inside it and more than `EDGE_FREE` from its edge, and the roads
+//! into it are the edges from a junction outside to one inside. Roads along the edge are
+//! free, as an area drawn along streets would otherwise charge some of their junctions and
+//! not others. A charge is paid by cars and lorries each time they drive onto a road into
+//! the area during its hours; buses, trams and bikes do not pay.
 //!
 //! It works through the simulation in two ways. Routes count the charge as time, at the
 //! €16 an hour behind the tolls and fuel (`SECONDS_PER_EURO`), so through traffic goes round
@@ -22,6 +24,10 @@ pub const SECONDS_PER_EURO: f32 = 225.0;
 pub const CHARGE_RANGE: (f32, f32) = (0.0, 50.0);
 /// Most points an area may have.
 pub const MAX_POINTS: usize = 256;
+/// Junctions within this distance of an area's edge (m) count as outside it, so the roads
+/// along the edge are free, as London's Inner Ring Road was (an area drawn along a street
+/// is within about 25 m of its middle).
+pub const EDGE_FREE: f32 = 40.0;
 
 /// Whether `p` is inside the polygon `points` (even-odd rule).
 pub fn inside(points: &[(f32, f32)], p: (f32, f32)) -> bool {
@@ -40,6 +46,30 @@ pub fn inside(points: &[(f32, f32)], p: (f32, f32)) -> bool {
         j = i;
     }
     is_in
+}
+
+/// Distance from `p` to the nearest side of the polygon `points` (m).
+pub fn distance_to_edge(points: &[(f32, f32)], p: (f32, f32)) -> f32 {
+    let mut best = f32::INFINITY;
+    let n = points.len();
+    for i in 0..n {
+        let (a, b) = (points[i], points[(i + 1) % n]);
+        let (dx, dz) = (b.0 - a.0, b.1 - a.1);
+        let len2 = dx * dx + dz * dz;
+        let t = if len2 > 0.0 {
+            (((p.0 - a.0) * dx + (p.1 - a.1) * dz) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        best = best.min((p.0 - a.0 - t * dx).hypot(p.1 - a.1 - t * dz));
+    }
+    best
+}
+
+/// Whether a junction at `p` is in the area `points`: inside it and more than `EDGE_FREE`
+/// from its edge.
+pub fn within(points: &[(f32, f32)], p: (f32, f32)) -> bool {
+    inside(points, p) && distance_to_edge(points, p) > EDGE_FREE
 }
 
 /// A congestion charge on an area: `euros` for driving into it between `from` and `to`
@@ -70,12 +100,12 @@ impl Charge {
         let mut share = 0.0;
         for (h, &w) in HOURLY.iter().enumerate() {
             let (a, b) = (h as f32 * 3600.0, (h + 1) as f32 * 3600.0);
-            let within = if self.from <= self.to {
+            let part = if self.from <= self.to {
                 overlap(a, b, self.from, self.to)
             } else {
                 overlap(a, b, self.from, 86_400.0) + overlap(a, b, 0.0, self.to)
             };
-            share += w * within / 3600.0;
+            share += w * part / 3600.0;
         }
         if total > 0.0 { share / total } else { 0.0 }
     }
@@ -107,10 +137,16 @@ impl Policies {
         let mut entries = Vec::with_capacity(charges.len());
         let mut by_edge = Vec::new();
         for (c, charge) in charges.iter().enumerate() {
+            let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+            for &(x, z) in &charge.area {
+                (lo, hi) = ((lo.0.min(x), lo.1.min(z)), (hi.0.max(x), hi.1.max(z)));
+            }
             let is_in: Vec<bool> = (0..n_junctions)
                 .map(|j| {
                     let p = (net.d.junction_pos[2 * j], net.d.junction_pos[2 * j + 1]);
-                    inside(&charge.area, p)
+                    (lo.0..=hi.0).contains(&p.0)
+                        && (lo.1..=hi.1).contains(&p.1)
+                        && within(&charge.area, p)
                 })
                 .collect();
             let mut roads = Vec::new();

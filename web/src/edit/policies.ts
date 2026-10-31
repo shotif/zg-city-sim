@@ -52,6 +52,9 @@ export const AREA_PRESETS: readonly { name: string; area: readonly AreaPoint[] }
 
 /** Most points an area may have (sim/src/policy.rs `MAX_POINTS`). */
 export const MAX_AREA_POINTS = 256;
+/** Junctions within this distance of an area's edge (m) count as outside it, so the roads
+ * along the edge are free (sim/src/policy.rs `EDGE_FREE`). */
+export const EDGE_FREE = 40;
 
 /** Whether `p` is inside the polygon `area` (even-odd rule, as the engine decides it). */
 export function inside(area: readonly AreaPoint[], p: AreaPoint): boolean {
@@ -66,6 +69,27 @@ export function inside(area: readonly AreaPoint[], p: AreaPoint): boolean {
   return area.length >= 3 && isIn;
 }
 
+/** Distance from `p` to the nearest side of the polygon `area` (m). */
+export function distanceToEdge(area: readonly AreaPoint[], p: AreaPoint): number {
+  let best = Infinity;
+  for (let i = 0; i < area.length; i++) {
+    const a = area[i];
+    const b = area[(i + 1) % area.length];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len2 = dx * dx + dz * dz;
+    const t = len2 > 0 ? Math.min(1, Math.max(0, ((p.x - a.x) * dx + (p.z - a.z) * dz) / len2)) : 0;
+    best = Math.min(best, Math.hypot(p.x - a.x - t * dx, p.z - a.z - t * dz));
+  }
+  return best;
+}
+
+/** Whether a junction at `p` is in the area: inside it and more than `EDGE_FREE` from its
+ * edge, as the engine decides it. */
+export function within(area: readonly AreaPoint[], p: AreaPoint): boolean {
+  return inside(area, p) && distanceToEdge(area, p) > EDGE_FREE;
+}
+
 /** Area of a polygon (m²). */
 export function areaOf(area: readonly AreaPoint[]): number {
   let twice = 0;
@@ -75,12 +99,18 @@ export function areaOf(area: readonly AreaPoint[]): number {
   return Math.abs(twice) / 2;
 }
 
-/** Roads cars may drive into the area by: edges from a junction outside it to one inside. */
+/** Roads cars may drive into the area by: edges from a junction outside it (or along its
+ * edge) to one inside. */
 export function roadsInto(net: RoadNetwork, area: readonly AreaPoint[]): number[] {
   const n = net.junctionPos.length / 2;
   const isIn = new Uint8Array(n);
+  let [x0, z0, x1, z1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const p of area) {
+    [x0, z0, x1, z1] = [Math.min(x0, p.x), Math.min(z0, p.z), Math.max(x1, p.x), Math.max(z1, p.z)];
+  }
   for (let j = 0; j < n; j++) {
-    isIn[j] = inside(area, { x: net.junctionPos[2 * j], z: net.junctionPos[2 * j + 1] }) ? 1 : 0;
+    const p = { x: net.junctionPos[2 * j], z: net.junctionPos[2 * j + 1] };
+    isIn[j] = p.x >= x0 && p.x <= x1 && p.z >= z0 && p.z <= z1 && within(area, p) ? 1 : 0;
   }
   const roads: number[] = [];
   for (let e = 0; e < net.edgeFrom.length; e++) {
@@ -91,6 +121,11 @@ export function roadsInto(net: RoadNetwork, area: readonly AreaPoint[]): number[
     if (cars) roads.push(e);
   }
   return roads;
+}
+
+/** "from 07:00 to 19:00", or "all day", for a policy's hours (minutes after midnight). */
+export function hoursText(from: number, to: number): string {
+  return to - from >= 1440 ? 'all day' : `from ${clock(from)} to ${clock(to)}`;
 }
 
 /** "07:00" for minutes after midnight. */

@@ -262,10 +262,10 @@ describe('a congestion charge', () => {
     kind: 'charge',
     name: 'Donji grad',
     area: [
-      { x: 80, z: -20 },
-      { x: 120, z: -20 },
-      { x: 120, z: 20 },
-      { x: 80, z: 20 },
+      { x: 30, z: -50 },
+      { x: 170, z: -50 },
+      { x: 170, z: 50 },
+      { x: 30, z: 50 },
     ],
     euros: 3,
     from: 420,
@@ -280,7 +280,10 @@ describe('a congestion charge', () => {
     expect(words.length).toBe(4 * 5);
     expect([words[0], words[1], words[2]]).toEqual([12, 4, 420 | (1140 << 16)]);
     expect(new Float32Array(words.buffer)[3]).toBe(3);
-    expect([words[4], new Float32Array(words.buffer)[6]]).toEqual([13, 80]);
+    expect([words[4], new Float32Array(words.buffer)[6]]).toEqual([13, 30]);
+    // Junctions along the edge are free: with the edge 20 m from the junction, no road in.
+    const tight = { ...charge, area: charge.area.map((p) => ({ x: p.x, z: p.z * 0.4 })) };
+    expect(resolveEdits(index, [tight]).resolved[0].edges).toEqual([]);
     // Out of range: not sent.
     expect(resolveEdits(index, [{ ...charge, euros: 80 }]).missing).toHaveLength(1);
   });

@@ -1270,14 +1270,16 @@ test('charges for driving into Donji grad, and drivers pay it', async ({ page },
   await page.getByLabel('Charge').selectOption('5');
   await page.getByLabel('Hours').selectOption({ label: 'All day' });
   await page.getByRole('button', { name: 'Donji grad', exact: true }).click();
-  await expect(page.locator('.build-list li')).toContainText('Congestion charge on Donji grad: €5');
+  await expect(page.locator('.build-list li')).toContainText(
+    'Congestion charge on Donji grad: €5 all day',
+  );
   // Cameras on the roads into it, and the system: a few million euros.
   const spent = await page.evaluate(() => window.__ZG__!.budget!.budget.spent);
   expect(spent).toBeGreaterThan(2_000_000);
   expect(spent).toBeLessThan(40_000_000);
   // Cars and lorries pay it as they drive in.
   await expect
-    .poll(() => page.evaluate(() => window.__ZG__!.sim!.stats![23] ?? 0), {
+    .poll(() => page.evaluate(() => window.__ZG__?.sim?.stats?.[23] ?? 0), {
       timeout: 180_000,
       intervals: [5_000],
     })
