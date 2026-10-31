@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from pathlib import Path
 
 import numpy as np
@@ -32,7 +31,7 @@ import shapely
 from pyproj import Transformer
 from scipy.spatial import cKDTree
 
-from .buildings import ckan_resource, fetch_cached
+from .buildings import fetch_ckan
 from .config import CACHE_DIR, CRS, ORIGIN_E, ORIGIN_N, OUTPUT_DIR, WORLD
 from .demand import ring_points
 from .landcover import landcover_grid
@@ -149,9 +148,9 @@ def to_scene(geometries: np.ndarray, from_crs: str = "EPSG:4326") -> np.ndarray:
 
 
 def fetch_plan() -> Path:
-    url, modified = ckan_resource(PLAN_PACKAGE, "GeoJSON")
-    stamp = re.sub(r"\D", "", modified)[:8] or "latest"
-    return fetch_cached(url, CACHE_DIR / "plan" / f"planirana_namjena_{stamp}.geojson")
+    return fetch_ckan(
+        PLAN_PACKAGE, "GeoJSON", lambda s: CACHE_DIR / "plan" / f"planirana_namjena_{s}.geojson"
+    )
 
 
 def read_plan(path: Path) -> tuple[np.ndarray, np.ndarray]:

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 from pathlib import Path
 
@@ -24,7 +23,7 @@ import osmium
 import shapely
 from pyproj import Transformer
 
-from .buildings import city_boundary, ckan_resource, fetch_cached
+from .buildings import city_boundary, fetch_ckan
 from .config import CACHE_DIR, CRS, ORIGIN_E, ORIGIN_N, OUTPUT_DIR
 from .osm import ATTRIBUTION as OSM_ATTRIBUTION
 from .osm import fetch_osm
@@ -82,9 +81,11 @@ def osm_cycle_lines(pbf: Path, scene) -> list[shapely.LineString]:
 
 def city_cycle_lines(scene) -> list[shapely.LineString]:
     """The City's cycle lanes and paths, in scene metres."""
-    url, modified = ckan_resource(CYCLE_PACKAGE, "GeoJSON")
-    stamp = re.sub(r"\D", "", modified)[:8] or "latest"
-    path = fetch_cached(url, CACHE_DIR / "cycling" / f"biciklisticke_staze_{stamp}.geojson")
+    path = fetch_ckan(
+        CYCLE_PACKAGE,
+        "GeoJSON",
+        lambda s: CACHE_DIR / "cycling" / f"biciklisticke_staze_{s}.geojson",
+    )
     features = json.loads(path.read_text())["features"]
     lines = []
     for f in features:

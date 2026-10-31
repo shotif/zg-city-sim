@@ -15,7 +15,9 @@ import json
 import logging
 import re
 import time
+import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -208,10 +210,24 @@ class BuildingSet:
         self.year.append(year)
 
 
-def _get(url: str, timeout: int = 600) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "zg-city-sim pipeline"})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return response.read()
+#: Waits (s) before trying a request again after a server error, rate limit or timeout:
+#: data.zagreb.hr now and then answers 502 Bad Gateway after about a minute.
+RETRY_WAITS = (20, 60)
+
+
+def _get(url: str, timeout: int = 600, waits: tuple[float, ...] = RETRY_WAITS) -> bytes:
+    for wait in (*waits, None):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "zg-city-sim pipeline"})
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.read()
+        except (urllib.error.URLError, TimeoutError) as e:
+            code = getattr(e, "code", None)
+            if wait is None or (code is not None and code < 500 and code != 429):
+                raise
+            log.warning("%s: %s; trying again in %s s", url, e, wait)
+            time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def ckan_resource(package: str, fmt: str) -> tuple[str, str]:
@@ -221,6 +237,22 @@ def ckan_resource(package: str, fmt: str) -> tuple[str, str]:
         if resource.get("format", "").lower() == fmt.lower():
             return resource["url"], resource.get("last_modified") or resource.get("created") or ""
     raise LookupError(f"{package} has no {fmt} resource")
+
+
+def fetch_ckan(package: str, fmt: str, path: Callable[[str], Path]) -> Path:
+    """A data.zagreb.hr resource, cached at `path(stamp)` by the date it was last modified.
+    When the portal cannot be reached, the newest copy in the cache is used."""
+    try:
+        url, modified = ckan_resource(package, fmt)
+    except (urllib.error.URLError, TimeoutError) as e:
+        pattern = path("*")
+        cached = sorted(pattern.parent.glob(pattern.name))
+        if not cached:
+            raise
+        log.warning("data.zagreb.hr: %s; using the cached %s", e, cached[-1].name)
+        return cached[-1]
+    stamp = re.sub(r"\D", "", modified)[:8] or "latest"
+    return fetch_cached(url, path(stamp))
 
 
 def fetch_cached(url: str, path: Path) -> Path:
@@ -235,16 +267,16 @@ def fetch_cached(url: str, path: Path) -> Path:
 
 
 def fetch_zg3d() -> Path:
-    url, modified = ckan_resource(ZG3D_PACKAGE, "GeoJSON")
-    stamp = re.sub(r"\D", "", modified)[:8] or "latest"
-    return fetch_cached(url, CACHE_DIR / "zg3d" / f"zg3d_city_{stamp}.geojson")
+    return fetch_ckan(
+        ZG3D_PACKAGE, "GeoJSON", lambda s: CACHE_DIR / "zg3d" / f"zg3d_city_{s}.geojson"
+    )
 
 
 def city_boundary() -> shapely.Geometry:
     """The City of Zagreb's official boundary (DGU register of spatial units), EPSG:3765."""
-    url, modified = ckan_resource(BOUNDARY_PACKAGE, "SHP")
-    stamp = re.sub(r"\D", "", modified)[:8] or "latest"
-    path = fetch_cached(url, CACHE_DIR / "boundary" / f"rpj_grad_{stamp}.zip")
+    path = fetch_ckan(
+        BOUNDARY_PACKAGE, "SHP", lambda s: CACHE_DIR / "boundary" / f"rpj_grad_{s}.zip"
+    )
     _, _, wkb, _ = pyogrio.raw.read(f"/vsizip/{path}", read_geometry=True, columns=[])
     boundary = shapely.union_all(shapely.from_wkb(wkb))
     return shapely.force_2d(boundary)
@@ -253,9 +285,7 @@ def city_boundary() -> shapely.Geometry:
 def city_districts() -> tuple[list[str], np.ndarray]:
     """Names and outlines (EPSG:3765) of the City's 17 districts (gradske četvrti), from the
     same register as its boundary."""
-    url, modified = ckan_resource(DISTRICT_PACKAGE, "SHP")
-    stamp = re.sub(r"\D", "", modified)[:8] or "latest"
-    path = fetch_cached(url, CACHE_DIR / "boundary" / f"rpj_gc_{stamp}.zip")
+    path = fetch_ckan(DISTRICT_PACKAGE, "SHP", lambda s: CACHE_DIR / "boundary" / f"rpj_gc_{s}.zip")
     _, _, wkb, fields = pyogrio.raw.read(f"/vsizip/{path}", read_geometry=True, columns=["JMS_IME"])
     return [str(name) for name in fields[0]], shapely.force_2d(shapely.from_wkb(wkb))
 
