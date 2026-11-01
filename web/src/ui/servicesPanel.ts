@@ -5,46 +5,22 @@
  */
 import { districtName } from '../game/career';
 import { NEED_KINDS, type NeedKind, REACH } from '../grow/coverage';
+import { euros } from '../grow/economy';
+import { NEW_SERVICE } from '../grow/newServices';
 import { button, el } from './buildPanel';
 
-export type ServiceKind = 'school' | 'kindergarten' | 'health' | 'fire' | 'police';
-
-/** A service as the pipeline writes it (`services/services.json`). */
-export interface Service {
-  kind: ServiceKind;
-  name: string;
-  x: number;
-  z: number;
-  /** The street in front (today's network). */
-  edge: number;
-  /** Index into the City's districts; -1 outside the City. */
-  district: number;
-  /** Pupils, children or registered patients it takes (an estimate); 0 for fire and police. */
-  places: number;
-}
-
-export interface ServicesData {
-  kinds: ServiceKind[];
-  districts: string[];
-  services: Service[];
-}
-
-/** Each kind's name, what its places are, and its marker's letter. */
-export const SERVICE_KINDS: Record<
-  ServiceKind,
-  { label: string; one: string; places?: string; letter: string }
-> = {
-  school: { label: 'Primary schools', one: 'Primary school', places: 'pupils', letter: 'Š' },
-  kindergarten: { label: 'Kindergartens', one: 'Kindergarten', places: 'children', letter: 'V' },
-  health: {
-    label: 'GP practices and health centres',
-    one: 'GP practice or health centre',
-    places: 'patients registered',
-    letter: 'Z',
-  },
-  fire: { label: 'Fire stations', one: 'Fire station', letter: 'F' },
-  police: { label: 'Police stations', one: 'Police station', letter: 'P' },
-};
+export {
+  type Service,
+  SERVICE_KINDS,
+  type ServiceKind,
+  type ServicesData,
+} from '../game/serviceKinds';
+import {
+  type Service,
+  SERVICE_KINDS,
+  type ServiceKind,
+  type ServicesData,
+} from '../game/serviceKinds';
 
 const KINDS = Object.keys(SERVICE_KINDS) as ServiceKind[];
 /** Services listed for a district at most. */
@@ -82,6 +58,8 @@ export interface ServicesPanelCallbacks {
   invalidate(): void;
   /** Colour the zoned lots by coverage, or not (M20b). */
   onCoverageMap?(on: boolean): void;
+  /** Place a new service of this kind with the next click on the map, or stop (M20c). */
+  onPlace?(kind: ServiceKind | undefined): void;
 }
 
 /** Residents short of places within reach, and the places short, of each kind (the City's;
@@ -96,6 +74,12 @@ export class ServicesPanel {
   private readonly district: HTMLSelectElement;
   private readonly coverageLines: HTMLElement;
   private readonly coverageMap: HTMLElement;
+  private readonly newKind: HTMLSelectElement;
+  private readonly placeButton: HTMLButtonElement;
+  private readonly placeStatus: HTMLElement;
+  private placing = false;
+  private built: Service[] = [];
+  private builtMarkers: HTMLButtonElement[] = [];
   private readonly markers: HTMLButtonElement[] = [];
   private readonly shownKinds = new Set<ServiceKind>(KINDS);
   private selected?: number;
@@ -155,6 +139,38 @@ export class ServicesPanel {
         `${k.label}: ${n(t.count)}` + (k.places ? `, about ${n(t.places)} ${k.places}` : ''),
       );
     }
+    el('h3', 'build-count', this.panel).textContent = 'Build one';
+    const row = el('div', 'build-row', this.panel);
+    const kindLabel = el('label', 'build-label', row);
+    kindLabel.append('New ');
+    this.newKind = el('select', 'build-select', kindLabel);
+    this.newKind.setAttribute('aria-label', 'New service');
+    for (const kind of KINDS) {
+      const o = document.createElement('option');
+      o.value = kind;
+      o.textContent = SERVICE_KINDS[kind].one;
+      this.newKind.append(o);
+    }
+    this.placeButton = button('Place on the map', row, () =>
+      this.placing ? this.stopPlacing() : this.startPlacing(),
+    );
+    const about = el('p', 'build-note', this.panel);
+    const describe = () => {
+      const kind = this.newKind.value as ServiceKind;
+      const k = NEW_SERVICE[kind];
+      const places = SERVICE_KINDS[kind].places;
+      about.textContent =
+        (k.places && places ? `${n(k.places)} ${places}; ` : '') +
+        `${euros(k.build)} to build, ${euros(k.upkeep)} a year to run; ` +
+        `${n(k.staff)} staff (estimates).`;
+    };
+    this.newKind.addEventListener('change', () => {
+      describe();
+      if (this.placing) callbacks.onPlace?.(this.newKind.value as ServiceKind);
+    });
+    describe();
+    this.placeStatus = el('p', 'build-draw-status', this.panel);
+    this.placeStatus.setAttribute('role', 'status');
     el('h3', 'build-count', this.panel).textContent = 'Places within reach';
     this.coverageLines = el('div', 'services-coverage', this.panel);
     el('p', 'build-note', this.coverageLines).textContent = 'Measured once the traffic has loaded.';
@@ -198,7 +214,47 @@ export class ServicesPanel {
     this.shown = on;
     this.panel.hidden = !on;
     this.layer.hidden = !on;
+    if (!on && this.placing) this.stopPlacing();
     this.refresh();
+  }
+
+  private startPlacing(): void {
+    this.placing = true;
+    this.placeButton.textContent = 'Cancel';
+    this.placeStatus.textContent = 'Click on the map where it should stand.';
+    this.callbacks.onPlace?.(this.newKind.value as ServiceKind);
+  }
+
+  private stopPlacing(): void {
+    this.placing = false;
+    this.placeButton.textContent = 'Place on the map';
+    this.placeStatus.textContent = '';
+    this.callbacks.onPlace?.(undefined);
+  }
+
+  /** A service was placed (undefined) or could not be (why): stop placing. */
+  placed(problem: string | undefined, name: string): void {
+    this.stopPlacing();
+    this.placeStatus.textContent = problem ?? `${name} built. Take it back from the Build edits.`;
+  }
+
+  /** The services built (M20c): their markers, among today's. */
+  setBuilt(services: readonly Service[]): void {
+    for (const b of this.builtMarkers) b.remove();
+    this.built = [...services];
+    this.builtMarkers = this.built.map((s) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'service-marker built';
+      b.dataset.kind = s.kind;
+      b.textContent = SERVICE_KINDS[s.kind].letter;
+      const label = `${SERVICE_KINDS[s.kind].one}: ${s.name} (new)`;
+      b.title = label;
+      b.setAttribute('aria-label', label);
+      this.layer.append(b);
+      return b;
+    });
+    this.callbacks.invalidate();
   }
 
   /** The City's coverage as measured (M20b). */
@@ -234,6 +290,12 @@ export class ServicesPanel {
         return;
       }
       const at = project(s.x, s.z);
+      b.hidden = at === null;
+      if (at) b.style.transform = `translate(${at[0]}px, ${at[1]}px) translate(-50%, -50%)`;
+    });
+    this.built.forEach((s, i) => {
+      const b = this.builtMarkers[i];
+      const at = this.shownKinds.has(s.kind) ? project(s.x, s.z) : null;
       b.hidden = at === null;
       if (at) b.style.transform = `translate(${at[0]}px, ${at[1]}px) translate(-50%, -50%)`;
     });

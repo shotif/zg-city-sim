@@ -1506,6 +1506,46 @@ test('measures places within reach of homes and colours the lots by them', async
   expect(errors).toEqual([]);
 });
 
+test('builds a new primary school on the map, and pays for it', async ({ page }, testInfo) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('./');
+  await page.waitForFunction(
+    () => window.__ZG__?.coverageMs !== undefined && window.__ZG__?.policies !== undefined,
+    null,
+    { timeout: 200_000 },
+  );
+  const spent = () => page.evaluate(() => window.__ZG__!.budget!.budget.spent);
+  const before = await spent();
+  await page.evaluate(() => window.__ZG__?.lookAt(-2650, 5604, 2000));
+  await page.keyboard.press('v');
+  const panel = page.getByRole('complementary', { name: 'Services' });
+  await expect(panel).toContainText('€18.0 million to build, €800,000 a year to run');
+  await panel.getByLabel('New service').selectOption({ label: 'Primary school' });
+  await panel.getByRole('button', { name: 'Place on the map' }).click();
+  const canvas = page.locator('canvas').first();
+  const box = (await canvas.boundingBox())!;
+  await canvas.click({ position: { x: box.width * 0.35, y: box.height / 2 } });
+  await expect(panel.getByText('New primary school 1 built.')).toBeVisible();
+  expect((await spent()) - before).toBe(18_000_000);
+  await expect(page.locator('.service-marker.built')).toHaveCount(1);
+  expect(await page.evaluate(() => localStorage.getItem('zg-city-sim:edits'))).toContain(
+    '"service"',
+  );
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: testInfo.outputPath('new-school.png') });
+  // Listed with the Build edits, and taken back there.
+  await page.keyboard.press('b');
+  await expect(page.locator('.build-list li')).toContainText(
+    'Primary school: New primary school 1',
+  );
+  expect(errors).toEqual([]);
+});
+
 test.describe('a first visit', () => {
   // Nothing kept in the browser yet.
   test.use({ storageState: { cookies: [], origins: [] } });

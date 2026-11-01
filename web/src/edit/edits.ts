@@ -19,6 +19,8 @@ import { FREQUENCIES, MODE_NAME, type Mode, frequencyLabel } from '../world/tran
 import { type LineMode, type LineStop, lineWords, placeStops } from './lines';
 import { type AreaPoint, MAX_AREA_POINTS, hoursText, roadsAcross, roadsInto } from './policies';
 import type { RoadIndex } from './roadIndex';
+import { type ServiceEdit } from '../grow/newServices';
+import { SERVICE_KINDS } from '../game/serviceKinds';
 import { cityKey } from '../game/cities';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
@@ -76,6 +78,8 @@ export type Edit =
   | ParkingEdit
   /** A lorry ban on an area (M18c). */
   | LorryBanEdit
+  /** A new school, kindergarten, health centre, fire or police station (M20c). */
+  | ServiceEdit
   /** A new road, a junction made a roundabout, a junction's traffic lights as the player
    * sets them (edit/builder.ts): built into the network before the other edits apply. */
   | RoadEdit
@@ -265,6 +269,11 @@ function resolveEdit(
             : [];
       return { edit, edges, record };
     }
+    case 'service': {
+      // No record: the engine sees it as jobs on the street in front, which is drawn.
+      const e = index.pick(edit.x, edit.z, 80);
+      return { edit, edges: e === undefined ? [] : [e], record: [] };
+    }
     case 'frequency': {
       const route = transit?.route(edit.line, edit.mode);
       if (route === undefined) return undefined;
@@ -356,6 +365,7 @@ export function sameTarget(a: Edit, b: Edit): boolean {
     case 'charge':
     case 'parking':
     case 'lorryBan':
+    case 'service':
       return a.name === (b as typeof a).name;
     case 'road': {
       const q = (b as typeof a).points;
@@ -400,6 +410,8 @@ export function describeEdit(edit: Edit): string {
       return `Parking surcharge in ${edit.name}: €${edit.euros} an hour ${hoursText(edit.from, edit.to)}`;
     case 'lorryBan':
       return `Lorry ban on ${edit.name}: ${hoursText(edit.from, edit.to)}`;
+    case 'service':
+      return `${SERVICE_KINDS[edit.service].one}: ${edit.name}`;
     case 'line': {
       const ends = `${edit.stops[0]?.name ?? ''} - ${edit.stops.at(-1)?.name ?? ''}`;
       const every = Math.round((edit.headway / 60) * 10) / 10;
@@ -477,6 +489,8 @@ function compact(edit: Edit): Edit {
     case 'parking':
     case 'lorryBan':
       return { ...edit, area: edit.area.map((p) => ({ x: Math.round(p.x), z: Math.round(p.z) })) };
+    case 'service':
+      return { ...edit, x: Math.round(edit.x), z: Math.round(edit.z) };
     case 'line':
       return {
         ...edit,
@@ -508,6 +522,7 @@ const KINDS = new Set([
   'charge',
   'parking',
   'lorryBan',
+  'service',
 ]);
 
 /** Edits from a saved list; throws if it is not one. Unknown kinds are dropped. */
@@ -584,6 +599,13 @@ export function parseEdits(text: string): Edit[] {
           e.to <= 1440
         );
       }
+      case 'service':
+        return (
+          e.service in SERVICE_KINDS &&
+          typeof e.name === 'string' &&
+          Number.isFinite(e.x) &&
+          Number.isFinite(e.z)
+        );
       case 'line':
         return (
           typeof e.name === 'string' &&

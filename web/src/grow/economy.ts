@@ -62,6 +62,7 @@
 import type { Point } from '../edit/builder';
 import type { ChargeEdit, Edit, LorryBanEdit } from '../edit/edits';
 import { areaOf } from '../edit/policies';
+import { NEW_SERVICE } from './newServices';
 import type { Mode, Riders } from '../world/transitLines';
 import { ARCHETYPES, type Grown, NET_AREA, heights, occupants } from './growth';
 import { cityKey } from '../game/cities';
@@ -212,6 +213,8 @@ function buildAndUpkeep(
       return { build: PARKING_SETUP + (PARKING_KM2 * areaOf(edit.area)) / 1e6, upkeep: 0 };
     case 'lorryBan':
       return { build: BAN_SIGNS * (gates?.(edit) ?? 0), upkeep: BAN_UPKEEP };
+    case 'service':
+      return { build: NEW_SERVICE[edit.service].build, upkeep: NEW_SERVICE[edit.service].upkeep };
     case 'frequency': {
       const km = lineKm?.(edit.line, edit.mode, false) ?? 0;
       const service = (edit.factor - 1) * km * SERVICE_DAYS[edit.mode] * VEHICLE_KM[edit.mode];

@@ -10,7 +10,7 @@
  * 64,860 pupils and about 34,100 children in or waiting for a kindergarten (enrolled, and
  * left without a place in 2023) among its 767,131 residents; everyone needs a GP.
  */
-import type { Service, ServiceKind } from '../ui/servicesPanel';
+import type { Service, ServiceKind } from '../game/serviceKinds';
 import type { RoadNetwork } from '../world/roadNetwork';
 
 export type NeedKind = Extract<ServiceKind, 'school' | 'kindergarten' | 'health'>;

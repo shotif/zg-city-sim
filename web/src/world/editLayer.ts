@@ -26,6 +26,7 @@ export const EDIT_COLORS: Record<Exclude<Edit['kind'], 'frequency' | 'line'> | '
     charge: 0x9b59d0,
     parking: 0x3b7dd8,
     lorryBan: 0xc8702a,
+    service: 0x2f9e6e,
   };
 
 /** Roads changed by edits, and the road being edited, drawn over the map. */

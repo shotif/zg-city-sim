@@ -75,6 +75,8 @@ import {
   withGrown,
 } from './grow/coverage';
 import { COUNTY_WEIGHT } from './grow/demand';
+import { addDemand, builtServices, nextServiceName, serviceDemand } from './grow/newServices';
+import { SERVICE_KINDS, type Service, type ServiceKind } from './game/serviceKinds';
 import { finished, occupants } from './grow/growth';
 import { DaysPanel, change, hoursLost } from './ui/daysPanel';
 import { CitySound } from './ui/sound';
@@ -442,6 +444,15 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
   /** Today's services (M20a), once loaded. */
   let servicesPanel: ServicesPanel | undefined;
   let servicesData: ServicesData | undefined;
+  /** New services built (M20c): as listed, their jobs per street, and the kind the next
+   * click on the map places (none: not placing). */
+  let builtNow: Service[] = [];
+  let serviceDemandNow: EdgeDemand | undefined;
+  let placingService: ServiceKind | undefined;
+  /** Build a service at a point (set with the Build tools): undefined if done, else why
+   * not. */
+  let placeService:
+    ((kind: ServiceKind, at: { x: number; z: number }) => string | undefined) | undefined;
   /** Service coverage (M20b): today's homes (from the demand, on the network it was loaded
    * with), when last measured, and each lot's services score, for the map. */
   let homesNet: RoadNetwork | undefined;
@@ -468,10 +479,11 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
       COUNTY_WEIGHT,
     );
     const homes = withGrown(baseHomes, zoning?.grownHomes(now) ?? []);
-    const atHomes = coverage(data.services, homes, homes);
+    const services = [...data.services, ...builtNow];
+    const atHomes = coverage(services, homes, homes);
     servicesPanel?.setCoverage(shortfall(atHomes, homes.residents, (i) => homes.inCity[i] === 1));
     if (zoning) {
-      const atLots = coverage(data.services, homes, zoning.lots);
+      const atLots = coverage(services, homes, zoning.lots);
       const score = new Float32Array(zoning.lots.count);
       for (let i = 0; i < score.length; i++) score[i] = serviceScore(atLots, i);
       lotScore = score;
@@ -512,8 +524,9 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
   let todayDemand: TravelData | undefined;
   let demandNow: DemandArrays | undefined;
   const applyDemand = () => {
-    if (!grownDemand || !todayDemand?.arrays.demandEdge) return;
-    demandNow = mergeDemand(todayDemand.arrays, todayDemand.dailyTrips, grownDemand);
+    if ((!grownDemand && !serviceDemandNow) || !todayDemand?.arrays.demandEdge) return;
+    const added = addDemand(grownDemand, serviceDemandNow);
+    demandNow = mergeDemand(todayDemand.arrays, todayDemand.dailyTrips, added);
     sim?.setDemandWeights(demandNow.arrays, demandNow.dailyTrips);
   };
   let baseline: SimClient | undefined;
@@ -1145,6 +1158,15 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
         panel.setEdits(list, resolved, missing);
         saveEdits(list);
         budgetTool.setEdits(costs(list), list.length);
+        // New services (M20c): their markers, places within reach and jobs.
+        builtNow = builtServices(list, (x, z) => current.index.pick(x, z, 80) ?? -1);
+        servicesPanel?.setBuilt(builtNow);
+        const jobs = serviceDemand(builtNow);
+        if (jobs.size || serviceDemandNow?.size) {
+          serviceDemandNow = jobs;
+          applyDemand();
+        }
+        updateCoverage(sim?.cur?.time ?? 0, true);
         editWordsNow = editWords(resolved);
         sim?.setEdits(editWordsNow);
         newWaysNow = resolved.flatMap((r) =>
@@ -1248,6 +1270,14 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
         },
       });
       debug.policies = policies;
+      placeService = (kind, at) => {
+        const name = nextServiceName(kind, SERVICE_KINDS[kind].one, edits);
+        const list = withEdit(edits, { kind: 'service', service: kind, name, x: at.x, z: at.z });
+        const unpaid = budgetTool.afford(costs(list).build);
+        if (unpaid) return unpaid;
+        apply(list);
+        return undefined;
+      };
       policySection = policies;
       if (projects.length) {
         new ProjectsSection(panel.element, projects, project?.id, {
@@ -1283,6 +1313,15 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
         if (drawer.active || policies.active) {
           const p = groundAt(event.offsetX, event.offsetY);
           if (p) (drawer.active ? drawer : policies).addPoint(p);
+          return;
+        }
+        if (placingService && placeService) {
+          const p = groundAt(event.offsetX, event.offsetY);
+          if (p) {
+            const kind = placingService;
+            const name = nextServiceName(kind, SERVICE_KINDS[kind].one, edits);
+            servicesPanel?.placed(placeService(kind, p), name);
+          }
           return;
         }
         const edge = pickAt(event.offsetX, event.offsetY);
@@ -1618,6 +1657,9 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
                   onClose: () => hud.setServices(false, hudCallbacks),
                   onShow: (s) => activeRig.flyTo(s.x, s.z, 1500),
                   invalidate,
+                  onPlace: (kind) => {
+                    placingService = kind;
+                  },
                   onCoverageMap: (on) => {
                     coverageMapOn = on;
                     zoning?.showCoverage(on ? lotScore : undefined);

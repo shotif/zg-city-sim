@@ -1402,3 +1402,11 @@ a.news-headline:hover {
   border-radius: 50%;
   flex: none;
 }
+
+/* New services the player built (M20c): a gold ring. */
+.service-marker.built {
+  border-color: #ffd34d;
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.5),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+}
