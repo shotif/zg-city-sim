@@ -868,7 +868,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: tried and left out, as joined crossings passed less and their guessed signals held up more (closed) |
 | **M18 Policies** | A congestion charge, parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget (done: M18a-c) |
 | **M19 Career mode** | Reality for analysis, Sandbox and Career with goals in stages (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots (done: M19a-c) |
-| **M20 Services** | Primary schools, kindergartens and health centres that growing homes need, and fire and police stations with response times on the simulated roads; today's from open data, new ones placed by the player, with trips to them and their costs (plan chosen 2026-11-01) |
+| **M20 Services** | Primary schools, kindergartens and health centres that growing homes need, and fire and police stations with response times on the simulated roads; today's from open data, new ones placed by the player, with trips to them and their costs (done: M20a-d) |
 
 ## Risks and open questions
 
