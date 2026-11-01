@@ -349,22 +349,24 @@ pub fn policy_edits() -> Vec<Edit> {
         if words.is_empty() || words[0].starts_with('#') {
             continue;
         }
+        if words.len() < 7 {
+            panic!("POLICY: cannot read {line:?}");
+        }
+        let charge = zg_sim::policy::Charge {
+            area: words[4..]
+                .iter()
+                .map(|p| {
+                    let (x, z) = p.split_once(',').expect("x,z");
+                    (x.parse().expect("x"), z.parse().expect("z"))
+                })
+                .collect(),
+            euros: words[1].parse().expect("euros"),
+            from: clock(words[2]),
+            to: clock(words[3]),
+        };
         match words[0] {
-            "charge" if words.len() >= 7 => {
-                let area = words[4..]
-                    .iter()
-                    .map(|p| {
-                        let (x, z) = p.split_once(',').expect("x,z");
-                        (x.parse().expect("x"), z.parse().expect("z"))
-                    })
-                    .collect();
-                edits.push(Edit::Charge(zg_sim::policy::Charge {
-                    area,
-                    euros: words[1].parse().expect("euros"),
-                    from: clock(words[2]),
-                    to: clock(words[3]),
-                }));
-            }
+            "charge" => edits.push(Edit::Charge(charge)),
+            "parking" => edits.push(Edit::Parking(charge)),
             _ => panic!("POLICY: cannot read {line:?}"),
         }
     }

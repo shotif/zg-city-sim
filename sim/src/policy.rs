@@ -1,4 +1,5 @@
-//! Policies on areas the player draws (M18): a congestion charge for driving into an area.
+//! Policies on areas the player draws (M18): a congestion charge for driving into an area,
+//! and a surcharge on parking in one.
 //!
 //! An area is a polygon in scene coordinates (x east, z south, metres). Its junctions are
 //! those whose position is inside it and more than `EDGE_FREE` from its edge, and the roads
@@ -13,15 +14,33 @@
 //! from the area: a round trip into it pays once, so half the charge on each leg, weighted
 //! by the share of the day's trips that start within the hours (`HOURLY`). The charges paid
 //! are counted for the budget.
+//!
+//! A parking surcharge (M18b) is paid, per hour within its hours, by car trips that end in
+//! the area, for an estimated stay: commuters stay `WORK_STAY` and half of them pay (the rest
+//! park at work), errands stay `ERRAND_STAY`, and trips home do not pay (residents park on
+//! permits). Routes do not count it, as there is no way round it. The split counts half of
+//! the expected payment on each leg of trips to and from the area, and car trips that still
+//! end there pay it.
 
-use crate::demand::HOURLY;
+use crate::demand::{Demand, HOURLY, purposes};
 use crate::network::Network;
+use crate::rng::Rng;
 
 /// Seconds drivers count a euro as: the €16 an hour behind `network::TOLL_TIME` and
 /// `network::FUEL_TIME` (an estimate).
 pub const SECONDS_PER_EURO: f32 = 225.0;
 /// Charges the player may set (€).
 pub const CHARGE_RANGE: (f32, f32) = (0.0, 50.0);
+/// Parking surcharges the player may set (€ an hour).
+pub const PARKING_RANGE: (f32, f32) = (0.0, 20.0);
+/// How long car trips to work park, and the share of them that pay (the rest park at work,
+/// off the street): estimates, from an eight-hour working day.
+pub const WORK_STAY: f32 = 8.0 * 3600.0;
+pub const WORK_PAYING: f32 = 0.5;
+/// How long other car trips park (an estimate; Zagreb's central zone allows two hours).
+pub const ERRAND_STAY: f32 = 1.5 * 3600.0;
+/// Trips of each purpose drawn to estimate which share ends in a parking area.
+const PARKING_SAMPLES: usize = 4000;
 /// Most points an area may have.
 pub const MAX_POINTS: usize = 256;
 /// Junctions within this distance of an area's edge (m) count as outside it, so the roads
@@ -93,6 +112,19 @@ impl Charge {
         }
     }
 
+    /// Seconds of [a, b) (s after midnight, b up to a day later) within the hours.
+    pub fn seconds_within(&self, a: f32, b: f32) -> f32 {
+        let mut sum = 0.0;
+        for day in [0.0, 86_400.0] {
+            sum += if self.from <= self.to {
+                overlap(a, b, day + self.from, day + self.to)
+            } else {
+                overlap(a, b, day, day + self.to) + overlap(a, b, day + self.from, day + 86_400.0)
+            };
+        }
+        sum
+    }
+
     /// The share of the day's trips that start while it applies, by `HOURLY` (hours counted
     /// by the part of them within the charging hours).
     pub fn day_share(&self) -> f32 {
@@ -128,11 +160,24 @@ pub struct Policies {
     /// Charges paid since the start (€), and vehicles that paid.
     pub paid: f64,
     pub payers: u64,
+    /// Parking surcharges (M18b): `euros` an hour between `from` and `to`.
+    pub parking: Vec<Charge>,
+    /// For each edge, the parking areas it is in (sorted by edge).
+    parking_by_edge: Vec<(u32, u16)>,
+    /// For each parking surcharge, what a car trip ending in its area pays (€) by the hour it
+    /// sets off, and over the day (`estimate_parking`).
+    parking_pay: Vec<[f32; 24]>,
+    parking_mean: Vec<f32>,
+    /// Parking surcharges paid since the start (€), and car trips that ended in a parking
+    /// area.
+    pub parking_paid: f64,
+    pub parking_arrivals: u64,
 }
 
 impl Policies {
-    /// The policies `charges` on network `net`.
-    pub fn new(net: &Network, charges: Vec<Charge>) -> Policies {
+    /// The policies `charges` and `parking` on network `net`. What parking costs is
+    /// estimated with `estimate_parking`.
+    pub fn new(net: &Network, charges: Vec<Charge>, parking: Vec<Charge>) -> Policies {
         let n_junctions = net.d.junction_pos.len() / 2;
         let mut entries = Vec::with_capacity(charges.len());
         let mut by_edge = Vec::new();
@@ -163,6 +208,15 @@ impl Policies {
             entries.push(roads);
         }
         by_edge.sort_unstable();
+        let mut parking_by_edge = Vec::new();
+        for (p, park) in parking.iter().enumerate() {
+            for e in 0..net.edge_count() {
+                if !net.is_internal_edge(e as u32) && inside(&park.area, net.edge_mid[e]) {
+                    parking_by_edge.push((e as u32, p as u16));
+                }
+            }
+        }
+        parking_by_edge.sort_unstable();
         Policies {
             active: vec![false; charges.len()],
             charges,
@@ -170,11 +224,90 @@ impl Policies {
             by_edge,
             paid: 0.0,
             payers: 0,
+            parking_pay: vec![[0.0; 24]; parking.len()],
+            parking_mean: vec![0.0; parking.len()],
+            parking,
+            parking_by_edge,
+            parking_paid: 0.0,
+            parking_arrivals: 0,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.charges.is_empty()
+        self.charges.is_empty() && self.parking.is_empty()
+    }
+
+    /// What car trips ending in each parking area pay, from the trips `demand` draws: the
+    /// share of each purpose's trips that end there, and their stays within the hours (setting
+    /// off in the middle of the hour and arriving half an hour later).
+    pub fn estimate_parking(&mut self, demand: &Demand) {
+        if self.parking.is_empty() {
+            return;
+        }
+        let (_, pos) = demand.edges();
+        let mut rng = Rng::new(0x9a4c);
+        // Destinations of trips to work, home and errands, drawn once for all areas.
+        let mut drawn: [Vec<usize>; 3] = Default::default();
+        for (purpose, list) in drawn.iter_mut().enumerate() {
+            for _ in 0..PARKING_SAMPLES {
+                let pair = match purpose {
+                    0 => demand.draw_commute(&mut rng),
+                    1 => demand.draw_home(&mut rng),
+                    _ => demand.draw_errand(&mut rng),
+                };
+                if let Some((_, d)) = pair {
+                    list.push(d);
+                }
+            }
+        }
+        for (p, park) in self.parking.iter().enumerate() {
+            let share = |list: &Vec<usize>| {
+                let n = list.iter().filter(|&&d| inside(&park.area, pos[d])).count();
+                n as f32 / PARKING_SAMPLES as f32
+            };
+            let ends = [share(&drawn[0]), share(&drawn[1]), share(&drawn[2])];
+            let (mut paid, mut trips) = (0.0, 0.0);
+            for h in 0..24 {
+                let (work, home) = purposes(h);
+                let weights = [
+                    work * ends[0],
+                    home * ends[1],
+                    (1.0 - work - home) * ends[2],
+                ];
+                let arrive = (h as f32 + 1.0) * 3600.0;
+                let pays = [
+                    WORK_PAYING * park.seconds_within(arrive, arrive + WORK_STAY),
+                    0.0,
+                    park.seconds_within(arrive, arrive + ERRAND_STAY),
+                ];
+                let n: f32 = weights.iter().sum();
+                let euros: f32 =
+                    weights.iter().zip(pays).map(|(w, s)| w * s).sum::<f32>() * park.euros / 3600.0;
+                self.parking_pay[p][h] = if n > 0.0 { euros / n } else { 0.0 };
+                paid += HOURLY[h] * euros;
+                trips += HOURLY[h] * n;
+            }
+            self.parking_mean[p] = if trips > 0.0 { paid / trips } else { 0.0 };
+        }
+    }
+
+    /// What a car trip ending in each parking area pays on average (€), as estimated.
+    pub fn parking_mean(&self) -> &[f32] {
+        &self.parking_mean
+    }
+
+    /// A car trip that set off at `depart` (s) ended on edge `e`: it pays the parking
+    /// surcharges of the areas it ends in.
+    pub fn arrived(&mut self, e: u32, depart: f64) {
+        let start = self.parking_by_edge.partition_point(|&(x, _)| x < e);
+        let hour = (depart.rem_euclid(86_400.0) / 3600.0) as usize % 24;
+        for &(x, p) in &self.parking_by_edge[start..] {
+            if x != e {
+                break;
+            }
+            self.parking_arrivals += 1;
+            self.parking_paid += self.parking_pay[p as usize][hour] as f64;
+        }
     }
 
     /// Which charges apply at `time`; true if that changed since last asked.
@@ -225,7 +358,9 @@ impl Policies {
     /// `centres` (row-major, origin then destination), for the split with public transport;
     /// none if nothing is charged.
     pub fn split_seconds(&self, centres: &[(f32, f32)]) -> Option<Vec<f32>> {
-        if self.charges.iter().all(|c| c.euros <= 0.0) {
+        if self.charges.iter().all(|c| c.euros <= 0.0)
+            && self.parking_mean.iter().all(|&m| m <= 0.0)
+        {
             return None;
         }
         let n = centres.len();
@@ -236,6 +371,19 @@ impl Policies {
             for o in 0..n {
                 for d in 0..n {
                     if is_in[o] != is_in[d] {
+                        extra[o * n + d] += leg;
+                    }
+                }
+            }
+        }
+        // Parking: a round trip that parks in the area pays once, half on each leg: the leg
+        // that ends there, and the leg that leaves it for outside.
+        for (park, &mean) in self.parking.iter().zip(&self.parking_mean) {
+            let is_in: Vec<bool> = centres.iter().map(|&p| inside(&park.area, p)).collect();
+            let leg = 0.5 * mean * SECONDS_PER_EURO;
+            for o in 0..n {
+                for d in 0..n {
+                    if is_in[d] || is_in[o] {
                         extra[o * n + d] += leg;
                     }
                 }

@@ -90,7 +90,7 @@ import {
 import { ProjectsSection } from './ui/projectsSection';
 import { junctionName } from './edit/signals';
 import { roadsInto } from './edit/policies';
-import { ChargeSection } from './ui/chargeSection';
+import { PolicySection } from './ui/policySection';
 import { RoadDrawer } from './ui/roadDrawer';
 import { BuildingLayer, buildingCentres, loadBuildings } from './world/buildingLayer';
 import {
@@ -356,7 +356,7 @@ export interface DebugApi {
   /** The tool for drawing roads. */
   drawer?: RoadDrawer;
   /** The congestion charge in the Build panel (M18a). */
-  charges?: ChargeSection;
+  policies?: PolicySection;
   /** The ground point under a screen point (CSS pixels in the canvas). */
   groundAt?(x: number, y: number): { x: number; z: number } | undefined;
   /** The Zones tool, once the lots are loaded. */
@@ -421,7 +421,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
   let changeEdits: (change: (list: Edit[]) => Edit[]) => void = () => {};
   let refreshCosts = () => {};
   /** The congestion charge's section of the Build panel, once built (M18a). */
-  let chargeSection: ChargeSection | undefined;
+  let policySection: PolicySection | undefined;
   let stopRoadsNow: ((mode: LineMode) => RoadIndex) | undefined;
   /** Trains, pedestrians and cyclists drawn (M8e). */
   const shown = new Set<Shown>(['trains', 'pedestrians', 'bikes']);
@@ -869,7 +869,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
         layer.show(groups);
         areaLayer.show(
           edits.flatMap((e) =>
-            e.kind === 'charge' ? [{ points: e.area, color: EDIT_COLORS.charge }] : [],
+            e.kind === 'charge' || e.kind === 'parking'
+              ? [{ points: e.area, color: EDIT_COLORS[e.kind] }]
+              : [],
           ),
         );
         invalidate();
@@ -1031,7 +1033,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
       const drawer = new RoadDrawer(panel.drawSlot, {
         onDrawing: (on) => {
           if (on) panel.select(undefined);
-          if (on && charges.active) charges.cancel();
+          if (on && policies.active) policies.cancel();
           invalidate();
         },
         onPoints: (points) => {
@@ -1041,8 +1043,8 @@ export async function startApp(container: HTMLElement): Promise<void> {
         onRoad: (road) => tryNetworkEdit(road),
       });
       debug.drawer = drawer;
-      // Policies (M18a): a congestion charge on an area.
-      const charges = new ChargeSection(panel.drawSlot, {
+      // Policies (M18): a congestion charge or a parking surcharge on an area.
+      const policies = new PolicySection(panel.drawSlot, {
         onDrawing: (on) => {
           if (on) panel.select(undefined);
           if (on && drawer.active) drawer.cancel();
@@ -1052,16 +1054,16 @@ export async function startApp(container: HTMLElement): Promise<void> {
           drawLayer.show(points);
           invalidate();
         },
-        onCharge: (charge) => {
-          const list = withEdit(edits, charge);
+        onPolicy: (policy) => {
+          const list = withEdit(edits, policy);
           const unpaid = budgetTool.afford(costs(list).build);
           if (unpaid) return unpaid;
           apply(list);
           return undefined;
         },
       });
-      debug.charges = charges;
-      chargeSection = charges;
+      debug.policies = policies;
+      policySection = policies;
       if (projects.length) {
         new ProjectsSection(panel.element, projects, project?.id, {
           onOpen: (id) => location.assign(projectUrl(location.href, id)),
@@ -1093,9 +1095,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
         if (!panel.visible || !down || event.button !== 0) return;
         const moved = Math.hypot(event.offsetX - down.x, event.offsetY - down.y);
         if (moved > 6 || performance.now() - down.t > 600) return;
-        if (drawer.active || charges.active) {
+        if (drawer.active || policies.active) {
           const p = groundAt(event.offsetX, event.offsetY);
-          if (p) (drawer.active ? drawer : charges).addPoint(p);
+          if (p) (drawer.active ? drawer : policies).addPoint(p);
           return;
         }
         const edge = pickAt(event.offsetX, event.offsetY);
@@ -1749,14 +1751,23 @@ export async function startApp(container: HTMLElement): Promise<void> {
               if (running.cur) {
                 zoning?.tick(running.cur.time);
                 budgetTool.tick(running.cur.time);
-                // Congestion charges paid (M18a).
+                // Congestion charges and parking surcharges paid (M18).
                 const s = running.stats;
                 const paid = s?.[STAT.chargesPaid] ?? 0;
+                const parked = s?.[STAT.parkingPaid] ?? 0;
                 budgetTool.chargesPaid(paid, running.cur.time);
-                chargeSection?.setPaid(
-                  paid,
-                  s?.[STAT.chargePayers] ?? 0,
-                  edits.some((e) => e.kind === 'charge'),
+                budgetTool.parkingPaid(parked, running.cur.time);
+                policySection?.setPaid(
+                  {
+                    euros: paid,
+                    count: s?.[STAT.chargePayers] ?? 0,
+                    shown: edits.some((e) => e.kind === 'charge'),
+                  },
+                  {
+                    euros: parked,
+                    count: s?.[STAT.parkingArrivals] ?? 0,
+                    shown: edits.some((e) => e.kind === 'parking'),
+                  },
                 );
               }
             };

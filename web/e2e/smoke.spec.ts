@@ -1253,7 +1253,9 @@ test("shows Zagreb's weather, and drives and looks as the weather picked", async
   expect(errors).toEqual([]);
 });
 
-test('charges for driving into Donji grad, and drivers pay it', async ({ page }, testInfo) => {
+test('charges for driving and parking in Donji grad, and drivers pay', async ({
+  page,
+}, testInfo) => {
   test.setTimeout(300_000);
   const errors: string[] = [];
   page.on('console', (message) => {
@@ -1263,14 +1265,14 @@ test('charges for driving into Donji grad, and drivers pay it', async ({ page },
 
   await page.goto('./?speed=16');
   await page.waitForFunction(
-    () => window.__ZG__?.sim?.ready === true && window.__ZG__?.charges !== undefined,
+    () => window.__ZG__?.sim?.ready === true && window.__ZG__?.policies !== undefined,
     null,
     { timeout: 150_000 },
   );
   // €5 all day on Donji grad (the Build panel's Policies).
   await page.keyboard.press('b');
-  await page.getByLabel('Charge').selectOption('5');
-  await page.getByLabel('Hours').selectOption({ label: 'All day' });
+  await page.getByLabel('Charge', { exact: true }).selectOption('5');
+  await page.getByLabel('Hours', { exact: true }).selectOption({ label: 'All day' });
   await page.getByRole('button', { name: 'Donji grad', exact: true }).click();
   await expect(page.locator('.build-list li')).toContainText(
     'Congestion charge on Donji grad: €5 all day',
@@ -1286,7 +1288,23 @@ test('charges for driving into Donji grad, and drivers pay it', async ({ page },
       intervals: [5_000],
     })
     .toBeGreaterThan(0);
-  await expect(page.locator('.build-draw p').last()).toContainText('Paid so far today');
+  await expect(page.locator('.build-draw p').last()).toContainText('Charges paid so far today');
+  // And €2 an hour on parking there, from 07:00 to 21:00: car trips that end there pay.
+  await page.getByLabel('Policy', { exact: true }).selectOption({ label: 'Parking surcharge' });
+  await expect(page.getByLabel('Hours', { exact: true })).toHaveValue('1');
+  await page.getByLabel('Charge', { exact: true }).selectOption({ label: '€2 an hour' });
+  await page.getByRole('button', { name: 'Donji grad', exact: true }).click();
+  await expect(page.locator('.build-list li')).toHaveCount(2);
+  await expect(page.locator('.build-list li').last()).toContainText(
+    'Parking surcharge in Donji grad: €2 an hour from 07:00 to 21:00',
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__?.sim?.stats?.[25] ?? 0), {
+      timeout: 180_000,
+      intervals: [5_000],
+    })
+    .toBeGreaterThan(0);
+  await expect(page.locator('.build-draw p').last()).toContainText('Parking surcharges paid');
   await page.evaluate(() => window.__ZG__?.lookAt(250, 500, 4000));
   await page.waitForTimeout(2000);
   await page.screenshot({ path: testInfo.outputPath('charge.png') });

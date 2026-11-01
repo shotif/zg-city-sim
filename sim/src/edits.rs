@@ -9,7 +9,7 @@
 //! is setting the list without it, in any order.
 
 use crate::network::{Network, vclass};
-use crate::policy::{CHARGE_RANGE, Charge, MAX_POINTS};
+use crate::policy::{CHARGE_RANGE, Charge, MAX_POINTS, PARKING_RANGE};
 
 /// Classes a closed road or lane keeps: buses and trams stay on their timetabled routes.
 pub const CLOSED_KEEPS: u16 = vclass::BUS | vclass::TRAM | vclass::RAIL;
@@ -47,6 +47,8 @@ pub enum Edit {
     Line(Line),
     /// A congestion charge on an area (M18a).
     Charge(Charge),
+    /// A parking surcharge on an area (M18b): `euros` an hour.
+    Parking(Charge),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -80,6 +82,8 @@ pub mod kind {
     /// bits) for each point of its area.
     pub const CHARGE: u32 = 12;
     pub const AREA_POINT: u32 = 13;
+    /// A parking surcharge takes the records of a congestion charge, with euros an hour.
+    pub const PARKING: u32 = 14;
 }
 
 impl Edit {
@@ -114,7 +118,7 @@ impl Edit {
                 }
                 continue;
             }
-            if r[0] == kind::CHARGE {
+            if r[0] == kind::CHARGE || r[0] == kind::PARKING {
                 let n = r[1] as usize;
                 let rest = &records[k..];
                 if (3..=MAX_POINTS).contains(&n)
@@ -122,9 +126,10 @@ impl Edit {
                     && rest[..n].iter().all(|s| s[0] == kind::AREA_POINT)
                 {
                     let euros = f32::from_bits(r[3]);
-                    let (lo, hi) = CHARGE_RANGE;
+                    let parking = r[0] == kind::PARKING;
+                    let (lo, hi) = if parking { PARKING_RANGE } else { CHARGE_RANGE };
                     if (lo..=hi).contains(&euros) {
-                        out.push(Edit::Charge(Charge {
+                        let charge = Charge {
                             area: rest[..n]
                                 .iter()
                                 .map(|s| (f32::from_bits(s[2]), f32::from_bits(s[3])))
@@ -132,7 +137,12 @@ impl Edit {
                             euros,
                             from: (r[2] & 0xffff).min(1440) as f32 * 60.0,
                             to: (r[2] >> 16).min(1440) as f32 * 60.0,
-                        }));
+                        };
+                        out.push(if parking {
+                            Edit::Parking(charge)
+                        } else {
+                            Edit::Charge(charge)
+                        });
                     }
                     k += n;
                 }
@@ -220,11 +230,15 @@ impl Edit {
                 }
                 return out;
             }
-            Edit::Charge(ref charge) => {
+            Edit::Charge(ref charge) | Edit::Parking(ref charge) => {
                 let hours =
                     (charge.from / 60.0).round() as u32 | ((charge.to / 60.0).round() as u32) << 16;
                 let mut out = vec![
-                    kind::CHARGE,
+                    if matches!(self, Edit::Parking(_)) {
+                        kind::PARKING
+                    } else {
+                        kind::CHARGE
+                    },
                     charge.area.len() as u32,
                     hours,
                     charge.euros.to_bits(),
@@ -351,7 +365,11 @@ pub fn apply(net: &mut Network, edit: &Edit) -> bool {
             d.phase_min_dur[p] = d.phase_min_dur[p].min(seconds);
             d.phase_max_dur[p] = d.phase_max_dur[p].max(seconds);
         }
-        Edit::Frequency { .. } | Edit::Line(_) | Edit::Priority { .. } | Edit::Charge(_) => {
+        Edit::Frequency { .. }
+        | Edit::Line(_)
+        | Edit::Priority { .. }
+        | Edit::Charge(_)
+        | Edit::Parking(_) => {
             return false;
         }
     }

@@ -192,7 +192,10 @@ pub mod stat {
     /// (M18a).
     pub const CHARGES_PAID: usize = 23;
     pub const CHARGE_PAYERS: usize = 24;
-    pub const LEN: usize = 25;
+    /// Parking surcharges paid (€), and car trips that ended in a parking area (M18b).
+    pub const PARKING_PAID: usize = 25;
+    pub const PARKING_ARRIVALS: usize = 26;
+    pub const LEN: usize = 27;
 }
 
 /// Trip flags.
@@ -4017,6 +4020,10 @@ impl Engine {
             }
             Finish::Teleported if veh.vtype == vtype::BIKE => self.stats.bike_removed += 1,
             Finish::Arrived => {
+                if veh.vtype == vtype::CAR && !self.policies.parking.is_empty() {
+                    let edge = self.net.d.lane_edge[veh.lane as usize];
+                    self.policies.arrived(edge, veh.depart);
+                }
                 self.stats.arrived += 1;
                 self.stats.trip_time_sum += self.time + DT as f64 - veh.depart;
                 self.stats.trip_km_sum += veh.distance as f64 / 1000.0;
@@ -5331,9 +5338,13 @@ impl Engine {
         let n_tls = self.tls_phase.len();
         let mut priority = vec![false; n_tls];
         let mut charges = Vec::new();
+        let mut parking = Vec::new();
         for edit in edits {
             if let Edit::Charge(charge) = edit {
                 charges.push(charge.clone());
+                applied.push(edit.clone());
+            } else if let Edit::Parking(park) = edit {
+                parking.push(park.clone());
                 applied.push(edit.clone());
             } else if let Edit::Frequency { route, factor } = *edit {
                 // Lines the timetable runs, as often as edits may set.
@@ -5363,11 +5374,17 @@ impl Engine {
         };
         self.net.refresh_speeds();
         self.net.refresh_links();
-        // Charges carry over what was paid; their roads in are found on the network now.
-        let (paid, payers) = (self.policies.paid, self.policies.payers);
-        self.policies = Policies::new(&self.net, charges);
-        self.policies.paid = paid;
-        self.policies.payers = payers;
+        // Policies carry over what was paid; their roads in, and the roads in their areas,
+        // are found on the network now.
+        let old = std::mem::take(&mut self.policies);
+        self.policies = Policies::new(&self.net, charges, parking);
+        self.policies.paid = old.paid;
+        self.policies.payers = old.payers;
+        self.policies.parking_paid = old.parking_paid;
+        self.policies.parking_arrivals = old.parking_arrivals;
+        if let Some(demand) = self.demand.as_ref() {
+            self.policies.estimate_parking(demand);
+        }
         self.policies.refresh(self.time);
         self.apply_charges();
         for e in 0..self.free_time.len() {
@@ -5402,7 +5419,12 @@ impl Engine {
             }
             let key: Vec<u32> = applied
                 .iter()
-                .filter(|e| matches!(e, Edit::Frequency { .. } | Edit::Line(_) | Edit::Charge(_)))
+                .filter(|e| {
+                    matches!(
+                        e,
+                        Edit::Frequency { .. } | Edit::Line(_) | Edit::Charge(_) | Edit::Parking(_)
+                    )
+                })
                 .flat_map(|e| e.encode())
                 .collect();
             self.riders_for_edits(key, &applied);
@@ -5716,6 +5738,8 @@ impl Engine {
         out[stat::TRANSIT_LATE] = s.transit_late / (s.trams + s.buses).max(1) as f64;
         out[stat::CHARGES_PAID] = self.policies.paid;
         out[stat::CHARGE_PAYERS] = self.policies.payers as f64;
+        out[stat::PARKING_PAID] = self.policies.parking_paid;
+        out[stat::PARKING_ARRIVALS] = self.policies.parking_arrivals as f64;
         out
     }
 

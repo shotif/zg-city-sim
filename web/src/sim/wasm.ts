@@ -92,6 +92,10 @@ export const STAT = {
    * (M18a). */
   chargesPaid: 23,
   chargePayers: 24,
+  /** Since the start: parking surcharges paid (€) and car trips that ended in a parking
+   * area (M18b). */
+  parkingPaid: 25,
+  parkingArrivals: 26,
 } as const;
 
 /** Words per vehicle slot in the render buffer and what they hold (engine::write_render). */

@@ -61,6 +61,7 @@
  */
 import type { Point } from '../edit/builder';
 import type { ChargeEdit, Edit } from '../edit/edits';
+import { areaOf } from '../edit/policies';
 import type { Mode, Riders } from '../world/transitLines';
 import { ARCHETYPES, type Grown, NET_AREA, heights, occupants } from './growth';
 
@@ -108,6 +109,13 @@ export const CHARGE_RUNNING = 0.3;
 export const CHARGE_DAYS = 250;
 /** Roads into a charge's area (`edit/policies.ts` `roadsInto`). */
 export type Gates = (edit: ChargeEdit) => number;
+/** A parking surcharge (M18b): signs, the machines and the payment app changed (€50,000)
+ * and more machines and wardens' rounds (€100,000 a km² of area), estimates; enforcement
+ * and collection take 15 % of what is paid (an estimate); paid on 250 weekdays a year
+ * (Saturdays left out). */
+export const PARKING_SETUP = 50_000;
+export const PARKING_KM2 = 100_000;
+export const PARKING_RUNNING = 0.15;
 
 /** Fares a year from the boardings the edits gain (lose, negative): by route, its mode
  * (`modeOf`; none: left out). */
@@ -194,6 +202,8 @@ function buildAndUpkeep(
   switch (edit.kind) {
     case 'charge':
       return { build: CHARGE_SYSTEM + CHARGE_GATE * (gates?.(edit) ?? 0), upkeep: 0 };
+    case 'parking':
+      return { build: PARKING_SETUP + (PARKING_KM2 * areaOf(edit.area)) / 1e6, upkeep: 0 };
     case 'frequency': {
       const km = lineKm?.(edit.line, edit.mode, false) ?? 0;
       const service = (edit.factor - 1) * km * SERVICE_DAYS[edit.mode] * VEHICLE_KM[edit.mode];
@@ -261,6 +271,8 @@ export interface Yearly {
    * (M18a). Paid into the balance as drivers pay them (`Budget.chargesPaid`), not by
    * `tick`. */
   charges: number;
+  /** Parking surcharges less running costs, the same way (M18b, `Budget.parkingPaid`). */
+  parking: number;
 }
 
 export interface SavedBudget {
@@ -295,9 +307,11 @@ export class Budget {
     service: 0,
     fares: 0,
     charges: 0,
+    parking: 0,
   };
-  /** Congestion charges paid in the engine so far (€), and when (s), over the last day. */
-  private paid: [number, number][] = [];
+  /** Congestion charges and parking surcharges paid in the engine so far: when (s) and the
+   * total (€), over the last day. */
+  private paid: Record<'charges' | 'parking', [number, number][]> = { charges: [], parking: [] };
   /** Communal contributions paid since the page was opened. */
   contributions = 0;
   private last?: number;
@@ -329,14 +343,23 @@ export class Budget {
    * simulated time `now`: what they paid since stands for a year of weekdays, less running
    * costs (M18a). */
   chargesPaid(total: number, now: number): void {
-    const last = this.paid.at(-1);
-    if (last && (total < last[1] || now < last[0])) this.paid = [];
-    const prev = this.paid.at(-1);
-    if (prev) this.balance += (total - prev[1]) * CHARGE_DAYS * (1 - CHARGE_RUNNING);
-    this.paid.push([now, total]);
-    while (this.paid.length > 2 && this.paid[1][0] <= now - 86_400) this.paid.shift();
-    const first = this.paid[0];
-    this.yearly.charges = (total - first[1]) * CHARGE_DAYS * (1 - CHARGE_RUNNING);
+    this.takings('charges', total, now, 1 - CHARGE_RUNNING);
+  }
+
+  /** Drivers have paid `total` euros of parking surcharges so far (M18b), as for charges. */
+  parkingPaid(total: number, now: number): void {
+    this.takings('parking', total, now, 1 - PARKING_RUNNING);
+  }
+
+  private takings(kind: 'charges' | 'parking', total: number, now: number, kept: number): void {
+    let log = this.paid[kind];
+    const last = log.at(-1);
+    if (last && (total < last[1] || now < last[0])) log = this.paid[kind] = [];
+    const prev = log.at(-1);
+    if (prev) this.balance += (total - prev[1]) * CHARGE_DAYS * kept;
+    log.push([now, total]);
+    while (log.length > 2 && log[1][0] <= now - 86_400) log.shift();
+    this.yearly[kind] = (total - log[0][1]) * CHARGE_DAYS * kept;
   }
 
   /** A building finished: its communal contribution. */

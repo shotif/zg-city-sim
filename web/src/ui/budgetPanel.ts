@@ -65,7 +65,7 @@ export class BudgetPanel {
     this.balance.textContent = euros(budget.balance);
     this.balance.classList.toggle('budget-negative', budget.balance < 0);
     const y = budget.yearly;
-    const net = y.base + y.tax + y.fee + y.fares + y.charges - y.upkeep - y.service;
+    const net = y.base + y.tax + y.fee + y.fares + y.charges + y.parking - y.upkeep - y.service;
     const items: [string, number][] = [
       ['Streets budget', y.base],
       ['Income tax', y.tax],
@@ -75,6 +75,9 @@ export class BudgetPanel {
       ...(y.fares ? [['Fares from riders gained or lost', y.fares] as [string, number]] : []),
       ...(y.charges
         ? [['Congestion charges, less running costs', y.charges] as [string, number]]
+        : []),
+      ...(y.parking
+        ? [['Parking surcharges, less running costs', y.parking] as [string, number]]
         : []),
       ['A year in all', net],
     ];

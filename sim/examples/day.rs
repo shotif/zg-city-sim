@@ -110,7 +110,7 @@ fn main() {
         println!("priority for trams and buses at {} signals", priority.len());
         edits.extend(priority);
     }
-    // POLICY=file: congestion charges (M18).
+    // POLICY=file: congestion charges and parking surcharges (M18).
     let policies = run::policy_edits();
     if !policies.is_empty() {
         println!("policies: {}", policies.len());
@@ -367,7 +367,7 @@ fn main() {
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"riders\": {riders}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"rounds\": {}, \"removedBecause\": {:?}, \
-         \"removedAt\": [{}], \"transit\": {transit}, \"bikes\": {{\"departed\": {}, \"arrived\": {}, \"removed\": {}, \"km\": {:.0}}}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"charges\": {{\"paid\": {:.0}, \"payers\": {}}}, \"hours\": [\n  {}\n]}}\n",
+         \"removedAt\": [{}], \"transit\": {transit}, \"bikes\": {{\"departed\": {}, \"arrived\": {}, \"removed\": {}, \"km\": {:.0}}}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"charges\": {{\"paid\": {:.0}, \"payers\": {}}}, \"parking\": {{\"paid\": {:.0}, \"arrivals\": {}, \"meanPay\": {:?}}}, \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
         s.departed,
@@ -389,6 +389,9 @@ fn main() {
         delay_hours.join(", "),
         engine.policies.paid,
         engine.policies.payers,
+        engine.policies.parking_paid,
+        engine.policies.parking_arrivals,
+        engine.policies.parking_mean(),
         hours.join(",\n  "),
     );
     std::fs::write(format!("{out}/day.json"), summary).expect("write summary");

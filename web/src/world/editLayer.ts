@@ -24,6 +24,7 @@ export const EDIT_COLORS: Record<Exclude<Edit['kind'], 'frequency' | 'line'> | '
     roundabout: 0x12a4a0,
     signal: 0x2fbf71,
     charge: 0x9b59d0,
+    parking: 0x3b7dd8,
   };
 
 /** Roads changed by edits, and the road being edited, drawn over the map. */

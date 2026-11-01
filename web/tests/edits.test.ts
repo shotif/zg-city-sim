@@ -288,6 +288,23 @@ describe('a congestion charge', () => {
     expect(resolveEdits(index, [{ ...charge, euros: 80 }]).missing).toHaveLength(1);
   });
 
+  it('has a parking surcharge on the same area beside it, with records of its own', () => {
+    const parking: Edit = { ...charge, kind: 'parking', euros: 1.5, from: 420, to: 1260 };
+    const { resolved, missing } = resolveEdits(index, [charge, parking]);
+    expect(missing).toEqual([]);
+    expect(resolved[1].edges).toEqual([]);
+    const words = editWords([resolved[1]]);
+    expect([words[0], words[1], words[2]]).toEqual([14, 4, 420 | (1260 << 16)]);
+    expect(new Float32Array(words.buffer)[3]).toBe(1.5);
+    expect(withEdit([charge], parking)).toEqual([charge, parking]);
+    expect(describeEdit(parking)).toBe(
+      'Parking surcharge in Donji grad: €1.5 an hour from 07:00 to 21:00',
+    );
+    expect(parseEdits(serializeEdits([parking]))).toEqual([parking]);
+    // Dearer than the engine takes: not sent.
+    expect(resolveEdits(index, [{ ...parking, euros: 25 }]).missing).toHaveLength(1);
+  });
+
   it('is saved, described and replaced by another charge on the same area', () => {
     expect(parseEdits(serializeEdits([charge]))).toEqual([charge]);
     expect(describeEdit(charge)).toBe('Congestion charge on Donji grad: €3 from 07:00 to 19:00');

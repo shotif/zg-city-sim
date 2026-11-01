@@ -5093,7 +5093,7 @@ fn charges_round_trip_through_records_and_count_half_on_each_leg_of_the_split() 
     let share = charge.day_share();
     assert!(share > 0.7 && share < 0.9, "{share}");
     let (b, _, _) = straight_road(300.0, 1);
-    let policies = Policies::new(&b.build(), vec![charge]);
+    let policies = Policies::new(&b.build(), vec![charge], Vec::new());
     let centres = [(0.0, 0.0), (5000.0, 0.0), (100.0, 100.0)];
     let extra = policies.split_seconds(&centres).unwrap();
     let leg = 0.5 * 4.0 * SECONDS_PER_EURO * share;
@@ -5159,4 +5159,84 @@ fn a_charge_on_one_zone_moves_car_trips_to_and_from_it_to_the_bus() {
     let riders = engine.riders.as_ref().unwrap();
     assert!(riders.factor.is_none());
     assert_eq!(riders.summary.trips_now, today);
+}
+
+#[test]
+fn parking_surcharges_round_trip_through_records_and_count_stays_within_their_hours() {
+    use crate::policy::{Charge, PARKING_RANGE};
+    let park = Charge {
+        area: square(0.0, 0.0, 500.0),
+        euros: 1.5,
+        from: 7.0 * 3600.0,
+        to: 19.0 * 3600.0,
+    };
+    let edit = Edit::Parking(park.clone());
+    let words = edit.encode();
+    assert_eq!(words[0], crate::edits::kind::PARKING);
+    assert_eq!(Edit::decode(&words), vec![edit]);
+    // Dearer than the range: skipped.
+    let mut dear = words.clone();
+    dear[3] = (PARKING_RANGE.1 + 1.0).to_bits();
+    assert!(Edit::decode(&dear).is_empty());
+    let h = 3600.0;
+    assert_eq!(park.seconds_within(6.0 * h, 8.0 * h), h);
+    assert_eq!(park.seconds_within(18.0 * h, 26.0 * h), h);
+    // Over midnight: 22:00 to 06:00.
+    let night = Charge {
+        from: 22.0 * h,
+        to: 6.0 * h,
+        ..park
+    };
+    assert_eq!(night.seconds_within(21.0 * h, 23.0 * h), h);
+    assert_eq!(night.seconds_within(23.0 * h, 31.0 * h), 7.0 * h);
+}
+
+#[test]
+fn a_parking_surcharge_on_one_zone_moves_car_trips_to_it_and_is_paid_by_those_that_end_there() {
+    use crate::policy::Charge;
+    let (mut engine, _, _) = two_zones();
+    engine.set_time(6.0 * 3600.0);
+    engine.start_riders(None);
+    for _ in 0..10 {
+        engine.step();
+    }
+    let riders = engine.riders.as_ref().unwrap();
+    let (east, west) = if riders.zones.centre[0].0 < riders.zones.centre[1].0 {
+        (0, 1)
+    } else {
+        (1, 0)
+    };
+    let centre = riders.zones.centre[west];
+    // €2 an hour to park in the western zone, all day.
+    let park = Charge {
+        area: square(centre.0, centre.1, 400.0),
+        euros: 2.0,
+        from: 0.0,
+        to: 86_400.0,
+    };
+    engine.set_edits(&[Edit::Parking(park.clone())]);
+    // Trips to it pay for stays of 1.5 to 8 hours, less the trips home, which do not.
+    let mean = engine.policies.parking_mean()[0];
+    assert!(mean > 0.5 && mean < 2.0 * 8.0, "{mean}");
+    for _ in 0..10 {
+        engine.step();
+    }
+    let factor = engine
+        .riders
+        .as_ref()
+        .unwrap()
+        .factor
+        .clone()
+        .expect("car trips moved");
+    assert!(factor[east * 2 + west] < 1.0, "{factor:?}");
+    // Car trips that still end there pay as they arrive.
+    run_until(&mut engine, 3.0 * 3600.0, |_| {});
+    let p = &engine.policies;
+    assert!(p.parking_arrivals > 0);
+    assert!(p.parking_paid > 0.0);
+    let paid = p.parking_paid;
+    // Taken away: nothing more is paid, and what was paid is kept.
+    engine.set_edits(&[]);
+    run_until(&mut engine, 600.0, |_| {});
+    assert_eq!(engine.policies.parking_paid, paid);
 }

@@ -27,7 +27,7 @@ pub const HOURLY: [f32; 24] = [
 
 /// Shares of an hour's trips going from home to work and from work to home; the rest are
 /// other errands. Over the day about 20 % of trips go to work and 22 % home.
-fn purposes(hour: usize) -> (f32, f32) {
+pub fn purposes(hour: usize) -> (f32, f32) {
     match hour {
         4..=8 => (0.6, 0.05),
         9..=12 => (0.15, 0.1),
@@ -482,6 +482,11 @@ impl Demand {
     /// A trip home as the engine draws them (indices into the demand edges).
     pub fn draw_home(&self, rng: &mut Rng) -> Option<(usize, usize)> {
         self.draw(0.0, 1.0, rng).flatten()
+    }
+
+    /// An errand as the engine draws them (indices into the demand edges).
+    pub fn draw_errand(&self, rng: &mut Rng) -> Option<(usize, usize)> {
+        self.draw(0.0, 0.0, rng).flatten()
     }
 
     /// Bike trips (M8d): `daily` a day between the edges' homes and jobs, over shorter

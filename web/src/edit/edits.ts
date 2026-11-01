@@ -71,6 +71,8 @@ export type Edit =
   | LineEdit
   /** A congestion charge on an area (M18a). */
   | ChargeEdit
+  /** A parking surcharge on an area (M18b). */
+  | ParkingEdit
   /** A new road, a junction made a roundabout, a junction's traffic lights as the player
    * sets them (edit/builder.ts): built into the network before the other edits apply. */
   | RoadEdit
@@ -97,6 +99,19 @@ export interface ChargeEdit {
 
 /** Charges the engine takes (€; sim/src/policy.rs `CHARGE_RANGE`). */
 export const CHARGE_RANGE = [0, 50] as const;
+
+/** A parking surcharge (M18b): `euros` an hour, from `from` to `to` (minutes after
+ * midnight), on top of today's prices for car trips that end in the area named `name`, for
+ * an estimated stay (sim/src/policy.rs). */
+export interface ParkingEdit extends Omit<ChargeEdit, 'kind'> {
+  kind: 'parking';
+}
+
+/** A policy on an area. */
+export type AreaEdit = ChargeEdit | ParkingEdit;
+
+/** Parking surcharges the engine takes (€ an hour; sim/src/policy.rs `PARKING_RANGE`). */
+export const PARKING_RANGE = [0, 20] as const;
 
 /** A new bus or tram line: its stops in order, and back again in reverse where `both`; a
  * trip from the first stop every `headway` seconds from `first` to `last` (s after
@@ -142,6 +157,7 @@ const KIND = {
   priority: 11,
   charge: 12,
   areaPoint: 13,
+  parking: 14,
 } as const;
 /** Headways (s) and hours a new line may have (sim/src/transit.rs `LINE_HEADWAY`). */
 export const LINE_HEADWAY = [120, 7200] as const;
@@ -207,15 +223,17 @@ function resolveEdit(
       const record = ways.flatMap((w) => lineWords(route, edit.mode, edit, w.placed));
       return { edit, edges: [], record, ways: ways.map((w) => w.stops) };
     }
-    case 'charge': {
+    case 'charge':
+    case 'parking': {
       const n = edit.area.length;
-      const [lo, hi] = CHARGE_RANGE;
+      const [lo, hi] = edit.kind === 'charge' ? CHARGE_RANGE : PARKING_RANGE;
       if (n < 3 || n > MAX_AREA_POINTS || !(edit.euros >= lo && edit.euros <= hi)) return undefined;
       const hours = (edit.from & 0xffff) | ((edit.to & 0xffff) << 16);
-      const record = [KIND.charge, n, hours >>> 0, floatBits(edit.euros)];
+      const record = [KIND[edit.kind], n, hours >>> 0, floatBits(edit.euros)];
       for (const p of edit.area) record.push(KIND.areaPoint, 0, floatBits(p.x), floatBits(p.z));
-      // Drawn: the roads into the area, where its cameras stand.
-      return { edit, edges: roadsInto(index.net, edit.area), record };
+      // Drawn: a charge's roads into the area, where its cameras stand.
+      const edges = edit.kind === 'charge' ? roadsInto(index.net, edit.area) : [];
+      return { edit, edges, record };
     }
     case 'frequency': {
       const route = transit?.route(edit.line, edit.mode);
@@ -306,6 +324,7 @@ export function sameTarget(a: Edit, b: Edit): boolean {
     case 'line':
       return a.name === (b as typeof a).name && a.mode === (b as typeof a).mode;
     case 'charge':
+    case 'parking':
       return a.name === (b as typeof a).name;
     case 'road': {
       const q = (b as typeof a).points;
@@ -346,6 +365,8 @@ export function describeEdit(edit: Edit): string {
       return `${MODE_NAME[edit.mode]} ${edit.line}: ${frequencyLabel(edit.factor).toLowerCase()}`;
     case 'charge':
       return `Congestion charge on ${edit.name}: €${edit.euros} ${hoursText(edit.from, edit.to)}`;
+    case 'parking':
+      return `Parking surcharge in ${edit.name}: €${edit.euros} an hour ${hoursText(edit.from, edit.to)}`;
     case 'line': {
       const ends = `${edit.stops[0]?.name ?? ''} - ${edit.stops.at(-1)?.name ?? ''}`;
       const every = Math.round((edit.headway / 60) * 10) / 10;
@@ -420,6 +441,7 @@ function compact(edit: Edit): Edit {
     case 'frequency':
       return edit;
     case 'charge':
+    case 'parking':
       return { ...edit, area: edit.area.map((p) => ({ x: Math.round(p.x), z: Math.round(p.z) })) };
     case 'line':
       return {
@@ -450,6 +472,7 @@ const KINDS = new Set([
   'frequency',
   'line',
   'charge',
+  'parking',
 ]);
 
 /** Edits from a saved list; throws if it is not one. Unknown kinds are dropped. */
@@ -505,6 +528,8 @@ export function parseEdits(text: string): Edit[] {
       case 'roundabout':
         return isJunction(e.junction) && (e.lanes === 1 || e.lanes === 2);
       case 'charge':
+      case 'parking': {
+        const [lo, hi] = e.kind === 'charge' ? CHARGE_RANGE : PARKING_RANGE;
         return (
           typeof e.name === 'string' &&
           Array.isArray(e.area) &&
@@ -512,8 +537,8 @@ export function parseEdits(text: string): Edit[] {
           e.area.length <= MAX_AREA_POINTS &&
           e.area.every((p) => Number.isFinite(p?.x) && Number.isFinite(p?.z)) &&
           Number.isFinite(e.euros) &&
-          e.euros >= CHARGE_RANGE[0] &&
-          e.euros <= CHARGE_RANGE[1] &&
+          e.euros >= lo &&
+          e.euros <= hi &&
           Number.isInteger(e.from) &&
           Number.isInteger(e.to) &&
           e.from >= 0 &&
@@ -521,6 +546,7 @@ export function parseEdits(text: string): Edit[] {
           e.to >= 0 &&
           e.to <= 1440
         );
+      }
       case 'line':
         return (
           typeof e.name === 'string' &&

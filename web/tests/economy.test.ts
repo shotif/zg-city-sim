@@ -13,6 +13,9 @@ import {
   INCOME_TAX,
   LANE_KM,
   NEW_LIGHTS,
+  PARKING_KM2,
+  PARKING_RUNNING,
+  PARKING_SETUP,
   RETIMING,
   ROUNDABOUT,
   SERVICE_DAYS,
@@ -230,6 +233,7 @@ describe('the balance', () => {
       service: 0,
       fares: 0,
       charges: 0,
+      parking: 0,
     };
     budget.tick(6 * 3600);
     budget.tick(18 * 3600);
@@ -312,5 +316,32 @@ describe('a congestion charge', () => {
     // A new engine counts from nothing again.
     budget.chargesPaid(10, 9 * 3600);
     expect(budget.balance).toBeCloseTo(BASE_INCOME + year);
+  });
+});
+
+describe('a parking surcharge', () => {
+  it('costs signs and machines by its area, and pays in what drivers pay apart from charges', () => {
+    const parking = {
+      kind: 'parking' as const,
+      name: 'Donji grad',
+      area: [
+        { x: 0, z: 0 },
+        { x: 2000, z: 0 },
+        { x: 2000, z: 1000 },
+        { x: 0, z: 1000 },
+      ],
+      euros: 1,
+      from: 420,
+      to: 1260,
+    };
+    expect(editCost(parking).build).toBeCloseTo(PARKING_SETUP + 2 * PARKING_KM2);
+    const budget = new Budget();
+    budget.chargesPaid(0, 7 * 3600);
+    budget.parkingPaid(0, 7 * 3600);
+    budget.parkingPaid(500, 8 * 3600);
+    const year = 500 * CHARGE_DAYS * (1 - PARKING_RUNNING);
+    expect(budget.balance).toBeCloseTo(BASE_INCOME + year);
+    expect(budget.yearly.parking).toBeCloseTo(year);
+    expect(budget.yearly.charges).toBe(0);
   });
 });
