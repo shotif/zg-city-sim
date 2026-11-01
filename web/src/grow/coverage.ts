@@ -246,3 +246,43 @@ export function startFactor(v: number): number {
 export function serviceScore(c: Record<NeedKind, Float32Array>, i: number): number {
   return NEED_KINDS.reduce((a, k) => a + Math.min(1, c[k][i]), 0) / NEED_KINDS.length;
 }
+
+/** Fire and police (M20d): how soon each station's vehicles reach a street by road. */
+export type ResponseKind = 'fire' | 'police';
+export const RESPONSE_KINDS: readonly ResponseKind[] = ['fire', 'police'];
+
+/** Driving time each should be within (s): fire 13 min (the 15 min from the alarm a draft
+ * Croatian rule sets for urban areas, less 2 to turn out, an estimate); police 10 min (no
+ * Croatian standard found; Edinburgh's urban target). */
+export const RESPONSE_TARGET: Record<ResponseKind, number> = { fire: 13 * 60, police: 10 * 60 };
+
+/** Value land within the target gains (estimates). */
+export const RESPONSE_BONUS: Record<ResponseKind, number> = { fire: 0.03, police: 0.02 };
+
+/** A response time's colour on the map: green within half the target, amber within it, red
+ * beyond. */
+export function responseColor(target: number): (t: number) => [number, number, number] {
+  return (t) => {
+    if (!Number.isFinite(t)) return [0.8, 0.15, 0.12];
+    return coverageColor(t <= target / 2 ? 1 : t <= target ? 0.6 : 0);
+  };
+}
+
+/** The share of residents whose street a station's vehicles reach within `target` s
+ * (`times` per edge; `edges` and `residents` per home; `include`: count this home). */
+export function shareWithin(
+  times: ArrayLike<number>,
+  edges: ArrayLike<number>,
+  residents: ArrayLike<number>,
+  target: number,
+  include: (i: number) => boolean = () => true,
+): number {
+  let [within, total] = [0, 0];
+  for (let i = 0; i < residents.length; i++) {
+    if (!include(i)) continue;
+    total += residents[i];
+    const t = edges[i] >= 0 ? times[edges[i]] : Infinity;
+    if (t <= target) within += residents[i];
+  }
+  return total > 0 ? within / total : 0;
+}

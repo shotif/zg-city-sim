@@ -5546,6 +5546,51 @@ impl Engine {
             .collect()
     }
 
+    /// How soon a vehicle from any of the roads in `sources` reaches each edge on the
+    /// travel times measured now (s; infinite beyond `max` or where none reaches it): fire
+    /// and police stations' response times (M20d), driving as cars do.
+    pub fn response_times(&mut self, sources: &[u32], max: f32) -> Vec<f32> {
+        let n = self.net.edge_count();
+        let mut best = vec![f32::INFINITY; n];
+        let kind = self.hierarchy.as_ref().map(|h| h.time_kind());
+        for &from in sources {
+            if (from as usize) >= n {
+                continue;
+            }
+            if let (Some(h), Some(kind)) = (self.hierarchy.as_mut(), kind)
+                && h.one_to_all(
+                    &self.net,
+                    &self.travel_time,
+                    kind,
+                    from,
+                    &mut self.one_to_all,
+                )
+            {
+                for (r, &t) in self.one_to_all.iter().enumerate() {
+                    let e = h.cch.edge[r] as usize;
+                    if t <= max && e < n && t < best[e] {
+                        best[e] = t;
+                    }
+                }
+            } else {
+                self.router.reach(
+                    &self.net,
+                    &self.travel_time,
+                    from,
+                    max,
+                    vclass::PASSENGER,
+                    |e, t| {
+                        let e = e as usize;
+                        if e < n && t < best[e] {
+                            best[e] = t;
+                        }
+                    },
+                );
+            }
+        }
+        best
+    }
+
     /// Edits in force.
     pub fn edits(&self) -> &[Edit] {
         &self.edits

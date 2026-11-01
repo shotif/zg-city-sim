@@ -175,6 +175,9 @@ export class LandValue {
   /** Per lot: services within reach, 0-1 (the mean of its coverages, each up to one;
    * M20b), 0 until measured. */
   readonly services: Float32Array;
+  /** Per lot: value gained by fire and police within their targets (M20d), 0 until
+   * measured. */
+  readonly response: Float32Array;
   /** Reach that scores 100: the highest at the first measurement. */
   reference = 0;
   /** Goes up with every change, so the map knows to redraw. */
@@ -191,6 +194,13 @@ export class LandValue {
     this.value = new Float32Array(lots.count).fill(NaN);
     this.noise = new Float32Array(lots.count);
     this.services = new Float32Array(lots.count);
+    this.response = new Float32Array(lots.count);
+  }
+
+  /** Value each lot gains from fire and police within their targets (a share). */
+  setResponse(bonus: Float32Array): void {
+    this.response.set(bonus);
+    this.compute();
   }
 
   /** Services within reach of each lot (0-1). */
@@ -235,7 +245,7 @@ export class LandValue {
         : 100 *
           (reach / this.reference) ** ACCESS_POWER *
           (1 + (GREEN_BONUS * lots.green[i]) / 100) *
-          (1 + SERVICE_BONUS * this.services[i]) *
+          (1 + SERVICE_BONUS * this.services[i] + this.response[i]) *
           (1 - noiseLoss(this.noise[i]));
     }
     this.version++;

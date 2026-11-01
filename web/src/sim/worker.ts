@@ -354,6 +354,14 @@ self.onmessage = (event: MessageEvent<ToWorker>) => {
       post({ type: 'linePlan', id: message.id, plan }, [plan.buffer]);
       break;
     }
+    case 'responseTimes': {
+      const times = engine
+        ? engine.responseTimes(message.sources, message.max)
+        : new Float32Array(0);
+      const time = engine ? engine.stats()[0] : 0;
+      post({ type: 'responseTimes', id: message.id, time, times }, [times.buffer]);
+      break;
+    }
     case 'reach':
       reachJob = {
         ...message,

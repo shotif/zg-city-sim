@@ -1499,7 +1499,17 @@ test('measures places within reach of homes and colours the lots by them', async
   });
   expect(median).toBeGreaterThan(0.1);
   expect(median).toBeLessThan(0.9);
-  await panel.getByText('Colour the lots by it').click();
+  // Fire and police response on the simulated roads (M20d).
+  await page.waitForFunction(() => window.__ZG__?.response !== undefined, null, {
+    timeout: 120_000,
+  });
+  await expect(panel.locator('.services-coverage').last()).toContainText(
+    /Fire stations: \d+ % of residents within 13 min by road/,
+  );
+  await expect(panel.locator('.services-coverage').last()).toContainText(
+    /Police stations: \d+ % of residents within 10 min by road/,
+  );
+  await panel.getByLabel('Colour the lots by').selectOption({ label: 'places within reach' });
   await page.evaluate(() => window.__ZG__?.lookAt(-2650, 5604, 1200));
   await page.waitForTimeout(3000);
   await page.screenshot({ path: testInfo.outputPath('coverage.png') });

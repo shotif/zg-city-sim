@@ -5332,3 +5332,37 @@ fn lorry_ban(hierarchy: bool) {
     run_until(&mut engine, 200.0, |_| {});
     assert_eq!(engine.edge_lorries[bm as usize], 1);
 }
+
+#[test]
+fn response_times_are_the_soonest_from_any_station() {
+    // By A* and on the hierarchy.
+    for hierarchy in [false, true] {
+        let (mut engine, [direct, up, down, last]) = two_ways();
+        if hierarchy {
+            engine.build_hierarchy();
+        }
+        let t = |e: u32| engine.travel_time[e as usize];
+        let (t_direct, t_down, t_last) = (t(direct), t(down), t(last));
+        // From the direct road: on to the last road; the way round leads elsewhere.
+        let from_direct = engine.response_times(&[direct], 1e6);
+        assert!(
+            (from_direct[last as usize] - t_last).abs() < 1e-3,
+            "{hierarchy}"
+        );
+        assert_eq!(from_direct[up as usize], f32::INFINITY);
+        // From both: the soonest of each.
+        let both = engine.response_times(&[direct, up], 1e6);
+        assert!((both[down as usize] - t_down).abs() < 1e-3);
+        assert!((both[last as usize] - t_last).abs() < 1e-3);
+        assert!(both[direct as usize] < t_direct + 1e-3);
+        // Beyond the time allowed: not reached.
+        let short = engine.response_times(&[up], t_down * 0.5);
+        assert_eq!(short[last as usize], f32::INFINITY);
+        assert!(
+            engine
+                .response_times(&[], 1e6)
+                .iter()
+                .all(|t| t.is_infinite())
+        );
+    }
+}

@@ -65,11 +65,22 @@ import { DayLog, type DayRecord, PeakMeter } from './game/days';
 import { STAGES, judge, loadCareer, saveCareer } from './game/career';
 import { lotDistricts } from './game/districts';
 import { CareerPanel, stagesDoneNotice } from './ui/careerPanel';
-import { type ServicesData, ServicesPanel, loadServices } from './ui/servicesPanel';
+import {
+  type CoverageMap,
+  type ServicesData,
+  ServicesPanel,
+  loadServices,
+} from './ui/servicesPanel';
 import {
   type Homes,
   coverage,
   homesFromDemand,
+  RESPONSE_BONUS,
+  RESPONSE_KINDS,
+  RESPONSE_TARGET,
+  type ResponseKind,
+  responseColor,
+  shareWithin,
   serviceScore,
   shortfall,
   withGrown,
@@ -386,6 +397,8 @@ export interface DebugApi {
   services?: import('./ui/servicesPanel').ServicesData;
   /** How long the last measurement of service coverage took (ms; M20b). */
   coverageMs?: number;
+  /** The City's residents within fire and police response targets (M20d). */
+  response?: Record<'fire' | 'police', number>;
   /** The career's progress (M19c). */
   career?: import('./game/career').CareerState;
   /** The ground point under a screen point (CSS pixels in the canvas). */
@@ -459,7 +472,16 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
   let baseHomes: (Homes & { inCity: Uint8Array }) | undefined;
   let coverageAt = -Infinity;
   let lotScore: Float32Array | undefined;
-  let coverageMapOn = false;
+  /** What colours the lots, and each lot's response times (M20d). */
+  let coverageMap: CoverageMap = 'none';
+  const lotResponse: Partial<Record<ResponseKind, Float32Array>> = {};
+  const showLotMap = () => {
+    if (!zoning) return;
+    if (coverageMap === 'places') zoning.showCoverage(lotScore);
+    else if (coverageMap === 'fire' || coverageMap === 'police') {
+      zoning.showCoverage(lotResponse[coverageMap], responseColor(RESPONSE_TARGET[coverageMap]));
+    } else zoning.showCoverage(undefined);
+  };
   /** Measure coverage again, at most every 15 simulated minutes unless `force`d. */
   const updateCoverage = (now: number, force = false) => {
     const data = servicesData;
@@ -489,9 +511,66 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
       lotScore = score;
       zoning.growth.coverage = score;
       zoning.landValue.setServices(score);
-      if (coverageMapOn) zoning.showCoverage(score);
+      if (coverageMap === 'places') showLotMap();
     }
     debug.coverageMs = performance.now() - started;
+  };
+  /** Fire and police response times (M20d): measured on the simulation's travel times every
+   * simulated hour, or when the stations change (`force`). */
+  let responseAt = -Infinity;
+  let responseBusy = false;
+  const measureResponse = (now: number, force = false) => {
+    const client = sim;
+    const data = servicesData;
+    const arrays = todayDemand?.arrays;
+    const base = baseHomes;
+    if (!client?.ready || client.warming || !data || !arrays?.demandEdge || !base) return;
+    if (responseBusy || (!force && now >= responseAt && now - responseAt < 3600)) return;
+    responseAt = now;
+    responseBusy = true;
+    const stations = [...data.services, ...builtNow];
+    void Promise.all(
+      RESPONSE_KINDS.map((kind) =>
+        client.responseTimes(
+          Uint32Array.from(
+            stations.filter((s) => s.kind === kind && s.edge >= 0),
+            (s) => s.edge,
+          ),
+          3600,
+        ),
+      ),
+    ).then((results) => {
+      responseBusy = false;
+      const grown = zoning?.grownHomes(now) ?? [];
+      const demandEdge = arrays.demandEdge;
+      const edges = Int32Array.from({ length: base.x.length + grown.length }, (_, i) =>
+        i < base.x.length ? demandEdge[i] : grown[i - base.x.length].edge,
+      );
+      const residents = Float32Array.from({ length: edges.length }, (_, i) =>
+        i < base.x.length ? base.residents[i] : grown[i - base.x.length].residents,
+      );
+      const inCity = (i: number) => i >= base.x.length || base.inCity[i] === 1;
+      const shares = {} as Record<ResponseKind, number>;
+      const bonus = zoning ? new Float32Array(zoning.lots.count) : undefined;
+      RESPONSE_KINDS.forEach((kind, k) => {
+        const times = results[k].times;
+        const target = RESPONSE_TARGET[kind];
+        shares[kind] = shareWithin(times, edges, residents, target, inCity);
+        if (zoning && bonus) {
+          const lots = zoning.lots;
+          const at = new Float32Array(lots.count);
+          for (let i = 0; i < lots.count; i++) {
+            at[i] = times[lots.edge[i]] ?? Infinity;
+            if (at[i] <= target) bonus[i] += RESPONSE_BONUS[kind];
+          }
+          lotResponse[kind] = at;
+        }
+      });
+      servicesPanel?.setResponse(shares);
+      debug.response = shares;
+      if (zoning && bonus) zoning.landValue.setResponse(bonus);
+      if (coverageMap === 'fire' || coverageMap === 'police') showLotMap();
+    });
   };
   let openTransit: (() => void) | undefined;
   /** Whether the player wants the panel open (it loads its data on first opening). */
@@ -1167,6 +1246,7 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
           applyDemand();
         }
         updateCoverage(sim?.cur?.time ?? 0, true);
+        measureResponse(sim?.cur?.time ?? 0, true);
         editWordsNow = editWords(resolved);
         sim?.setEdits(editWordsNow);
         newWaysNow = resolved.flatMap((r) =>
@@ -1660,9 +1740,9 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
                   onPlace: (kind) => {
                     placingService = kind;
                   },
-                  onCoverageMap: (on) => {
-                    coverageMapOn = on;
-                    zoning?.showCoverage(on ? lotScore : undefined);
+                  onCoverageMap: (map) => {
+                    coverageMap = map;
+                    showLotMap();
                   },
                 });
                 if (zoning) servicesPanel.enableCoverageMap();
@@ -2011,6 +2091,7 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
                 budgetTool.chargesPaid(paid, running.cur.time);
                 budgetTool.parkingPaid(parked, running.cur.time);
                 updateCoverage(running.cur.time);
+                measureResponse(running.cur.time);
                 // The day's numbers; at midnight, the day just ended (M19b).
                 if (s) {
                   const now = running.cur.time;

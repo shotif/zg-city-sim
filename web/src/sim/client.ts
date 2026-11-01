@@ -104,6 +104,7 @@ export class SimClient {
       case 'linePlan':
       case 'riders':
       case 'journeys':
+      case 'responseTimes':
       case 'reach': {
         const resolve = this.waiting.get(message.id);
         this.waiting.delete(message.id);
@@ -227,6 +228,17 @@ export class SimClient {
       id: ++this.requestId,
       sources,
       decay,
+      max,
+    });
+  }
+
+  /** How soon a vehicle from any of `sources` reaches each edge on the travel times the
+   * simulation measures (s; Infinity beyond `max`), and the simulated time (M20d). */
+  responseTimes(sources: Uint32Array, max: number): Promise<{ time: number; times: Float32Array }> {
+    return this.ask<Extract<FromWorker, { type: 'responseTimes' }>>({
+      type: 'responseTimes',
+      id: ++this.requestId,
+      sources,
       max,
     });
   }

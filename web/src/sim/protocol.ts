@@ -48,6 +48,8 @@ export type ToWorker =
   /** Homes and jobs within reach by car of each source edge on the measured travel times,
    * weighted by exp(-time / decay) up to `max` seconds (engine `reach`). */
   | { type: 'reach'; id: number; sources: Uint32Array; decay: number; max: number }
+  /** How soon a vehicle from any of `sources` reaches each edge, up to `max` s (M20d). */
+  | { type: 'responseTimes'; id: number; sources: Uint32Array; max: number }
   /** The buses, trams and trains running, and (if `trip` is not -1) that trip's path. */
   | { type: 'transit'; id: number; trip: number }
   /** Plan a new line's way (M9c, `TrafficEngine.planLine`). */
@@ -100,6 +102,8 @@ export type FromWorker =
   /** Homes and jobs within reach of each source asked for (two numbers each), measured
    * over a few batches ending at simulated time `time`. */
   | { type: 'reach'; id: number; time: number; values: Float32Array }
+  /** Seconds to each edge (Infinity: not reached), at simulated time `time` (M20d). */
+  | { type: 'responseTimes'; id: number; time: number; times: Float32Array }
   /** The edges of the trip asked for, and two numbers per vehicle running: its trip and
    * how late it is (s), at simulated time `time`. */
   | { type: 'transit'; id: number; time: number; path: Uint32Array; running: Float32Array }

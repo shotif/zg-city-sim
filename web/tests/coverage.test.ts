@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MIN_START,
+  RESPONSE_TARGET,
+  responseColor,
+  shareWithin,
   NEED,
   coverage,
   coverageColor,
@@ -68,5 +71,18 @@ describe('services within reach', () => {
     expect([...all.x, ...all.residents, ...all.inCity]).toEqual([1, 4, 3, 6, 0, 1]);
     expect(coverageColor(2)).toEqual(coverageColor(1));
     expect(coverageColor(0)[0]).toBeGreaterThan(coverageColor(1)[0]);
+  });
+
+  it('counts residents a fire or police station reaches within its target', () => {
+    // Three streets reached in 5, 12 and 20 minutes; a fourth not at all.
+    const times = Float32Array.of(300, 720, 1200, Infinity);
+    const edges = Int32Array.of(0, 1, 2, 3, -1);
+    const residents = Float32Array.of(100, 100, 100, 100, 100);
+    expect(shareWithin(times, edges, residents, RESPONSE_TARGET.fire)).toBeCloseTo(0.4);
+    expect(shareWithin(times, edges, residents, RESPONSE_TARGET.police)).toBeCloseTo(0.2);
+    expect(shareWithin(times, edges, residents, RESPONSE_TARGET.fire, (i) => i < 2)).toBe(1);
+    const color = responseColor(RESPONSE_TARGET.police);
+    expect(color(200)).not.toEqual(color(500));
+    expect(color(Infinity)).toEqual(color(10_000));
   });
 });

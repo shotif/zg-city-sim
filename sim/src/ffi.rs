@@ -770,6 +770,39 @@ pub unsafe extern "C" fn zg_reach(
     })
 }
 
+/// How soon a vehicle from any of `n` roads at `sources` reaches each edge on the measured
+/// travel times (`Engine::response_times`, up to `max` seconds; infinite beyond), written
+/// to `out` as one f32 per edge (`zg_edge_count` of them). Returns 0, or -1 without an
+/// engine.
+///
+/// # Safety
+/// `sources` must point to `n` u32 values and `out` to room for `zg_edge_count()` f32 values.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zg_response_times(
+    sources: *const u32,
+    n: usize,
+    max: f32,
+    out: *mut f32,
+) -> i32 {
+    if sources.is_null() || out.is_null() {
+        return 0;
+    }
+    let list = if n == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(sources, n) }
+    };
+    with_state(|s| {
+        let Some(e) = s.engine.as_mut() else {
+            return -1;
+        };
+        let times = e.response_times(list, max);
+        let out = unsafe { std::slice::from_raw_parts_mut(out, times.len()) };
+        out.copy_from_slice(&times);
+        0
+    })
+}
+
 /// Pointer to the number of vehicles that have driven onto each edge since the start
 /// (u32 per edge, `zg_edge_count` of them).
 #[unsafe(no_mangle)]

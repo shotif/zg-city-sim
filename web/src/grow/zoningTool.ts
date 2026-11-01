@@ -79,10 +79,14 @@ export interface ZoningTool {
   readonly strokes: readonly Stroke[];
   /** Paint a stroke as the pointer would (scene points). */
   paint(brush: Brush, radius: number, points: [number, number][]): void;
-  /** Colour the lots by services score (per lot, M20b), or as before (undefined). */
-  showCoverage(score: Float32Array | undefined): void;
+  /** Colour the lots by services score (per lot, M20b) or another measure coloured by
+   * `color` (M20d), or as before (undefined). */
+  showCoverage(
+    values: Float32Array | undefined,
+    color?: (v: number) => [number, number, number],
+  ): void;
   /** Homes grown and finished at simulated time `now`: their residents at their first lot. */
-  grownHomes(now: number): { x: number; z: number; residents: number }[];
+  grownHomes(now: number): { x: number; z: number; residents: number; edge: number }[];
 }
 
 /** A stroke takes a new point once the pointer moved this share of the brush radius. */
@@ -334,9 +338,9 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     get strokes() {
       return strokes;
     },
-    showCoverage: (least) => {
-      coverageShown = least;
-      if (least) layer.setValues(least, coverageColor);
+    showCoverage: (values, color = coverageColor) => {
+      coverageShown = values;
+      if (values) layer.setValues(values, color);
       else layer.setValues(valueShown ? landValue.value : undefined);
       deps.invalidate();
     },
@@ -345,7 +349,8 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
         if (!b || !finished(b, t)) return [];
         const residents = occupants(b).residents;
         const lot = b.lots[0];
-        return residents > 0 ? [{ x: lots.x[lot], z: lots.z[lot], residents }] : [];
+        const edge = lots.edge[lot];
+        return residents > 0 ? [{ x: lots.x[lot], z: lots.z[lot], residents, edge }] : [];
       }),
     paint: (brush, radius, points) => {
       const s: Stroke = {

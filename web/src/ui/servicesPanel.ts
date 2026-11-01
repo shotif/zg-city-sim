@@ -4,7 +4,14 @@
  * district; their markers show on the map while it is open.
  */
 import { districtName } from '../game/career';
-import { NEED_KINDS, type NeedKind, REACH } from '../grow/coverage';
+import {
+  NEED_KINDS,
+  type NeedKind,
+  REACH,
+  RESPONSE_KINDS,
+  RESPONSE_TARGET,
+  type ResponseKind,
+} from '../grow/coverage';
 import { euros } from '../grow/economy';
 import { NEW_SERVICE } from '../grow/newServices';
 import { button, el } from './buildPanel';
@@ -56,11 +63,14 @@ export interface ServicesPanelCallbacks {
   onShow(s: Service): void;
   /** The markers changed: draw the view again. */
   invalidate(): void;
-  /** Colour the zoned lots by coverage, or not (M20b). */
-  onCoverageMap?(on: boolean): void;
+  /** Colour the lots by places within reach (M20b), a response time (M20d), or zone. */
+  onCoverageMap?(map: CoverageMap): void;
   /** Place a new service of this kind with the next click on the map, or stop (M20c). */
   onPlace?(kind: ServiceKind | undefined): void;
 }
+
+/** What colours the lots on the map. */
+export type CoverageMap = 'none' | 'places' | 'fire' | 'police';
 
 /** Residents short of places within reach, and the places short, of each kind (the City's;
  * grow/coverage.ts `shortfall`). */
@@ -74,6 +84,7 @@ export class ServicesPanel {
   private readonly district: HTMLSelectElement;
   private readonly coverageLines: HTMLElement;
   private readonly coverageMap: HTMLElement;
+  private readonly responseLines: HTMLElement;
   private readonly newKind: HTMLSelectElement;
   private readonly placeButton: HTMLButtonElement;
   private readonly placeStatus: HTMLElement;
@@ -174,12 +185,26 @@ export class ServicesPanel {
     el('h3', 'build-count', this.panel).textContent = 'Places within reach';
     this.coverageLines = el('div', 'services-coverage', this.panel);
     el('p', 'build-note', this.coverageLines).textContent = 'Measured once the traffic has loaded.';
-    this.coverageMap = el('label', 'build-label services-kind', this.panel);
+    this.responseLines = el('div', 'services-coverage', this.panel);
+    this.coverageMap = el('label', 'build-label', this.panel);
     this.coverageMap.hidden = true;
-    const mapBox = el('input', '', this.coverageMap);
-    mapBox.type = 'checkbox';
-    mapBox.addEventListener('change', () => callbacks.onCoverageMap?.(mapBox.checked));
-    this.coverageMap.append('Colour the lots by it (close in): green has places for all');
+    this.coverageMap.append('Colour the lots (close in) by ');
+    const mapPick = el('select', 'build-select', this.coverageMap);
+    mapPick.setAttribute('aria-label', 'Colour the lots by');
+    for (const [value, text] of [
+      ['none', 'their zones'],
+      ['places', 'places within reach'],
+      ['fire', 'fire response'],
+      ['police', 'police response'],
+    ] as const) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = text;
+      mapPick.append(o);
+    }
+    mapPick.addEventListener('change', () =>
+      callbacks.onCoverageMap?.(mapPick.value as CoverageMap),
+    );
     const pick = el('label', 'build-label', this.panel);
     pick.append('District ');
     this.district = el('select', 'build-select', pick);
@@ -270,6 +295,25 @@ export class ServicesPanel {
           `${k.label}: ${pct} % of residents have fewer places than they need within ` +
           `${(REACH[kind] / 1000).toLocaleString('en-GB')} km, about ${n(c.short)} ` +
           `${k.places} short.`;
+        return line;
+      }),
+    );
+  }
+
+  /** Fire and police response (M20d): the share of the City's residents within each
+   * target. */
+  setResponse(shares: Record<ResponseKind, number>): void {
+    this.responseLines.replaceChildren(
+      ...RESPONSE_KINDS.map((kind) => {
+        const line = document.createElement('p');
+        line.className = 'build-note';
+        const min = Math.round(RESPONSE_TARGET[kind] / 60);
+        line.textContent =
+          `${SERVICE_KINDS[kind].label}: ${Math.round(100 * shares[kind])} % of residents ` +
+          `within ${min} min by road` +
+          (kind === 'fire'
+            ? ' (the 15 min from the alarm a Croatian rule sets, less 2 to turn out).'
+            : ' (an estimate; no Croatian standard was found).');
         return line;
       }),
     );

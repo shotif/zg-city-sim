@@ -23,6 +23,7 @@ export interface EngineExports {
   zg_signal_len(which: number): number;
   zg_route_time(from: number, to: number): number;
   zg_reach(sources: number, count: number, decay: number, max: number, out: number): number;
+  zg_response_times(sources: number, count: number, max: number, out: number): number;
   zg_edge_entered_ptr(): number;
   zg_step(steps: number): number;
   zg_dt(): number;
@@ -463,6 +464,22 @@ export class TrafficEngine {
     const result = new Float32Array(this.memory, out, 2 * n).slice();
     ex.zg_free(ptr, 4 * n);
     ex.zg_free(out, 8 * n);
+    return result;
+  }
+
+  /** How soon a vehicle from any of `sources` reaches each edge on the measured travel
+   * times (s; Infinity beyond `max`): stations' response times (M20d). */
+  responseTimes(sources: Uint32Array, max: number): Float32Array {
+    const ex = this.exports;
+    const n = sources.length;
+    const edges = ex.zg_edge_count();
+    const ptr = ex.zg_alloc(Math.max(4, 4 * n));
+    const out = ex.zg_alloc(Math.max(4, 4 * edges));
+    new Uint32Array(this.memory, ptr, n).set(sources);
+    ex.zg_response_times(ptr, n, max, out);
+    const result = new Float32Array(this.memory, out, edges).slice();
+    ex.zg_free(ptr, Math.max(4, 4 * n));
+    ex.zg_free(out, Math.max(4, 4 * edges));
     return result;
   }
 
