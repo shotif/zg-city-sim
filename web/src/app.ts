@@ -61,6 +61,8 @@ import { loadLots } from './grow/lots';
 import { BudgetTool } from './grow/budgetTool';
 import { type Cities, type City, GAME_MODES, LINK_CITY } from './game/cities';
 import { CitiesPanel } from './ui/citiesPanel';
+import { DayLog, type DayRecord } from './game/days';
+import { DaysPanel, change, hoursLost } from './ui/daysPanel';
 import { CitySound } from './ui/sound';
 import {
   type LineKm,
@@ -362,6 +364,8 @@ export interface DebugApi {
   policies?: PolicySection;
   /** The Cities panel (M19a). */
   cities?: CitiesPanel;
+  /** The days played (M19b). */
+  days?: DayLog;
   /** The ground point under a screen point (CSS pixels in the canvas). */
   groundAt?(x: number, y: number): { x: number; z: number } | undefined;
   /** The Zones tool, once the lots are loaded. */
@@ -561,6 +565,11 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
       if (enabled) closeOthers('cities');
       citiesPanel.setVisible(enabled);
     },
+    onDays: (enabled) => {
+      if (enabled) closeOthers('days');
+      daysPanel.setVisible(enabled);
+      showDays();
+    },
     onTransit: (enabled) => {
       transitWanted = enabled;
       if (enabled) {
@@ -574,7 +583,7 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
     },
   };
   /** One panel on the right at a time: close the others than `keep`. */
-  const closeOthers = (keep: 'build' | 'zones' | 'budget' | 'transit' | 'cities') => {
+  const closeOthers = (keep: 'build' | 'zones' | 'budget' | 'transit' | 'cities' | 'days') => {
     if (keep !== 'transit' && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
     if (keep !== 'build' && buildPanel?.visible) {
       hud.setBuild(false);
@@ -591,6 +600,10 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
     if (keep !== 'cities' && citiesPanel.visible) {
       hud.setCities(false);
       citiesPanel.setVisible(false);
+    }
+    if (keep !== 'days' && daysPanel.visible) {
+      hud.setDays(false);
+      daysPanel.setVisible(false);
     }
   };
   const hud = new Hud(container, hudCallbacks);
@@ -624,6 +637,16 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
     },
   });
   debug.cities = citiesPanel;
+  // Leaving the page keeps the balance as it is, not as last saved.
+  window.addEventListener('pagehide', () => budgetTool.save());
+  // The days played (M19b): each day's numbers at midnight, kept with the city.
+  const dayLog = new DayLog(() => budgetTool.budget.firstDay + 1);
+  const daysPanel = new DaysPanel(hud.element, () => hud.setDays(false, hudCallbacks));
+  debug.days = dayLog;
+  hud.enableDays();
+  let daySoFar: DayRecord | undefined;
+  const showDays = () => daysPanel.show(daySoFar, dayLog.days, (day) => dayLog.before(day));
+  let dayNoticeUntil = 0;
   hud.setTrafficLegend(TRAFFIC_BANDS.map(({ color, label }) => ({ color, label })));
 
   try {
@@ -1777,6 +1800,44 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
                 const parked = s?.[STAT.parkingPaid] ?? 0;
                 budgetTool.chargesPaid(paid, running.cur.time);
                 budgetTool.parkingPaid(parked, running.cur.time);
+                // The day's numbers; at midnight, the day just ended (M19b).
+                if (s) {
+                  const now = running.cur.time;
+                  const totals = {
+                    trips: s[STAT.arrived],
+                    meanTripTime: s[STAT.meanTripTime],
+                    vehicleHours: s[STAT.vehicleHours] ?? 0,
+                    delayHours: s[STAT.delayHours] ?? 0,
+                    vehicleKm: s[STAT.vehicleKm] ?? 0,
+                  };
+                  const ended = dayLog.tick(now, totals, !running.warming, () => {
+                    const r = ridersNow?.ready && !ridersNow.busy ? ridersNow : undefined;
+                    const g = zoning?.growth.totals(now);
+                    const motorised = r ? r.now + r.carToday - r.moved : 0;
+                    return {
+                      ptTrips: r?.now,
+                      ptShare: r && motorised > 0 ? r.now / motorised : undefined,
+                      residents: g?.residents,
+                      jobs: g?.jobs,
+                      balance: mode === 'reality' ? undefined : budgetTool.budget.balance,
+                    };
+                  });
+                  daySoFar = dayLog.sofar();
+                  if (ended) {
+                    const before = dayLog.before(ended.day);
+                    hud.setNotice(
+                      `Day ${ended.day} ended: ${hoursLost(ended.delayHours)} in traffic` +
+                        (ended.from === 0
+                          ? change(ended.delayHours, before?.delayHours, before?.day)
+                          : '') +
+                        '. Days (D) has more.',
+                    );
+                    dayNoticeUntil = performance.now() + 20_000;
+                  } else if (dayNoticeUntil && performance.now() > dayNoticeUntil) {
+                    dayNoticeUntil = 0;
+                    hud.setNotice(null);
+                  }
+                }
                 policySection?.setPaid(
                   {
                     euros: paid,
@@ -1979,7 +2040,9 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
             trains: sim.stats[STAT.trains] ?? 0,
             bikes: sim.stats[STAT.bikes] ?? 0,
             meanSpeed: sim.stats[STAT.meanSpeed] * 3.6,
+            day: sim.warming ? undefined : dayLog.dayAt(sim.displayTime(now)),
           });
+          if (daysPanel.visible) showDays();
         }
       }
       // The terrain's tiles for this view (M6f).

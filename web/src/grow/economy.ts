@@ -410,8 +410,18 @@ export class Budget {
       : [this.days + this.last / YEAR, Math.round(this.balance)];
   }
 
+  /** Days counted before this visit's first (0 on a city's first visit). */
+  get firstDay(): number {
+    return this.days;
+  }
+
+  /** What is kept, the balance now ending the history, so a visit after it goes on from the
+   * day it was left on (M19b). */
   save(): SavedBudget {
-    return { version: 1, balance: this.balance, spent: this.spent, history: this.history };
+    const now = this.current();
+    const last = this.history.at(-1);
+    const history = now && (!last || now[0] > last[0]) ? [...this.history, now] : this.history;
+    return { version: 1, balance: this.balance, spent: this.spent, history };
   }
 }
 

@@ -92,6 +92,17 @@ canvas {
   gap: 4px;
 }
 
+.hud-sim-day {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hud-sim-day[hidden] {
+  display: none;
+}
+
 .hud-sim-clock {
   font-size: 20px;
   font-weight: 600;
@@ -1287,4 +1298,9 @@ a.news-headline:hover {
   margin: 2px 0 4px;
   color: var(--text-dim);
   font-size: 12px;
+}
+
+/* The Days panel (M19b). */
+.days-today .build-note {
+  margin: 2px 0;
 }

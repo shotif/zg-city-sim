@@ -26,6 +26,8 @@ export interface HudCallbacks {
   onShow?(kind: Shown, on: boolean): void;
   /** The Cities panel open or closed (M19a). */
   onCities?(enabled: boolean): void;
+  /** The Days panel open or closed (M19b). */
+  onDays?(enabled: boolean): void;
 }
 
 /** What the view can leave out. */
@@ -67,6 +69,8 @@ export interface HudSim {
   bikes: number;
   /** Mean speed of all traffic, km/h. */
   meanSpeed: number;
+  /** The city's day number (M19b). */
+  day?: number;
 }
 
 export const SIM_SPEEDS = [1, 4, 16, 64];
@@ -140,6 +144,9 @@ export class Hud {
   private readonly titleText: HTMLElement;
   private readonly cityButton: HTMLButtonElement;
   private cities = false;
+  private readonly daysButton: HTMLButtonElement;
+  private days = false;
+  private readonly simDay: HTMLElement;
   private readonly showButtons = new Map<Shown, HTMLButtonElement>();
   private readonly shown = new Set<Shown>(SHOWN.map((s) => s.kind));
   private readonly dayButton: HTMLButtonElement;
@@ -170,6 +177,7 @@ export class Hud {
     this.sim = el('div', 'hud-panel hud-sim', left);
     this.sim.hidden = true;
     const clockRow = el('div', 'hud-sim-row', this.sim);
+    this.simDay = el('span', 'hud-sim-day', clockRow);
     this.simClock = el('span', 'hud-sim-clock', clockRow);
     this.pauseButton = el('button', 'hud-button hud-icon', clockRow);
     this.pauseButton.type = 'button';
@@ -246,6 +254,13 @@ export class Hud {
     this.transitButton.hidden = true;
     this.transitButton.setAttribute('aria-pressed', 'false');
     this.transitButton.addEventListener('click', () => this.setTransit(!this.transit, callbacks));
+    this.daysButton = el('button', 'hud-button hud-speed', this.layers);
+    this.daysButton.type = 'button';
+    this.daysButton.textContent = 'Days';
+    this.daysButton.title = 'The days played: traffic, public transport, growth and money (D)';
+    this.daysButton.hidden = true;
+    this.daysButton.setAttribute('aria-pressed', 'false');
+    this.daysButton.addEventListener('click', () => this.setDays(!this.days, callbacks));
     for (const { kind, label, title } of SHOWN) {
       const button = el('button', 'hud-button hud-speed', this.layers);
       button.type = 'button';
@@ -352,6 +367,8 @@ export class Hud {
         this.setZones(!this.zones, callbacks);
       } else if ((event.key === 'm' || event.key === 'M') && !this.budgetButton.hidden) {
         this.setBudget(!this.budget, callbacks);
+      } else if ((event.key === 'd' || event.key === 'D') && !this.daysButton.hidden) {
+        this.setDays(!this.days, callbacks);
       } else if ((event.key === 'p' || event.key === 'P') && !this.transitButton.hidden) {
         this.setTransit(!this.transit, callbacks);
       } else if (event.key === 'l' || event.key === 'L') {
@@ -504,6 +521,19 @@ export class Hud {
     callbacks?.onCities?.(enabled);
   }
 
+  /** Offer the Days panel. */
+  enableDays(): void {
+    this.layers.hidden = false;
+    this.daysButton.hidden = false;
+  }
+
+  /** Open or close the Days panel (`callbacks` given: tell the app). */
+  setDays(enabled: boolean, callbacks?: HudCallbacks): void {
+    this.days = enabled;
+    this.daysButton.setAttribute('aria-pressed', String(enabled));
+    callbacks?.onDays?.(enabled);
+  }
+
   /** Offer the Budget panel. */
   enableBudget(): void {
     this.layers.hidden = false;
@@ -579,6 +609,8 @@ export class Hud {
     this.simState = sim;
     this.sim.hidden = false;
     this.simClock.textContent = formatClock(sim.time);
+    this.simDay.textContent = sim.day === undefined ? '' : `Day ${sim.day}`;
+    this.simDay.hidden = sim.day === undefined;
     if (changed) {
       this.pauseButton.textContent = sim.paused ? '▶' : '⏸';
       const label = sim.paused ? 'Resume (space)' : 'Pause (space)';

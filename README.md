@@ -2,7 +2,7 @@
 
 A realistic traffic and city-building simulator of Zagreb, Croatia, running entirely in the browser.
 
-- Three ways to play, chosen on the first visit: Reality (today's Zagreb, for analysis: edits cost nothing, no zoning or budget), Sandbox (growth and the budget, with no money limit) and Career (money limits what is built). Each city is kept in the browser with its mode, and can be saved to a file and loaded again; the Cities button under the title switches between them.
+- Three ways to play, chosen on the first visit: Reality (today's Zagreb, for analysis: edits cost nothing, no zoning or budget), Sandbox (growth and the budget, with no money limit) and Career (money limits what is built). Each city is kept in the browser with its mode, and can be saved to a file and loaded again; the Cities button under the title switches between them. The day a city has reached shows beside the clock, a report comes at midnight, and Days lists each day's trips, hours lost in traffic, public transport, growth and balance.
 - Whole City of Zagreb in 3D, built from open data (terrain, land cover, roads, the City's official 3D buildings).
 - Live traffic simulation: cars and trucks from where people live and work, commuters and through traffic from beyond the map, drivers who take the fastest way on the travel times measured each minute, counting tolls and fuel as time (searched on a contraction hierarchy) and go another way when the roads ahead jam, ZET trams and buses and HŽ trains on their timetable, level crossings that close for trains, pedestrians who cross at zebras and with the lights (drivers give way to them), cyclists on the City's cycle tracks and lanes and in the roads' right-hand lanes, drawn as low-poly cars of five shapes, lorries, ZET buses and trams and HŽ's suburban trains and bicycles, with brake lights and indicators.
 - Public transport: ZET's tram and bus lines and HŽ's trains, each with its route and stops on the map, its trips by hour, the vehicles running and how late, and every stop's next departures. ZET's lines can be run more or less often, and new bus and tram lines drawn stop by stop (new roads can carry tram tracks): the trams and buses added or taken away run on the roads, and the budget pays for them per vehicle-km. Riders are estimated from journey times by public transport and by car: where a change makes public transport quicker, car trips leave the roads, and the fares come in.
@@ -106,6 +106,7 @@ cd .. && python -m pipeline.projects compare jarunski-most /tmp/jarun.json /tmp/
 | Rotate isometric view | ⟲ ⟳ buttons | | `Q` / `E` |
 | Pause / resume traffic | ⏸ button | | `Space` |
 | Play another city, make one, save it to a file or load one | Cities, under the title | The same | |
+| The days played: traffic, public transport, growth and money | Days | The same | `D` |
 | Traffic speed | 1× 4× 16× 64× buttons | | `+` / `-` |
 | Traffic map (roads coloured by speed) | Traffic map button | | `T` |
 | News reports of jams, roadworks and closures | News reports button, then a marker | | `N`, `Esc` closes |

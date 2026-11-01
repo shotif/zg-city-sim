@@ -45,7 +45,7 @@ export const FIRST_CITY = 'zagreb';
 /** The city a link with edits in it opens, in Reality, apart from the player's own. */
 export const LINK_CITY = 'link';
 /** What a city keeps, each part under a key of its own. */
-export const CITY_PARTS = ['edits', 'zoning', 'growth', 'budget'] as const;
+export const CITY_PARTS = ['edits', 'zoning', 'growth', 'budget', 'days'] as const;
 export type CityPart = (typeof CITY_PARTS)[number];
 /** Longest name a city may have. */
 export const MAX_NAME = 40;

@@ -1328,6 +1328,50 @@ test('charges for driving and parking in Donji grad, bans lorries there, and dri
   expect(errors).toEqual([]);
 });
 
+test('counts the days played and reports each at midnight', async ({ page }, testInfo) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  const ready = () =>
+    page.waitForFunction(
+      () => window.__ZG__?.sim?.ready === true && window.__ZG__?.sim?.warming === false,
+      null,
+      { timeout: 150_000 },
+    );
+  const day = page.locator('.hud-sim-day');
+
+  // Just before midnight on the city's first day.
+  await page.goto('./?start=23:56&speed=16');
+  await ready();
+  await expect(day).toHaveText('Day 1');
+  // At midnight, the day just ended, and the next begins.
+  await expect(page.locator('.hud-notice')).toContainText(/^Day 1 ended: [\d,]+ hours? lost/, {
+    timeout: 120_000,
+  });
+  await expect(day).toHaveText('Day 2');
+  await page.keyboard.press('d');
+  const panel = page.getByRole('complementary', { name: 'Days' });
+  await expect(panel).toContainText('Day 2, so far');
+  await expect(panel.locator('.cities-list li')).toHaveCount(1);
+  await expect(panel.locator('.cities-list li')).toContainText('Day 1, from 23:56');
+  await expect(panel.locator('.cities-list li')).toContainText(/[\d,]+ trips by road/);
+  await expect(panel.locator('.cities-list li')).toContainText('Balance at midnight: €');
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: testInfo.outputPath('days.png') });
+
+  // Kept with the city: the next visit goes on from the day after.
+  await page.reload();
+  await ready();
+  await expect(day).toHaveText('Day 3');
+  await page.keyboard.press('d');
+  await expect(panel.locator('.cities-list li')).toHaveCount(1);
+
+  expect(errors).toEqual([]);
+});
+
 test.describe('a first visit', () => {
   // Nothing kept in the browser yet.
   test.use({ storageState: { cookies: [], origins: [] } });
