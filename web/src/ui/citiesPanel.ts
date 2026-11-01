@@ -21,7 +21,7 @@ export function chooseCity(parent: HTMLElement, cities: Cities): Promise<City> {
     title.textContent = 'How do you want to play?';
     el('p', '', dialog).textContent =
       "ZG City Sim runs a weekday of Zagreb's traffic, calibrated to traffic counts. Choose " +
-      'how to play this city; you can make more, in any mode, from the City panel.';
+      'how to play this city; you can make more, in any mode, with the Cities button.';
     const label = el('label', 'build-label city-name', dialog);
     label.append('City name ');
     const name = el('input', 'build-select', label);

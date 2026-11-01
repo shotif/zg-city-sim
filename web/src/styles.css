@@ -1250,6 +1250,14 @@ a.news-headline:hover {
   gap: 4px;
   padding: 10px 12px;
   text-align: left;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+.city-mode:hover,
+.city-mode:focus-visible {
+  border-color: var(--accent);
 }
 
 .city-mode span {
