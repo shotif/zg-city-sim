@@ -2217,12 +2217,13 @@ fn time_at_a_red_light_does_not_make_drivers_impatient() {
         v.wait,
         v.blocked
     );
-    // Held at the green by the full road beyond: that counts.
+    // Held at the green by the full road beyond: that counts (and so does creeping up to
+    // the line, which starts the time standing still again).
     run_until(&mut engine, 30.0, |_| {});
     let v = &engine.vehs[east as usize];
     assert_eq!(engine.net.d.lane_edge[v.lane as usize], eb_in);
     assert!(
-        v.blocked > 20.0 && v.blocked <= v.wait,
+        v.blocked > 20.0 && v.blocked <= v.wait + 2.0,
         "{} {}",
         v.wait,
         v.blocked
@@ -5547,4 +5548,129 @@ fn planning_on_threads_gives_the_same_run() {
     assert!(one == four, "the runs differ");
     // Some plans read decisions made before them in the step, and were made again.
     assert!(replans > 0, "{replans}");
+}
+
+/// A left turn waiting inside the junction (`waiting_left_turn`) with a queue always waiting
+/// to turn and `oncoming` vehicles an hour coming the other way at random, at least 2 s
+/// apart: vehicles an hour it lets turn.
+fn waiting_left_turn_capacity(oncoming: f64) -> f64 {
+    let (data, [eb_in, _, wb_in, wb_out, nb_out], _) = waiting_left_turn();
+    let mut engine = Engine::new(Network::build(data).unwrap(), 5);
+    let mut rng = Rng::new(11);
+    for t in random_departures(&mut rng, oncoming, 2.0, 2400.0) {
+        engine.add_trip(Trip {
+            depart: t,
+            from: wb_in,
+            to: wb_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    for k in 0..1600 {
+        engine.add_trip(Trip {
+            depart: k as f64 * 1.5,
+            from: eb_in,
+            to: nb_out,
+            vtype: vtype::CAR,
+            flags: 0,
+        });
+    }
+    let lane = engine.net.edge_lanes(eb_in).start;
+    lane_throughput(&mut engine, lane, 600.0, 2400.0)
+}
+
+#[test]
+fn capacity_of_a_left_turn_across_oncoming_traffic() {
+    // HCM: a left turn from the main road, critical gap 4.1 s, follow-up 2.2 s (M23a). For
+    // oncoming vehicles at least 2 s apart, Tanner's formula: fewer long gaps than the HCM's
+    // random traffic has, so fewer turn.
+    let tanner = |v: f64| {
+        let (tc, tf, tm) = (4.1, 2.2, 2.0);
+        let q = v / 3600.0;
+        let lambda = q / (1.0 - q * tm);
+        3600.0 * q * (1.0 - q * tm) * (-lambda * (tc - tm)).exp() / (1.0 - (-lambda * tf).exp())
+    };
+    for oncoming in [300.0, 450.0, 600.0, 800.0] {
+        let (got, want) = (waiting_left_turn_capacity(oncoming), tanner(oncoming));
+        println!(
+            "left turn, {oncoming:.0}/h oncoming: {got:.0}/h (Tanner with the HCM's gaps {want:.0}/h)"
+        );
+        assert!(
+            (0.9 * want..1.5 * want).contains(&got),
+            "{oncoming}: {got:.0}"
+        );
+    }
+}
+
+/// A side road joining a main road at a give-way junction, the way on queued back from a
+/// signal 150 m beyond it (25 s of green a minute): vehicles an hour through from the main
+/// road and from the side road, with `main` and `side` an hour coming at random.
+fn side_road_into_a_queue(main: f64, side: f64) -> (f64, f64) {
+    let mut b = Builder::default();
+    let w = b.junction(-600.0, 0.0);
+    let c = b.junction(0.0, 0.0);
+    let e = b.junction(150.0, 0.0);
+    let f = b.junction(650.0, 0.0);
+    let s = b.junction(0.0, 400.0);
+    let main_in = b.road(w, c, 1, 13.9);
+    let on = b.road(c, e, 1, 13.9);
+    let out = b.road(e, f, 1, 13.9);
+    let side_in = b.road(s, c, 1, 13.9);
+    let (l_main, l_on, l_out, l_side) = (
+        b.lane(main_in, 0),
+        b.lane(on, 0),
+        b.lane(out, 0),
+        b.lane(side_in, 0),
+    );
+    b.connect(l_main, l_on, c, dir::STRAIGHT, b'M');
+    b.connect(l_side, l_on, c, dir::RIGHT, b'm');
+    b.set_logic(c, &[(0b00, 0b10), (0b01, 0b01)]);
+    let light = b.connect(l_on, l_out, e, dir::STRAIGHT, b'O');
+    b.signal(&[light], &[(25.0, "G"), (3.0, "y"), (32.0, "r")]);
+    let mut engine = Engine::new(b.build(), 5);
+    let mut rng = Rng::new(7);
+    for (from, per_hour) in [(main_in, main), (side_in, side)] {
+        for t in random_departures(&mut rng, per_hour, 2.0, 3000.0) {
+            engine.add_trip(Trip {
+                depart: t,
+                from,
+                to: out,
+                vtype: vtype::CAR,
+                flags: 0,
+            });
+        }
+    }
+    let lanes = [l_main, l_side];
+    let mut on_lane: [std::collections::HashSet<(u32, u32)>; 2] = Default::default();
+    let mut left = [0u32; 2];
+    run_until(&mut engine, 3000.0, |e| {
+        for k in 0..2 {
+            let now: std::collections::HashSet<(u32, u32)> = e
+                .vehicles_on(lanes[k])
+                .iter()
+                .map(|&v| (v, e.vehs[v as usize].serial))
+                .collect();
+            if e.time >= 900.0 {
+                left[k] += on_lane[k].difference(&now).count() as u32;
+            }
+            on_lane[k] = now;
+        }
+        assert_no_overlaps(e);
+    });
+    let per_hour = |n: u32| n as f64 * 3600.0 / 2100.0;
+    (per_hour(left[0]), per_hour(left[1]))
+}
+
+#[test]
+fn a_side_road_into_a_queue_gets_drivers_in() {
+    // The light lets about 780 an hour through. With more coming along the main road, the
+    // side road got 60 of its 300 an hour in (M23a): a driver creeping up to the line
+    // started its waiting time again, and one standing at the line never let anyone go first.
+    let (main, side) = side_road_into_a_queue(1200.0, 300.0);
+    println!("main road {main:.0}/h, side road {side:.0}/h");
+    assert!(side > 100.0, "{side:.0}");
+    assert!(
+        (700.0..850.0).contains(&(main + side)),
+        "{main:.0} + {side:.0}"
+    );
 }

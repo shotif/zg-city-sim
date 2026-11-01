@@ -766,6 +766,28 @@ The policies' effects and costs are estimates, and the plan says from what. Each
 
 **Status (M22, done 2026-11-01).** The engine gives the same results 1.6 times faster natively (day runs, validation) and 7 % faster in the browser. Planning is still most of the time on one thread; what is left there is right of way at junctions, which reads decisions made in the same step.
 
+**Plan (M23 Full demand, chosen 2026-11-01).** The owner's choice after M22. Since M12 the simulation has run 80 % of the estimated car demand, because the network locks up with more. M23 finds where today's network loses capacity with more traffic and fixes the causes, then raises the share step by step. Each step is checked with whole days on two or more seeds, against the counts and the gridlock, and pushed to `main` when it holds.
+- **M23a, where the network breaks** (done 2026-11-01). Whole days on seed 1 at 90 % and 100 %, against M21's at 80 % (with the lorry rules, on four threads):
+
+  | | 80 % | 90 % | 100 % |
+  |---|---:|---:|---:|
+  | Trips started | 878,755 | 981,222 | 1,060,695 |
+  | Removed for gridlock | 6,989 (0.8 %) | 16,157 (1.6 %) | 48,478 (4.6 %) |
+  | Vehicles on the road at 17:00 | 37,018 | 57,845 | 97,221 |
+  | Mean speed at 17:00 (km/h) | 32 | 23 | 14 |
+  | Still on the road at 01:00 | 1,824 | 1,928 | 3,832 |
+  | Queued at junctions (vehicle-hours) | 89,376 | 181,181 | 426,352 |
+  | Stations within ±25 % (of 47) | 22 | 22 | 20 |
+  | Total against the counts, scaled to full demand | 0.92 | 0.95 | 0.97 |
+
+  - Trips finished peak at 61,000-63,000 an hour at any share, as the afternoon's demand outruns them: at 14:00-16:00, 65,000-67,000 trips start an hour at 80 %, 73,000-74,000 at 90 % and 76,000-77,000 at 100 %. At 90 % the queues clear by 20:00; at 100 % they last into the night.
+  - Time lost other than at red lights is 70 % within 6 km of the centre, and 76 % of it is at give-way junctions. It is spread thin: the 20 worst junctions hold 13 % of it, the 300 worst half. The worst are give-way crossings that are signalled in Zagreb (Avenija Marina Držića at Lastovska ulica and at Branimirova, Osječka ulica at Branimirova, Kruge at Slavonska avenija), Zabok's roundabouts and junctions where drivers stand in the wrong lane (Savska cesta, Jadranski most, motorway ramps).
+  - Give way, checked again against the Highway Capacity Manual at heavier flows than M12a's one case: turning right or left into a main road or crossing it, and turning left across oncoming traffic, from the stop line or waiting inside the junction (M7b). Against Tanner's formula for the test's traffic (vehicles at least 2 s apart) with the HCM's gaps, the engine lets as many through or more: the left turn waiting inside the junction 1.2 times as many with 600-800 oncoming vehicles an hour. Give way as such is not short of capacity.
+  - Side roads into a queue starve. A side road joining a main road queued back from a signal 150 m on (in a test) got 60 of its 300 vehicles an hour through, and its queue filled it, where Zagreb's drivers let one in now and then or take turns. Three causes: a driver creeping up to the stop line (0.4 m, from where it waits for room to where it waits for a gap) started its waiting time again, so it never grew impatient enough to push in; a driver standing at the line counted as unable to stop, so it never let a driver who had waited long go first; and nothing made drivers in a slow queue take turns.
+- **M23b, side roads into queues** (in progress). Creeping up to the line keeps the waiting time that makes a driver push in (the time standing still, after which a driver enters a full junction, starts again as before). A driver standing at the line can let others go first. A driver coming up slower than 18 km/h (`ZIP_SPEED`) into a queue just beyond the junction lets a driver waiting to join the same lane go first, if the last vehicle into that lane came another way. In the test the side road gets 120 vehicles an hour through (60).
+- **M23c**: the next causes, from M23b's runs.
+- **M23d**: the demand share raised step by step, with the count fit, the gridlock and the riders' constant checked at each.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.

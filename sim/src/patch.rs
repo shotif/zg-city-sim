@@ -264,6 +264,7 @@ impl Engine {
         }
         self.lane_vehs = vec![Vec::new(); n_lanes];
         self.lane_reserved = vec![0.0; n_lanes];
+        self.lane_last_link = vec![NONE; n_lanes];
         self.lane_active = vec![false; n_lanes];
         self.active_lanes.clear();
         for v in lists.into_iter().flatten() {

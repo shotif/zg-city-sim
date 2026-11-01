@@ -63,6 +63,9 @@ const YIELD_MARGIN: f32 = 1.5;
 /// where oncoming drivers can still brake comfortably, and drivers who could stop let it go
 /// first.
 const PUSH_IN_WAIT: f32 = 15.0;
+/// Drivers coming up to a junction slower than this (m/s) into a queue beyond it take turns
+/// with drivers waiting to join the same lane (M23).
+const ZIP_SPEED: f32 = 5.0;
 /// After waiting this long (s, red lights included: between signals a metre apart the way on
 /// may only clear at a red), a driver enters a junction even if the road behind it is full,
 /// so gridlocks can unwind.
@@ -293,9 +296,9 @@ pub struct Vehicle {
     pub stop_done: u32,
     /// Time since the vehicle last moved (s).
     pub wait: f32,
-    /// Of `wait`, the time not held by a red light (s): what makes a driver impatient to
-    /// give way. A driver who has stood a minute at a red light pushes in no sooner than one
-    /// who just arrived at the green.
+    /// Time waiting at the stop line not held by a red light (s), creeping up to it included:
+    /// what makes a driver impatient to give way. A driver who has stood a minute at a red
+    /// light pushes in no sooner than one who just arrived at the green.
     pub blocked: f32,
     pub wait_total: f32,
     /// Seconds until the next lane change is allowed.
@@ -542,6 +545,9 @@ pub struct Engine {
     lane_vehs: Vec<Vec<u32>>,
     /// Space on each lane promised to vehicles inside the junction before it (m).
     lane_reserved: Vec<f32>,
+    /// Per lane, the link the last vehicle (not a bike) to drive into it came by: drivers
+    /// merging from a slow queue take turns (M23).
+    lane_last_link: Vec<u32>,
     /// Pedestrians at crossings (M8c), when loaded.
     pub pedestrians: Option<Pedestrians>,
     /// Bike trips (M8d): within the City, run at `bike_scale` of the estimated number
@@ -1244,6 +1250,7 @@ impl Engine {
             closed: Vec::new(),
             lane_vehs: vec![Vec::new(); n_lanes],
             lane_reserved: vec![0.0; n_lanes],
+            lane_last_link: vec![NONE; n_lanes],
             pedestrians: None,
             bikes: None,
             bike_scale: 1.0,
@@ -2459,7 +2466,8 @@ impl Engine {
                 v_link,
             );
         let minor = !matches!(state, b'G' | b'M' | b'O' | b'y' | b'r' | b'u');
-        let can_stop = speed * speed / (2.0 * p.decel) < dist - 1.0;
+        // Standing at the line, a driver can let others go first too (M23).
+        let can_stop = speed < 0.5 || speed * speed / (2.0 * p.decel) < dist - 1.0;
         !self.junction_conflict(v, veh, link, minor, arrive, leave, can_stop)
     }
 
@@ -3182,6 +3190,16 @@ impl Engine {
         n
     }
 
+    /// Whether the way on past `link` is a queue: the last vehicle in the lane it leads into is
+    /// near its start and slow (M23).
+    fn queue_beyond(&self, link: u32) -> bool {
+        let to = self.net.d.link_to[link as usize];
+        self.ahead_of(to, 0, false).is_some_and(|u| {
+            let uv = &self.vehs[u as usize];
+            uv.speed < ZIP_SPEED && uv.pos - uv.params().length < 30.0
+        })
+    }
+
     /// The vehicle stopped at the stop line of `link`, waiting to use it, if any.
     fn waiting_at(&self, link: u32) -> Option<&Vehicle> {
         let d = &self.net.d;
@@ -3243,6 +3261,20 @@ impl Engine {
                     && self.exit_has_room(fl, w)
             };
             if can_stop && !past && self.waiting_at(fl).is_some_and(waited_longer) {
+                return true;
+            }
+            // Taking turns (M23): a driver coming slowly up a queue lets a driver waiting to
+            // join the same lane go first, if the last to drive into it came another way.
+            if can_stop
+                && !past
+                && veh.speed < ZIP_SPEED
+                && d.link_to[fl as usize] == d.link_to[link as usize]
+                && self.lane_last_link[d.link_to[link as usize] as usize] != fl
+                && self.queue_beyond(link)
+                && self.waiting_at(fl).is_some_and(|w| {
+                    self.signal_allows(fl, w.stop_done) && self.exit_has_room(fl, w)
+                })
+            {
                 return true;
             }
         }
@@ -3952,6 +3984,7 @@ impl Engine {
         for i in 0..n_active {
             let lane = self.active_lanes[i] as usize;
             let internal = self.net.lane_internal[lane];
+            let lane_len = self.net.d.lane_length[lane];
             for k in 0..self.lane_vehs[lane].len() {
                 let v = self.lane_vehs[lane][k] as usize;
                 let a = self.acc[v];
@@ -3972,9 +4005,18 @@ impl Engine {
                 veh.speed = v1;
                 veh.accel = a;
                 veh.distance += ds;
-                if v1 < 0.1 && !veh.transit.as_ref().is_some_and(|run| run.dwelling) {
-                    veh.wait += DT;
-                    veh.wait_total += DT;
+                // Creeping up to the stop line is still waiting there: the time that makes a
+                // driver push in, and others let it go first, keeps running (M23); the time
+                // standing still starts again.
+                let still = v1 < 0.1;
+                let creeping = !still && v1 < 2.5 && !internal && lane_len - veh.pos < 3.0;
+                if (still || creeping) && !veh.transit.as_ref().is_some_and(|run| run.dwelling) {
+                    if still {
+                        veh.wait += DT;
+                        veh.wait_total += DT;
+                    } else {
+                        veh.wait = 0.0;
+                    }
                     let link = veh.next_link;
                     let red = link != NONE
                         && !internal
@@ -4103,6 +4145,7 @@ impl Engine {
                 let to = self.net.d.link_to[link];
                 if veh.vtype != vtype::BIKE {
                     self.lane_reserved[to as usize] += p.length + p.min_gap;
+                    self.lane_last_link[to as usize] = link as u32;
                 }
                 let via = self.net.d.link_via[link];
                 next = if via != NONE { via } else { to };
