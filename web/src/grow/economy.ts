@@ -64,6 +64,7 @@ import type { ChargeEdit, Edit, LorryBanEdit } from '../edit/edits';
 import { areaOf } from '../edit/policies';
 import type { Mode, Riders } from '../world/transitLines';
 import { ARCHETYPES, type Grown, NET_AREA, heights, occupants } from './growth';
+import { cityKey } from '../game/cities';
 
 export const BASE_INCOME = 63_900_000;
 export const INCOME_TAX = 1_800;
@@ -423,13 +424,11 @@ export function euros(v: number): string {
   return `${sign}€${Math.round(a).toLocaleString('en-GB')}`;
 }
 
-const BUDGET_KEY = 'zg-city-sim:budget';
-
 export function loadBudget(
   storage: Storage | undefined = globalThis.localStorage,
 ): SavedBudget | undefined {
   try {
-    const v = JSON.parse(storage?.getItem(BUDGET_KEY) ?? 'null') as SavedBudget | null;
+    const v = JSON.parse(storage?.getItem(cityKey('budget')) ?? 'null') as SavedBudget | null;
     if (
       v?.version === 1 &&
       Number.isFinite(v.balance) &&
@@ -455,7 +454,7 @@ export function saveBudget(
   storage: Storage | undefined = globalThis.localStorage,
 ): void {
   try {
-    storage?.setItem(BUDGET_KEY, JSON.stringify(budget.save()));
+    storage?.setItem(cityKey('budget'), JSON.stringify(budget.save()));
   } catch {
     // Storage full or blocked: the balance lasts the visit.
   }

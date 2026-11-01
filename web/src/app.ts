@@ -59,6 +59,8 @@ import {
 import { type DemandArrays, type EdgeDemand, mergeDemand } from './grow/demand';
 import { loadLots } from './grow/lots';
 import { BudgetTool } from './grow/budgetTool';
+import { type Cities, type City, GAME_MODES, LINK_CITY } from './game/cities';
+import { CitiesPanel } from './ui/citiesPanel';
 import { CitySound } from './ui/sound';
 import {
   type LineKm,
@@ -358,6 +360,8 @@ export interface DebugApi {
   drawer?: RoadDrawer;
   /** The congestion charge in the Build panel (M18a). */
   policies?: PolicySection;
+  /** The Cities panel (M19a). */
+  cities?: CitiesPanel;
   /** The ground point under a screen point (CSS pixels in the canvas). */
   groundAt?(x: number, y: number): { x: number; z: number } | undefined;
   /** The Zones tool, once the lots are loaded. */
@@ -383,7 +387,13 @@ declare global {
   }
 }
 
-export async function startApp(container: HTMLElement): Promise<void> {
+/** The city played, and the cities kept (M19a). */
+export interface Game {
+  cities: Cities;
+  city: City;
+}
+
+export async function startApp(container: HTMLElement, game: Game): Promise<void> {
   const params = new URLSearchParams(location.search);
   const debug: DebugApi = {
     ready: false,
@@ -534,59 +544,27 @@ export async function startApp(container: HTMLElement): Promise<void> {
       invalidateView();
     },
     onBuild: (enabled) => {
-      // One panel on the right at a time.
-      if (enabled && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
-      if (enabled && zoning?.panel.visible) {
-        hud.setZones(false);
-        zoning.setVisible(false);
-      }
-      if (enabled && budgetTool.panel.visible) {
-        hud.setBudget(false);
-        budgetTool.setVisible(false);
-      }
+      if (enabled) closeOthers('build');
       buildPanel?.setVisible(enabled);
       invalidateView();
     },
     onZones: (enabled) => {
-      if (enabled && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
-      if (enabled && buildPanel?.visible) {
-        hud.setBuild(false);
-        buildPanel.setVisible(false);
-      }
-      if (enabled && budgetTool.panel.visible) {
-        hud.setBudget(false);
-        budgetTool.setVisible(false);
-      }
+      if (enabled) closeOthers('zones');
       zoning?.setVisible(enabled);
       invalidateView();
     },
     onBudget: (enabled) => {
-      if (enabled && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
-      if (enabled && buildPanel?.visible) {
-        hud.setBuild(false);
-        buildPanel.setVisible(false);
-      }
-      if (enabled && zoning?.panel.visible) {
-        hud.setZones(false);
-        zoning.setVisible(false);
-      }
+      if (enabled) closeOthers('budget');
       budgetTool.setVisible(enabled);
+    },
+    onCities: (enabled) => {
+      if (enabled) closeOthers('cities');
+      citiesPanel.setVisible(enabled);
     },
     onTransit: (enabled) => {
       transitWanted = enabled;
       if (enabled) {
-        if (buildPanel?.visible) {
-          hud.setBuild(false);
-          buildPanel.setVisible(false);
-        }
-        if (zoning?.panel.visible) {
-          hud.setZones(false);
-          zoning.setVisible(false);
-        }
-        if (budgetTool.panel.visible) {
-          hud.setBudget(false);
-          budgetTool.setVisible(false);
-        }
+        closeOthers('transit');
         if (transitPanel) transitPanel.setVisible(true);
         else openTransit?.();
       } else {
@@ -595,8 +573,32 @@ export async function startApp(container: HTMLElement): Promise<void> {
       invalidateView();
     },
   };
+  /** One panel on the right at a time: close the others than `keep`. */
+  const closeOthers = (keep: 'build' | 'zones' | 'budget' | 'transit' | 'cities') => {
+    if (keep !== 'transit' && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
+    if (keep !== 'build' && buildPanel?.visible) {
+      hud.setBuild(false);
+      buildPanel.setVisible(false);
+    }
+    if (keep !== 'zones' && zoning?.panel.visible) {
+      hud.setZones(false);
+      zoning.setVisible(false);
+    }
+    if (keep !== 'budget' && budgetTool.panel.visible) {
+      hud.setBudget(false);
+      budgetTool.setVisible(false);
+    }
+    if (keep !== 'cities' && citiesPanel.visible) {
+      hud.setCities(false);
+      citiesPanel.setVisible(false);
+    }
+  };
   const hud = new Hud(container, hudCallbacks);
   hud.setAlwaysDay(alwaysDay);
+  // The city played and its mode (M19a): Reality has no budget or zoning, and only Career
+  // is limited by money.
+  const mode = game.city.mode;
+  hud.setCity(game.city.name, GAME_MODES[mode].label);
   // The City's money: building costs it, what grows pays into it (M5e).
   const budgetTool = new BudgetTool({
     hud: hud.element,
@@ -606,9 +608,22 @@ export async function startApp(container: HTMLElement): Promise<void> {
         growth: zoning.growth,
         value: zoning.landValue.access.measured ? zoning.landValue.value : undefined,
       },
+    limit: game.city.mode === 'career',
   });
   debug.budget = budgetTool;
-  hud.enableBudget();
+  if (mode !== 'reality') hud.enableBudget();
+  // The cities kept in this browser: switching keeps the city played as it is, then
+  // reloads the page to play the other.
+  const citiesPanel = new CitiesPanel(hud.element, game.cities, game.city, {
+    onClose: () => hud.setCities(false, hudCallbacks),
+    onSave: () => budgetTool.save(),
+    onPlay: (id) => {
+      budgetTool.save();
+      game.cities.setCurrent(id);
+      location.assign(location.pathname + location.search);
+    },
+  });
+  debug.cities = citiesPanel;
   hud.setTrafficLegend(TRAFFIC_BANDS.map(({ color, label }) => ({ color, label })));
 
   try {
@@ -1124,7 +1139,9 @@ export async function startApp(container: HTMLElement): Promise<void> {
       else apply(edits);
       window.addEventListener('hashchange', () => {
         const encoded = /[#&]edits=([^&]+)/.exec(location.hash)?.[1];
-        if (encoded) loadFromLink(encoded);
+        // A link's edits open in Reality, apart from the player's own cities.
+        if (encoded && game.city.id !== LINK_CITY) location.reload();
+        else if (encoded) loadFromLink(encoded);
       });
       return panel;
     };
@@ -1832,7 +1849,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
     // The Zones tool: lots along streets, painted with zones.
     const zoningInfo = manifest.layers.zoning;
     const demandInfo = manifest.layers.demand;
-    if (zoningInfo) {
+    if (zoningInfo && mode !== 'reality') {
       loadLots(zoningInfo.index)
         .then((lots) => {
           zoning = setUpZoning({

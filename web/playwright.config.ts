@@ -7,6 +7,9 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: 'http://localhost:4173/',
+    // A Career city already chosen (M19a), as for a player who has been before; the first
+    // visit's question has a test of its own.
+    storageState: 'e2e/storage.json',
     // Software WebGL so the smoke test runs on machines without a GPU (CI, containers).
     launchOptions: {
       args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],

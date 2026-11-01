@@ -1327,3 +1327,74 @@ test('charges for driving and parking in Donji grad, bans lorries there, and dri
 
   expect(errors).toEqual([]);
 });
+
+test.describe('a first visit', () => {
+  // Nothing kept in the browser yet.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('asks how to play, and keeps cities apart in their modes', async ({ page }, testInfo) => {
+    test.setTimeout(400_000);
+    const errors: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text());
+    });
+    page.on('pageerror', (error) => errors.push(error.message));
+    const ready = () =>
+      page.waitForFunction(
+        () => window.__ZG__?.sim?.ready === true && window.__ZG__?.policies !== undefined,
+        null,
+        { timeout: 150_000 },
+      );
+    const title = page.locator('.hud-title span');
+    const budget = page.getByRole('button', { name: 'Budget', exact: true });
+
+    await page.goto('./');
+    const chooser = page.getByRole('dialog', { name: 'How do you want to play?' });
+    await expect(chooser).toBeVisible();
+    await chooser.getByLabel('City name').fill('Analiza');
+    await page.screenshot({ path: testInfo.outputPath('first-visit.png') });
+    await chooser.getByRole('button', { name: /^Reality/ }).click();
+    await ready();
+
+    // Reality: no budget or zoning, and edits cost nothing, however dear.
+    await expect(title).toHaveText('Analiza · Reality');
+    await expect(budget).toBeHidden();
+    await page.keyboard.press('b');
+    await page.getByLabel('Charge', { exact: true }).selectOption('20');
+    await page.getByRole('button', { name: 'Donji grad', exact: true }).click();
+    await expect(page.locator('.build-list li')).toHaveCount(1);
+
+    // A new city in Sandbox, from the Cities panel: the page opens it.
+    await page.getByRole('button', { name: 'Cities', exact: true }).click();
+    const panel = page.getByRole('complementary', { name: 'Cities' });
+    await expect(panel).toContainText('Playing Analiza: Reality, day 1.');
+    await panel.getByLabel('New city name').fill('Igralište');
+    await panel.getByLabel('New city mode').selectOption({ label: 'Sandbox' });
+    let loaded = page.waitForEvent('load');
+    await panel.getByRole('button', { name: 'Make and play' }).click();
+    await loaded;
+    await ready();
+    await expect(title).toHaveText('Igralište · Sandbox');
+    await expect(budget).toBeVisible();
+    await page.keyboard.press('b');
+    await expect(page.locator('.build-list li')).toHaveCount(0);
+
+    // Back to the first, with its edit as it was left.
+    await page.getByRole('button', { name: 'Cities', exact: true }).click();
+    await expect(panel.locator('.cities-list li')).toHaveCount(2);
+    await page.screenshot({ path: testInfo.outputPath('cities.png') });
+    loaded = page.waitForEvent('load');
+    await panel
+      .locator('.cities-list li', { hasText: 'Analiza' })
+      .getByRole('button', { name: 'Play', exact: true })
+      .click();
+    await loaded;
+    await ready();
+    await expect(title).toHaveText('Analiza · Reality');
+    await page.keyboard.press('b');
+    await expect(page.locator('.build-list li')).toHaveCount(1);
+    await expect(page.locator('.build-list li')).toContainText('Congestion charge on Donji grad');
+
+    expect(errors).toEqual([]);
+  });
+});

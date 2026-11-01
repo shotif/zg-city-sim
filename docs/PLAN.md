@@ -697,11 +697,14 @@ The policies' effects and costs are estimates, and the plan says from what. Each
   - Open: lorries are not kept off streets OpenStreetMap marks as closed to them or limited by weight (`hgv`, `maxweight`, which the network step does not read), so the ways round take steep residential streets such as Tuškanac.
 
 **Plan (M19 Career mode, chosen 2026-11-01).** The owner's choices: three modes (Reality, Sandbox and Career), career goals given in stages in order, and a career that cannot be lost (debt only stops building, as now). Today the browser keeps one city (its edits, zoning, grown buildings and budget, each under a key of its own), and money always limits what is built. Each step is pushed to `main` when it works.
-- **M19a, modes and save slots.** On the first visit, and from the HUD after that, the player chooses a mode and a city to play.
-  - *Reality*: today's Zagreb, for analysis. Edits cost nothing and the budget is hidden; zoning and growth are off. Links with edits in them open in Reality.
-  - *Sandbox*: zoning, growth and the budget as now, but money never stops building.
-  - *Career*: as now, money limits what is built, and the stages' goals (M19c) are set.
-  - Each city is a save slot: its mode, edits, zoning, grown buildings, budget and history, the simulated days played and the career's progress. Slots are kept in the browser, named by the player, and can be saved to a file and loaded from one. The city kept today becomes the first slot, in Sandbox, so nothing is lost.
+- **M19a, modes and save slots** (done 2026-11-01). On the first visit the player chooses a mode and names the city; the Cities button under the title plays another, makes one, renames, deletes, or saves one to a file and loads it again.
+  - *Reality*: today's Zagreb, for analysis. Edits cost nothing and the budget is hidden; zoning and growth are off (their lots are not even loaded).
+  - *Sandbox*: zoning, growth and the budget as before, but money never stops building.
+  - *Career*: as before, money limits what is built; the stages' goals come with M19c.
+  - Each city keeps its edits, zoning, grown buildings and budget (with its history, which gives the simulated day it has reached) under keys of its own (`web/src/game/cities.ts`, `cityKey`). The city kept before M19 keeps the old keys and becomes the first city, in Sandbox, so nothing moved. The city to play is chosen before the app starts, and switching reloads the page.
+  - A link with edits in it opens them in a Reality city of its own ("From a link"), started afresh by each link, so a shared link never overwrites the player's city.
+  - Cities are kept in the browser only; a file holds everything a city keeps. Where storage is blocked, the city lasts the visit.
+  - Browser tests start with a Career city (`web/e2e/storage.json`); a test of its own answers the first visit's question, then plays a Reality and a Sandbox city in turn.
 - **M19b, progress over simulated days.** A day counter in the HUD. At midnight a report on the day just ended: vehicle-hours queued, trips made and their mean time, public transport's share, residents and jobs grown, and the balance. Each day's numbers are kept in the slot and charted against the days before.
   - The engine already counts trips and queues; the day's totals are taken from its statistics at midnight. A slot's days carry over visits, as the budget's history does now.
 - **M19c, career stages and goals.** A career runs in stages, each with two to four goals measured on whole simulated days. Meeting all of a stage's goals pays a grant (its size an estimate) and opens the next stage. Goals of these kinds:

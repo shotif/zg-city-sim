@@ -5,6 +5,7 @@
  */
 import { decodeTextFromUrl, encodeTextForUrl } from '../edit/edits';
 import type { Lots } from './lots';
+import { cityKey } from '../game/cities';
 
 /** Zones, in the order of their codes (1 up; 0 is no zone). */
 export const ZONES = [
@@ -193,12 +194,9 @@ export function parseZoning(text: string): Stroke[] {
   return parseCity(text).strokes;
 }
 
-const STORAGE_KEY = 'zg-city-sim:zoning';
-const GROWTH_KEY = 'zg-city-sim:growth';
-
 export function loadSavedZoning(storage: Storage | undefined = globalThis.localStorage): Stroke[] {
   try {
-    const text = storage?.getItem(STORAGE_KEY);
+    const text = storage?.getItem(cityKey('zoning'));
     return text ? parseZoning(text) : [];
   } catch {
     return [];
@@ -210,8 +208,8 @@ export function saveZoning(
   storage: Storage | undefined = globalThis.localStorage,
 ): void {
   try {
-    if (strokes.length === 0) storage?.removeItem(STORAGE_KEY);
-    else storage?.setItem(STORAGE_KEY, serializeZoning(strokes));
+    if (strokes.length === 0) storage?.removeItem(cityKey('zoning'));
+    else storage?.setItem(cityKey('zoning'), serializeZoning(strokes));
   } catch {
     // Private windows and full storage: the zoning lives for this visit only.
   }
@@ -222,7 +220,7 @@ export function loadSavedGrowth(
   storage: Storage | undefined = globalThis.localStorage,
 ): SavedBuilding[] {
   try {
-    const list = JSON.parse(storage?.getItem(GROWTH_KEY) ?? '[]') as unknown;
+    const list = JSON.parse(storage?.getItem(cityKey('growth')) ?? '[]') as unknown;
     return Array.isArray(list) ? list.filter(isBuilding) : [];
   } catch {
     return [];
@@ -234,8 +232,8 @@ export function saveGrowth(
   storage: Storage | undefined = globalThis.localStorage,
 ): void {
   try {
-    if (buildings.length === 0) storage?.removeItem(GROWTH_KEY);
-    else storage?.setItem(GROWTH_KEY, JSON.stringify(buildings));
+    if (buildings.length === 0) storage?.removeItem(cityKey('growth'));
+    else storage?.setItem(cityKey('growth'), JSON.stringify(buildings));
   } catch {
     // As above.
   }

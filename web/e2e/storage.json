@@ -1,0 +1,18 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:4173",
+      "localStorage": [
+        {
+          "name": "zg-city-sim:cities",
+          "value": "[{\"id\": \"zagreb\", \"name\": \"Zagreb\", \"mode\": \"career\", \"created\": 0, \"played\": 0}]"
+        },
+        {
+          "name": "zg-city-sim:city",
+          "value": "zagreb"
+        }
+      ]
+    }
+  ]
+}

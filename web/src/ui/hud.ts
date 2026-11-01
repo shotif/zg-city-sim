@@ -24,6 +24,8 @@ export interface HudCallbacks {
   onBuild?(enabled: boolean): void;
   /** Trains, pedestrians or cyclists shown in the view, or not (M8e). */
   onShow?(kind: Shown, on: boolean): void;
+  /** The Cities panel open or closed (M19a). */
+  onCities?(enabled: boolean): void;
 }
 
 /** What the view can leave out. */
@@ -135,6 +137,9 @@ export class Hud {
   private readonly budgetButton: HTMLButtonElement;
   private readonly transitButton: HTMLButtonElement;
   private transit = false;
+  private readonly titleText: HTMLElement;
+  private readonly cityButton: HTMLButtonElement;
+  private cities = false;
   private readonly showButtons = new Map<Shown, HTMLButtonElement>();
   private readonly shown = new Set<Shown>(SHOWN.map((s) => s.kind));
   private readonly dayButton: HTMLButtonElement;
@@ -155,6 +160,12 @@ export class Hud {
     const left = el('div', 'hud-left', this.root);
     const title = el('div', 'hud-panel hud-title', left);
     title.innerHTML = '<strong>ZG City Sim</strong><span>Zagreb · prototype</span>';
+    this.titleText = title.querySelector('span')!;
+    this.cityButton = el('button', 'hud-button hud-speed hud-city', title);
+    this.cityButton.type = 'button';
+    this.cityButton.hidden = true;
+    this.cityButton.setAttribute('aria-pressed', 'false');
+    this.cityButton.addEventListener('click', () => this.setCities(!this.cities, callbacks));
 
     this.sim = el('div', 'hud-panel hud-sim', left);
     this.sim.hidden = true;
@@ -476,6 +487,21 @@ export class Hud {
     this.transit = enabled;
     this.transitButton.setAttribute('aria-pressed', String(enabled));
     callbacks?.onTransit?.(enabled);
+  }
+
+  /** The city played (M19a): its name and mode, on the button that opens the Cities panel. */
+  setCity(name: string, mode: string): void {
+    this.titleText.textContent = `${name} · ${mode}`;
+    this.cityButton.hidden = false;
+    this.cityButton.textContent = 'Cities';
+    this.cityButton.title = `Playing ${name} in ${mode}: your cities, new ones and saved files`;
+  }
+
+  /** Open or close the Cities panel (`callbacks` given: tell the app). */
+  setCities(enabled: boolean, callbacks?: HudCallbacks): void {
+    this.cities = enabled;
+    this.cityButton.setAttribute('aria-pressed', String(enabled));
+    callbacks?.onCities?.(enabled);
   }
 
   /** Offer the Budget panel. */

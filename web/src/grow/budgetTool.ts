@@ -11,6 +11,9 @@ export interface BudgetDeps {
   onClose(): void;
   /** What has grown, and land value per lot (none yet: undefined). */
   growth(): { growth: Growth; value?: Float32Array } | undefined;
+  /** Whether money limits what is built (Career), or never stops it (Reality and Sandbox,
+   * M19a). */
+  limit: boolean;
 }
 
 /** Simulated seconds between savings of the balance. */
@@ -35,7 +38,12 @@ export class BudgetTool {
 
   /** Why the edits in force cannot become `build` euros' worth (undefined: they can). */
   afford(build: number): string | undefined {
-    return this.budget.afford(build - this.budget.spent);
+    return this.deps.limit ? this.budget.afford(build - this.budget.spent) : undefined;
+  }
+
+  /** Keep the balance as it is now. */
+  save(): void {
+    saveBudget(this.budget);
   }
 
   /** The edits in force (`count` of them) cost `build` to build, and `upkeep` and

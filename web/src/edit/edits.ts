@@ -19,6 +19,7 @@ import { FREQUENCIES, MODE_NAME, type Mode, frequencyLabel } from '../world/tran
 import { type LineMode, type LineStop, lineWords, placeStops } from './lines';
 import { type AreaPoint, MAX_AREA_POINTS, hoursText, roadsAcross, roadsInto } from './policies';
 import type { RoadIndex } from './roadIndex';
+import { cityKey } from '../game/cities';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
  * (degrees, 0 = north, clockwise), with its name for display. */
@@ -627,12 +628,10 @@ export function parseEdits(text: string): Edit[] {
   });
 }
 
-const STORAGE_KEY = 'zg-city-sim:edits';
-
-/** Edits saved in this browser (none if storage is unavailable). */
+/** Edits the city played keeps in this browser (none if storage is unavailable). */
 export function loadSavedEdits(storage: Storage | undefined = globalThis.localStorage): Edit[] {
   try {
-    const text = storage?.getItem(STORAGE_KEY);
+    const text = storage?.getItem(cityKey('edits'));
     return text ? parseEdits(text) : [];
   } catch {
     return [];
@@ -644,8 +643,8 @@ export function saveEdits(
   storage: Storage | undefined = globalThis.localStorage,
 ): void {
   try {
-    if (edits.length === 0) storage?.removeItem(STORAGE_KEY);
-    else storage?.setItem(STORAGE_KEY, serializeEdits(edits));
+    if (edits.length === 0) storage?.removeItem(cityKey('edits'));
+    else storage?.setItem(cityKey('edits'), serializeEdits(edits));
   } catch {
     // Private windows and full storage: edits live for this visit only.
   }
