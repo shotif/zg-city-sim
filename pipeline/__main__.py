@@ -16,6 +16,7 @@ from . import (
     news,
     pedestrians,
     projects,
+    services,
     terrain,
     transit,
     zoning,
@@ -36,6 +37,8 @@ STEPS = {
     "cycling": cycling.build_cycling,
     # Lots for zoning along today's streets, and the City's planned land use.
     "zoning": zoning.build_zoning,
+    # Today's schools, kindergartens, health care, fire and police stations (M20a).
+    "services": services.build_services,
     # Planned road projects, each built into a network of its own (all of the above first).
     "projects": projects.build_projects,
 }

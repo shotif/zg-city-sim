@@ -1318,3 +1318,87 @@ a.news-headline:hover {
 .career-met strong {
   color: #7ee2a8;
 }
+
+/* Today's services (M20a): a lettered marker each, coloured by kind. */
+.service-markers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.service-markers[hidden],
+.service-marker[hidden] {
+  display: none;
+}
+
+.service-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.service-marker.selected {
+  width: 24px;
+  height: 24px;
+  line-height: 20px;
+  font-size: 12px;
+  z-index: 1;
+}
+
+.service-marker[data-kind='school'],
+.service-swatch[data-kind='school'] {
+  background: #e08a1e;
+}
+
+.service-marker[data-kind='kindergarten'],
+.service-swatch[data-kind='kindergarten'] {
+  background: #d1489b;
+}
+
+.service-marker[data-kind='health'],
+.service-swatch[data-kind='health'] {
+  background: #2f9e6e;
+}
+
+.service-marker[data-kind='fire'],
+.service-swatch[data-kind='fire'] {
+  background: #d23a2a;
+}
+
+.service-marker[data-kind='police'],
+.service-swatch[data-kind='police'] {
+  background: #2f5fbf;
+}
+
+.services-kinds {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 8px;
+}
+
+.services-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.service-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+}

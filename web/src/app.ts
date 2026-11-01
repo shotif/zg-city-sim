@@ -65,6 +65,7 @@ import { DayLog, type DayRecord, PeakMeter } from './game/days';
 import { STAGES, judge, loadCareer, saveCareer } from './game/career';
 import { lotDistricts } from './game/districts';
 import { CareerPanel, stagesDoneNotice } from './ui/careerPanel';
+import { ServicesPanel, loadServices } from './ui/servicesPanel';
 import { finished, occupants } from './grow/growth';
 import { DaysPanel, change, hoursLost } from './ui/daysPanel';
 import { CitySound } from './ui/sound';
@@ -370,6 +371,8 @@ export interface DebugApi {
   cities?: CitiesPanel;
   /** The days played (M19b). */
   days?: DayLog;
+  /** Today's services (M20a). */
+  services?: import('./ui/servicesPanel').ServicesData;
   /** The career's progress (M19c). */
   career?: import('./game/career').CareerState;
   /** The ground point under a screen point (CSS pixels in the canvas). */
@@ -425,6 +428,8 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
   /** The Public transport panel, the line it shows drawn on the map and its stops (M9a). */
   let transitPanel: TransitPanel | undefined;
   let transitMarkers: StopMarkers | undefined;
+  /** Today's services (M20a), once loaded. */
+  let servicesPanel: ServicesPanel | undefined;
   let openTransit: (() => void) | undefined;
   /** Whether the player wants the panel open (it loads its data on first opening). */
   let transitWanted = false;
@@ -576,6 +581,11 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
       daysPanel.setVisible(enabled);
       showDays();
     },
+    onServices: (enabled) => {
+      if (enabled) closeOthers('services');
+      servicesPanel?.setVisible(enabled);
+      invalidateView();
+    },
     onCareer: (enabled) => {
       if (enabled) closeOthers('career');
       careerPanel?.setVisible(enabled);
@@ -595,7 +605,7 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
   };
   /** One panel on the right at a time: close the others than `keep`. */
   const closeOthers = (
-    keep: 'build' | 'zones' | 'budget' | 'transit' | 'cities' | 'days' | 'career',
+    keep: 'build' | 'zones' | 'budget' | 'transit' | 'cities' | 'days' | 'career' | 'services',
   ) => {
     if (keep !== 'transit' && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
     if (keep !== 'build' && buildPanel?.visible) {
@@ -621,6 +631,10 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
     if (keep !== 'career' && careerPanel?.visible) {
       hud.setCareer(false);
       careerPanel.setVisible(false);
+    }
+    if (keep !== 'services' && servicesPanel?.visible) {
+      hud.setServices(false);
+      servicesPanel.setVisible(false);
     }
   };
   const hud = new Hud(container, hudCallbacks);
@@ -1543,6 +1557,21 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
             invalidate();
           };
           buildPanel = setUpBuild(net, surface);
+          // Today's services (M20a).
+          const servicesInfo = manifest.layers.services;
+          if (servicesInfo) {
+            loadServices(DATA_URL + servicesInfo.index)
+              .then((data) => {
+                servicesPanel = new ServicesPanel(hud.element, data, {
+                  onClose: () => hud.setServices(false, hudCallbacks),
+                  onShow: (s) => activeRig.flyTo(s.x, s.z, 1500),
+                  invalidate,
+                });
+                debug.services = data;
+                hud.enableServices();
+              })
+              .catch((error: unknown) => console.warn('Services could not be loaded', error));
+          }
           const newsInfo = manifest.layers.news;
           if (newsInfo) {
             loadNews(newsInfo.index)
@@ -2250,6 +2279,9 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
       }
       if (railMarkers?.visible) {
         railMarkers.place((x, z) => toScreen(x, terrain.heightfield.sample(x, z) + 2, z));
+      }
+      if (servicesPanel?.visible) {
+        servicesPanel.place((x, z) => toScreen(x, terrain.heightfield.sample(x, z) + 2, z));
       }
       if (transitMarkers?.visible) {
         transitMarkers.place((x, z) => toScreen(x, terrain.heightfield.sample(x, z) + 2, z));

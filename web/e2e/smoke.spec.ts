@@ -1429,6 +1429,41 @@ test('plays a career stage by stage, with a grant for each stage done', async ({
   expect(errors).toEqual([]);
 });
 
+test("shows today's schools, kindergartens, health care, fire and police stations", async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('./?sim=off');
+  await page.waitForFunction(() => window.__ZG__?.services !== undefined, null, {
+    timeout: 150_000,
+  });
+  await page.keyboard.press('v');
+  const panel = page.getByRole('complementary', { name: 'Services' });
+  await expect(panel).toContainText(/Primary schools: \d+, about [\d,]+ pupils/);
+  await expect(panel).toContainText(/Kindergartens: \d+, about [\d,]+ children/);
+  await expect(panel).toContainText(/Fire stations: \d+/);
+  await expect(panel).toContainText(/Police stations: \d+/);
+  expect(await page.locator('.service-marker:not([hidden])').count()).toBeGreaterThan(20);
+  await panel.getByLabel('District').selectOption({ label: 'Donji grad' });
+  const first = panel.locator('.cities-list li button').first();
+  await expect(first).toBeVisible();
+  await first.click();
+  await expect(panel.locator('.build-draw-status')).toContainText('in Donji grad');
+  // Kinds can be left off the map.
+  const before = await page.locator('.service-marker:not([hidden])').count();
+  await panel.getByRole('checkbox').first().uncheck();
+  await expect
+    .poll(() => page.locator('.service-marker:not([hidden])').count())
+    .toBeLessThan(before);
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: testInfo.outputPath('services.png') });
+  expect(errors).toEqual([]);
+});
+
 test.describe('a first visit', () => {
   // Nothing kept in the browser yet.
   test.use({ storageState: { cookies: [], origins: [] } });

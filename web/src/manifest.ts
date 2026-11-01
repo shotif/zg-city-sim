@@ -133,7 +133,17 @@ export interface WorldManifest {
     news?: NewsLayerInfo;
     projects?: ProjectsLayerInfo;
     zoning?: ZoningLayerInfo;
+    services?: ServicesLayerInfo;
   };
+}
+
+/** Today's services from OpenStreetMap (pipeline/services.py, M20a). */
+export interface ServicesLayerInfo {
+  index: string;
+  counts: Record<string, number>;
+  inCity: Record<string, number>;
+  placesInCity: Record<string, number>;
+  attribution?: Attribution | Attribution[];
 }
 
 export const DATA_URL = `${import.meta.env.BASE_URL}data/`;

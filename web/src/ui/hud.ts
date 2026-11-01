@@ -30,6 +30,8 @@ export interface HudCallbacks {
   onDays?(enabled: boolean): void;
   /** The Career panel open or closed (M19c). */
   onCareer?(enabled: boolean): void;
+  /** The Services panel open or closed (M20a). */
+  onServices?(enabled: boolean): void;
 }
 
 /** What the view can leave out. */
@@ -150,6 +152,8 @@ export class Hud {
   private days = false;
   private readonly careerButton: HTMLButtonElement;
   private career = false;
+  private readonly servicesButton: HTMLButtonElement;
+  private services = false;
   private readonly simDay: HTMLElement;
   private readonly showButtons = new Map<Shown, HTMLButtonElement>();
   private readonly shown = new Set<Shown>(SHOWN.map((s) => s.kind));
@@ -265,6 +269,15 @@ export class Hud {
     this.daysButton.hidden = true;
     this.daysButton.setAttribute('aria-pressed', 'false');
     this.daysButton.addEventListener('click', () => this.setDays(!this.days, callbacks));
+    this.servicesButton = el('button', 'hud-button hud-speed', this.layers);
+    this.servicesButton.type = 'button';
+    this.servicesButton.textContent = 'Services';
+    this.servicesButton.title = 'Schools, kindergartens, health care, fire and police stations (V)';
+    this.servicesButton.hidden = true;
+    this.servicesButton.setAttribute('aria-pressed', 'false');
+    this.servicesButton.addEventListener('click', () =>
+      this.setServices(!this.services, callbacks),
+    );
     this.careerButton = el('button', 'hud-button hud-speed', this.layers);
     this.careerButton.type = 'button';
     this.careerButton.textContent = 'Career';
@@ -378,6 +391,8 @@ export class Hud {
         this.setZones(!this.zones, callbacks);
       } else if ((event.key === 'm' || event.key === 'M') && !this.budgetButton.hidden) {
         this.setBudget(!this.budget, callbacks);
+      } else if ((event.key === 'v' || event.key === 'V') && !this.servicesButton.hidden) {
+        this.setServices(!this.services, callbacks);
       } else if ((event.key === 'g' || event.key === 'G') && !this.careerButton.hidden) {
         this.setCareer(!this.career, callbacks);
       } else if ((event.key === 'd' || event.key === 'D') && !this.daysButton.hidden) {
@@ -532,6 +547,19 @@ export class Hud {
     this.cities = enabled;
     this.cityButton.setAttribute('aria-pressed', String(enabled));
     callbacks?.onCities?.(enabled);
+  }
+
+  /** Offer the Services panel. */
+  enableServices(): void {
+    this.layers.hidden = false;
+    this.servicesButton.hidden = false;
+  }
+
+  /** Open or close the Services panel (`callbacks` given: tell the app). */
+  setServices(enabled: boolean, callbacks?: HudCallbacks): void {
+    this.services = enabled;
+    this.servicesButton.setAttribute('aria-pressed', String(enabled));
+    callbacks?.onServices?.(enabled);
   }
 
   /** Offer the Career panel. */
