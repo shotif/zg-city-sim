@@ -1452,7 +1452,9 @@ test("shows today's schools, kindergartens, health care, fire and police station
   const first = panel.locator('.cities-list li button').first();
   await expect(first).toBeVisible();
   await first.click();
-  await expect(panel.locator('.build-draw-status')).toContainText('in Donji grad');
+  await expect(
+    panel.locator('.build-draw-status').filter({ hasText: 'in Donji grad' }),
+  ).toBeVisible();
   // Kinds can be left off the map.
   const before = await page.locator('.service-marker:not([hidden])').count();
   await panel.getByRole('checkbox').first().uncheck();
@@ -1483,10 +1485,10 @@ test('measures places within reach of homes and colours the lots by them', async
   testInfo.annotations.push({ type: 'coverage', description: `${Math.round(ms)} ms` });
   await page.keyboard.press('v');
   const panel = page.getByRole('complementary', { name: 'Services' });
-  await expect(panel.locator('.services-coverage')).toContainText(
+  await expect(panel.locator('.services-coverage').first()).toContainText(
     /Primary schools: \d+ % of residents have fewer places than they need within 1\.5 km, about [\d,]+ pupils short/,
   );
-  await expect(panel.locator('.services-coverage')).toContainText(/Kindergartens: \d+ %/);
+  await expect(panel.locator('.services-coverage').first()).toContainText(/Kindergartens: \d+ %/);
   // Homes wait where places are short, and land value counts services: the City's free
   // lots, mostly on its edges, are partly served.
   const median = await page.evaluate(() => {
