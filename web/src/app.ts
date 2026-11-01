@@ -1307,7 +1307,7 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
         down = { x: event.offsetX, y: event.offsetY, t: performance.now() };
       });
       renderer.domElement.addEventListener('pointerup', (event) => {
-        if (!panel.visible || !down || event.button !== 0) return;
+        if ((!panel.visible && !placingService) || !down || event.button !== 0) return;
         const moved = Math.hypot(event.offsetX - down.x, event.offsetY - down.y);
         if (moved > 6 || performance.now() - down.t > 600) return;
         if (drawer.active || policies.active) {
