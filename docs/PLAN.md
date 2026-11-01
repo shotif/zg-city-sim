@@ -720,6 +720,13 @@ The policies' effects and costs are estimates, and the plan says from what. Each
   - A lot's district is that of the street in front where people live along it (the demand's districts), else of the nearest such street (`districts.ts`).
   - The grants are game balance, not real figures. A career cannot be lost, as the owner chose: debt only stops building.
 
+**Plan (M20 Services, chosen 2026-11-01).** The owner's choices: five services (primary schools, kindergartens, health centres, fire stations and police stations), and homes that need places: in Sandbox and Career, homes grow more slowly where school, kindergarten and health places within reach run short, and land value rises near services. Each step is pushed to `main` when it works.
+- **M20a, today's services.** A pipeline step (`services`) takes today's from OpenStreetMap: primary schools, kindergartens, health centres and GP practices, fire stations (the City's professional brigade, not volunteer halls) and police stations, each with its street and an estimated number of places (pupils, children, patients registered). Drawn on the map with a Services panel listing them by kind and district. The City's own points (schools, kindergartens, health facilities) check OpenStreetMap's.
+- **M20b, needs and reach.** Residents need places by age (the 2021 census's shares of children of primary and kindergarten age) and health care by number. Each lot's coverage is the places within reach shared among the residents within reach of them (two-step floating catchment): 1 km for kindergartens, 1.5 km for primary schools, 3 km for health care. Homes grow more slowly where coverage falls below one, and land value rises near services. Shown as a map.
+- **M20c, new services.** The player places a service on zoned or free land; it costs what Croatian projects cost to build and a year to run, its staff are jobs and its visitors are trips in the traffic's demand, and its places count in coverage at once.
+- **M20d, fire and police.** Response times from each station by road on the simulated travel times (the hierarchy's searches to every edge), mapped against the targets that apply; a new station shortens them where it stands. Land value counts them.
+- Every capacity, share and cost is an estimate, and the plan says from what.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.
@@ -849,7 +856,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: tried and left out, as joined crossings passed less and their guessed signals held up more (closed) |
 | **M18 Policies** | A congestion charge, parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget (done: M18a-c) |
 | **M19 Career mode** | Reality for analysis, Sandbox and Career with goals in stages (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots (done: M19a-c) |
-| **M20 Services** | Schools and health centres that growing districts need, placed by the player, with trips to them and their running costs |
+| **M20 Services** | Primary schools, kindergartens and health centres that growing homes need, and fire and police stations with response times on the simulated roads; today's from open data, new ones placed by the player, with trips to them and their costs (plan chosen 2026-11-01) |
 
 ## Risks and open questions
 
