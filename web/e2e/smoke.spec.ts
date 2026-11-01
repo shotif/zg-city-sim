@@ -1464,6 +1464,48 @@ test("shows today's schools, kindergartens, health care, fire and police station
   expect(errors).toEqual([]);
 });
 
+test('measures places within reach of homes and colours the lots by them', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('./');
+  await page.waitForFunction(
+    () => window.__ZG__?.coverageMs !== undefined && window.__ZG__?.zoning !== undefined,
+    null,
+    { timeout: 200_000 },
+  );
+  const ms = await page.evaluate(() => window.__ZG__!.coverageMs!);
+  testInfo.annotations.push({ type: 'coverage', description: `${Math.round(ms)} ms` });
+  await page.keyboard.press('v');
+  const panel = page.getByRole('complementary', { name: 'Services' });
+  await expect(panel.locator('.services-coverage')).toContainText(
+    /Primary schools: \d+ % of residents have fewer places than they need within 1\.5 km, about [\d,]+ pupils short/,
+  );
+  await expect(panel.locator('.services-coverage')).toContainText(/Kindergartens: \d+ %/);
+  // Homes wait where places are short, and land value counts services: the City's free
+  // lots, mostly on its edges, are partly served.
+  const median = await page.evaluate(() => {
+    const z = window.__ZG__!.zoning!;
+    const c = z.growth.coverage!;
+    const own: number[] = [];
+    for (let i = 0; i < c.length; i++) if (z.lots.plan[i] !== z.lots.noPlan) own.push(c[i]);
+    own.sort((a, b) => a - b);
+    return own[Math.floor(own.length / 2)];
+  });
+  expect(median).toBeGreaterThan(0.1);
+  expect(median).toBeLessThan(0.9);
+  await panel.getByText('Colour the lots by it').click();
+  await page.evaluate(() => window.__ZG__?.lookAt(-2650, 5604, 1200));
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: testInfo.outputPath('coverage.png') });
+  expect(errors).toEqual([]);
+});
+
 test.describe('a first visit', () => {
   // Nothing kept in the browser yet.
   test.use({ storageState: { cookies: [], origins: [] } });

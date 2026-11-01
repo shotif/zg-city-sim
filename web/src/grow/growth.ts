@@ -15,6 +15,7 @@
  * by building use; estimates). `NET_AREA` of the gross floor is usable, as in
  * pipeline/demand.py.
  */
+import { startFactor } from './coverage';
 import type { Lots } from './lots';
 import { type SavedBuilding, type ZoneId, zoneCode } from './zones';
 
@@ -111,6 +112,8 @@ const GROUND_FLOOR = 4.5;
 const MARGIN = 1;
 /** Share of the empty zoned lots that start building each simulated minute. */
 export const START_RATE = 0.02;
+/** Zone codes up to this hold homes (houses, low-rise, high-rise, flats over shops). */
+const HOME_ZONES = 4;
 
 /** A building grown on lots: its type, size and where it stands on its plot. */
 export interface Grown {
@@ -249,6 +252,9 @@ export class Growth {
   rates?: readonly number[];
   /** Land value per lot (grow/landValue.ts): dearer lots build first and taller. */
   value?: Float32Array;
+  /** Per lot, its services score (M20b, grow/coverage.ts): homes start more slowly where
+   * places at schools, kindergartens and GPs within reach fall short. */
+  coverage?: Float32Array;
 
   constructor(
     private readonly lots: Lots,
@@ -324,6 +330,10 @@ export class Growth {
     const perZone: number[] = [];
     for (let i = 0; i < lots.count; i++) {
       if (zones[i] && this.lotBuilding[i] < 0) {
+        // Homes wait for places at schools, kindergartens and GPs (zones 1-4 hold homes).
+        if (zones[i] <= HOME_ZONES && this.coverage && r() > startFactor(this.coverage[i])) {
+          continue;
+        }
         const v = this.value?.[i];
         const dear = v !== undefined && Number.isFinite(v) ? 0.5 + v / 100 : 1;
         empty.push({ i, key: r() * (1 + lots.context[i] / 3) * dear });

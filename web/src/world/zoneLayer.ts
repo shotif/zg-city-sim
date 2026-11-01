@@ -34,6 +34,7 @@ export class ZoneLayer {
   private showAll = false;
   /** Land value per lot, when lots are coloured by it rather than by zone. */
   private values?: Float32Array;
+  private valueColor: (v: number) => [number, number, number] = valueColor;
   private readonly colors: THREE.Color[];
   private readonly material = new THREE.MeshBasicMaterial({
     vertexColors: true,
@@ -112,11 +113,15 @@ export class ZoneLayer {
     for (const key of this.meshes.keys()) this.dirty.add(key);
   }
 
-  /** Colour every lot by land value (`values` per lot), or by zone again (undefined). Call
-   * again when the values change. */
-  setValues(values: Float32Array | undefined): void {
+  /** Colour every lot by land value (`values` per lot; or by another measure, coloured by
+   * `color`), or by zone again (undefined). Call again when the values change. */
+  setValues(
+    values: Float32Array | undefined,
+    color: (v: number) => [number, number, number] = valueColor,
+  ): void {
     if (!values && !this.values) return;
     this.values = values;
+    this.valueColor = color;
     for (const key of this.meshes.keys()) this.dirty.add(key);
   }
 
@@ -204,7 +209,8 @@ export class ZoneLayer {
     const values = this.values;
     if (values) {
       // Every lot, by land value.
-      if (ids.length) group.add(this.fill(ids, (i) => valueColor(values[i])));
+      const color = this.valueColor;
+      if (ids.length) group.add(this.fill(ids, (i) => color(values[i])));
       return;
     }
     const zoned = ids.filter(

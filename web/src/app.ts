@@ -65,7 +65,16 @@ import { DayLog, type DayRecord, PeakMeter } from './game/days';
 import { STAGES, judge, loadCareer, saveCareer } from './game/career';
 import { lotDistricts } from './game/districts';
 import { CareerPanel, stagesDoneNotice } from './ui/careerPanel';
-import { ServicesPanel, loadServices } from './ui/servicesPanel';
+import { type ServicesData, ServicesPanel, loadServices } from './ui/servicesPanel';
+import {
+  type Homes,
+  coverage,
+  homesFromDemand,
+  serviceScore,
+  shortfall,
+  withGrown,
+} from './grow/coverage';
+import { COUNTY_WEIGHT } from './grow/demand';
 import { finished, occupants } from './grow/growth';
 import { DaysPanel, change, hoursLost } from './ui/daysPanel';
 import { CitySound } from './ui/sound';
@@ -373,6 +382,8 @@ export interface DebugApi {
   days?: DayLog;
   /** Today's services (M20a). */
   services?: import('./ui/servicesPanel').ServicesData;
+  /** How long the last measurement of service coverage took (ms; M20b). */
+  coverageMs?: number;
   /** The career's progress (M19c). */
   career?: import('./game/career').CareerState;
   /** The ground point under a screen point (CSS pixels in the canvas). */
@@ -430,6 +441,46 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
   let transitMarkers: StopMarkers | undefined;
   /** Today's services (M20a), once loaded. */
   let servicesPanel: ServicesPanel | undefined;
+  let servicesData: ServicesData | undefined;
+  /** Service coverage (M20b): today's homes (from the demand, on the network it was loaded
+   * with), when last measured, and each lot's services score, for the map. */
+  let homesNet: RoadNetwork | undefined;
+  let baseHomes: (Homes & { inCity: Uint8Array }) | undefined;
+  let coverageAt = -Infinity;
+  let lotScore: Float32Array | undefined;
+  let coverageMapOn = false;
+  /** Measure coverage again, at most every 15 simulated minutes unless `force`d. */
+  const updateCoverage = (now: number, force = false) => {
+    const data = servicesData;
+    const arrays = todayDemand?.arrays;
+    if (!data || !homesNet || !arrays?.demandEdge || !arrays.demandHome) return;
+    if (!force && now >= coverageAt && now - coverageAt < 900) return;
+    coverageAt = now;
+    const started = performance.now();
+    baseHomes ??= homesFromDemand(
+      homesNet,
+      {
+        demandEdge: arrays.demandEdge,
+        demandHome: arrays.demandHome,
+        demandDistrict: arrays.demandDistrict,
+      },
+      data.districts.length,
+      COUNTY_WEIGHT,
+    );
+    const homes = withGrown(baseHomes, zoning?.grownHomes(now) ?? []);
+    const atHomes = coverage(data.services, homes, homes);
+    servicesPanel?.setCoverage(shortfall(atHomes, homes.residents, (i) => homes.inCity[i] === 1));
+    if (zoning) {
+      const atLots = coverage(data.services, homes, zoning.lots);
+      const score = new Float32Array(zoning.lots.count);
+      for (let i = 0; i < score.length; i++) score[i] = serviceScore(atLots, i);
+      lotScore = score;
+      zoning.growth.coverage = score;
+      zoning.landValue.setServices(score);
+      if (coverageMapOn) zoning.showCoverage(score);
+    }
+    debug.coverageMs = performance.now() - started;
+  };
   let openTransit: (() => void) | undefined;
   /** Whether the player wants the panel open (it loads its data on first opening). */
   let transitWanted = false;
@@ -1562,11 +1613,18 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
           if (servicesInfo) {
             loadServices(DATA_URL + servicesInfo.index)
               .then((data) => {
+                servicesData = data;
                 servicesPanel = new ServicesPanel(hud.element, data, {
                   onClose: () => hud.setServices(false, hudCallbacks),
                   onShow: (s) => activeRig.flyTo(s.x, s.z, 1500),
                   invalidate,
+                  onCoverageMap: (on) => {
+                    coverageMapOn = on;
+                    zoning?.showCoverage(on ? lotScore : undefined);
+                  },
                 });
+                if (zoning) servicesPanel.enableCoverageMap();
+                updateCoverage(sim?.cur?.time ?? 0, true);
                 debug.services = data;
                 hud.enableServices();
               })
@@ -1635,6 +1693,7 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
           debug.traffic = traffic;
           const travelData = await travel;
           todayDemand = travelData;
+          homesNet = net;
           if (travelData.arrays.crossingXY) {
             pedestrians = new PedestrianLayer(
               net,
@@ -1909,6 +1968,7 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
                 const parked = s?.[STAT.parkingPaid] ?? 0;
                 budgetTool.chargesPaid(paid, running.cur.time);
                 budgetTool.parkingPaid(parked, running.cur.time);
+                updateCoverage(running.cur.time);
                 // The day's numbers; at midnight, the day just ended (M19b).
                 if (s) {
                   const now = running.cur.time;
@@ -2079,6 +2139,8 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
           });
           debug.zoning = zoning;
           hud.enableZones();
+          servicesPanel?.enableCoverageMap();
+          updateCoverage(sim?.cur?.time ?? 0, true);
           invalidate();
         })
         .catch((error: unknown) => console.warn('Zoning could not be loaded', error));

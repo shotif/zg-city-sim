@@ -4,6 +4,7 @@
  * district; their markers show on the map while it is open.
  */
 import { districtName } from '../game/career';
+import { NEED_KINDS, type NeedKind, REACH } from '../grow/coverage';
 import { button, el } from './buildPanel';
 
 export type ServiceKind = 'school' | 'kindergarten' | 'health' | 'fire' | 'police';
@@ -79,7 +80,13 @@ export interface ServicesPanelCallbacks {
   onShow(s: Service): void;
   /** The markers changed: draw the view again. */
   invalidate(): void;
+  /** Colour the zoned lots by coverage, or not (M20b). */
+  onCoverageMap?(on: boolean): void;
 }
+
+/** Residents short of places within reach, and the places short, of each kind (the City's;
+ * grow/coverage.ts `shortfall`). */
+export type CoverageSummary = Record<NeedKind, { residents: number; short: number; total: number }>;
 
 export class ServicesPanel {
   private readonly panel: HTMLElement;
@@ -87,6 +94,8 @@ export class ServicesPanel {
   private readonly list: HTMLElement;
   private readonly info: HTMLElement;
   private readonly district: HTMLSelectElement;
+  private readonly coverageLines: HTMLElement;
+  private readonly coverageMap: HTMLElement;
   private readonly markers: HTMLButtonElement[] = [];
   private readonly shownKinds = new Set<ServiceKind>(KINDS);
   private selected?: number;
@@ -146,6 +155,15 @@ export class ServicesPanel {
         `${k.label}: ${n(t.count)}` + (k.places ? `, about ${n(t.places)} ${k.places}` : ''),
       );
     }
+    el('h3', 'build-count', this.panel).textContent = 'Places within reach';
+    this.coverageLines = el('div', 'services-coverage', this.panel);
+    el('p', 'build-note', this.coverageLines).textContent = 'Measured once the traffic has loaded.';
+    this.coverageMap = el('label', 'build-label services-kind', this.panel);
+    this.coverageMap.hidden = true;
+    const mapBox = el('input', '', this.coverageMap);
+    mapBox.type = 'checkbox';
+    mapBox.addEventListener('change', () => callbacks.onCoverageMap?.(mapBox.checked));
+    this.coverageMap.append('Colour the lots by it (close in): green has places for all');
     const pick = el('label', 'build-label', this.panel);
     pick.append('District ');
     this.district = el('select', 'build-select', pick);
@@ -181,6 +199,29 @@ export class ServicesPanel {
     this.panel.hidden = !on;
     this.layer.hidden = !on;
     this.refresh();
+  }
+
+  /** The City's coverage as measured (M20b). */
+  setCoverage(summary: CoverageSummary): void {
+    this.coverageLines.replaceChildren(
+      ...NEED_KINDS.map((kind) => {
+        const c = summary[kind];
+        const line = document.createElement('p');
+        line.className = 'build-note';
+        const pct = c.total > 0 ? Math.round((100 * c.residents) / c.total) : 0;
+        const k = SERVICE_KINDS[kind];
+        line.textContent =
+          `${k.label}: ${pct} % of residents have fewer places than they need within ` +
+          `${(REACH[kind] / 1000).toLocaleString('en-GB')} km, about ${n(c.short)} ` +
+          `${k.places} short.`;
+        return line;
+      }),
+    );
+  }
+
+  /** Offer to colour the lots by coverage (there are lots: Sandbox and Career). */
+  enableCoverageMap(): void {
+    this.coverageMap.hidden = false;
   }
 
   /** Move the markers to where they are on screen (null: off screen). */

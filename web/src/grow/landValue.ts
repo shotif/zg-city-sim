@@ -27,6 +27,9 @@ export const REACH_MAX = 1200;
 const ACCESS_POWER = 0.75;
 /** Value added by green land around, all of it green. */
 const GREEN_BONUS = 0.1;
+/** Value added by places for everyone at schools, kindergartens and GPs within reach
+ * (M20b; an estimate, as homes near good schools sell for some 5-10 % more). */
+export const SERVICE_BONUS = 0.1;
 /** Traffic noise: value lost per dB(A) above QUIET, at most MAX_NOISE_LOSS. */
 const QUIET = 55;
 const NOISE_LOSS = 0.006;
@@ -169,6 +172,9 @@ export class LandValue {
   readonly value: Float32Array;
   /** Per lot: traffic noise (dB(A)) at its street, 0 until traffic is measured. */
   readonly noise: Float32Array;
+  /** Per lot: services within reach, 0-1 (the mean of its coverages, each up to one;
+   * M20b), 0 until measured. */
+  readonly services: Float32Array;
   /** Reach that scores 100: the highest at the first measurement. */
   reference = 0;
   /** Goes up with every change, so the map knows to redraw. */
@@ -184,6 +190,13 @@ export class LandValue {
     this.access = new Accessibility(lots, edgeOf);
     this.value = new Float32Array(lots.count).fill(NaN);
     this.noise = new Float32Array(lots.count);
+    this.services = new Float32Array(lots.count);
+  }
+
+  /** Services within reach of each lot (0-1). */
+  setServices(score: Float32Array): void {
+    this.services.set(score);
+    this.compute();
   }
 
   /** Accessibility measured (two numbers per `access.sources`). */
@@ -222,6 +235,7 @@ export class LandValue {
         : 100 *
           (reach / this.reference) ** ACCESS_POWER *
           (1 + (GREEN_BONUS * lots.green[i]) / 100) *
+          (1 + SERVICE_BONUS * this.services[i]) *
           (1 - noiseLoss(this.noise[i]));
     }
     this.version++;

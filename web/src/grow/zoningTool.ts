@@ -3,6 +3,7 @@
  * is dragged, buildings growing on them as simulated time passes, the layers that draw
  * them, and keeping and sharing the zoning and what grew.
  */
+import { coverageColor } from './coverage';
 import type * as THREE from 'three/webgpu';
 
 import type { SimClient } from '../sim/client';
@@ -12,7 +13,7 @@ import type { HeightFn } from '../world/roadGeometry';
 import type { TerrainLayer } from '../world/terrainLod';
 import { ZoneLayer } from '../world/zoneLayer';
 import { type EdgeDemand, addedDemand } from './demand';
-import { Growth, restoreBuildings, saveBuildings } from './growth';
+import { Growth, finished, occupants, restoreBuildings, saveBuildings } from './growth';
 import { LandValue, REACH_DECAY, REACH_MAX } from './landValue';
 import type { Lots } from './lots';
 import { BASE_DEMAND, type ZoneDemand, grownPeople, startRates, zoneDemand } from './zoneDemand';
@@ -78,6 +79,10 @@ export interface ZoningTool {
   readonly strokes: readonly Stroke[];
   /** Paint a stroke as the pointer would (scene points). */
   paint(brush: Brush, radius: number, points: [number, number][]): void;
+  /** Colour the lots by services score (per lot, M20b), or as before (undefined). */
+  showCoverage(score: Float32Array | undefined): void;
+  /** Homes grown and finished at simulated time `now`: their residents at their first lot. */
+  grownHomes(now: number): { x: number; z: number; residents: number }[];
 }
 
 /** A stroke takes a new point once the pointer moved this share of the brush radius. */
@@ -110,9 +115,11 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     for (let i = 0; i < lots.count; i++) if (zones[i]) out.push(i);
     return out;
   };
+  /** Lots coloured by service coverage instead (M20b). */
+  let coverageShown: Float32Array | undefined;
   const showValue = () => {
     panel.setLandValue(landValue.access.measured, landValue.mean(zonedLots()));
-    if (valueShown) layer.setValues(landValue.value);
+    if (valueShown && !coverageShown) layer.setValues(landValue.value);
     deps.invalidate();
   };
   // Land value is measured on the simulation running, every half an hour of simulated time
@@ -327,6 +334,19 @@ export function setUpZoning(deps: ZoningDeps): ZoningTool {
     get strokes() {
       return strokes;
     },
+    showCoverage: (least) => {
+      coverageShown = least;
+      if (least) layer.setValues(least, coverageColor);
+      else layer.setValues(valueShown ? landValue.value : undefined);
+      deps.invalidate();
+    },
+    grownHomes: (t) =>
+      growth.buildings.flatMap((b) => {
+        if (!b || !finished(b, t)) return [];
+        const residents = occupants(b).residents;
+        const lot = b.lots[0];
+        return residents > 0 ? [{ x: lots.x[lot], z: lots.z[lot], residents }] : [];
+      }),
     paint: (brush, radius, points) => {
       const s: Stroke = {
         brush,
