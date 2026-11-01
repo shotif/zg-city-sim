@@ -119,6 +119,7 @@ Known gaps:
 - A project's numbers come from the morning peak only, with today as the mean of two runs; more runs, and the afternoon, would narrow the noise.
 - A congestion charge (M18a) cuts traffic into Donji grad about twice as much as charges did in London, Stockholm and Milan: every driver counts €1 as 225 s, so nearly all through traffic goes round, and trips are not dropped, retimed or sent elsewhere.
 - A parking surcharge (M18b) estimates how long car trips park from their purpose, and moves trips only to public transport: none go elsewhere, or park outside the area and walk in.
+- Lorries are not kept off streets OpenStreetMap closes to them or limits by weight (`hgv`, `maxweight`), and are not told apart by weight, so today's runs let lorries over 12 t through Zagreb's central zone, and a lorry ban (M18c) sends them round over steep residential streets.
 
 **Plan (M4 Build, 2026-10-06).** Netconvert builds the network offline and cannot run in the browser, so edits take their own path: the engine changes the arrays it already has (lanes, links, signal programs, the routing graph) while it runs. Steps, each pushed to `main` when it works:
 
@@ -683,7 +684,17 @@ The policies' effects and costs are estimates, and the plan says from what. Each
     - Over the whole network: 6,647 and 7,539 vehicles removed at €1 and 7,836 at €2 (6,839 with none), 87,600 and 93,900 vehicle-hours queued at €1 and 97,200 at €2 (91,000). The two seeds at €1 differ by as much as the runs with and without the surcharge. The queues clear by night.
   - Income at €1: about €15.6 million a year after collection.
   - Open: stays are estimated by purpose, not taken from each trip; and trips only move to public transport, none to another destination or to parking outside the area and walking in.
-- **M18c, lorry ban.** Lorries may not cross the area's edge, except to reach or leave places inside it. Lorry routes count an hour for every crossing, so through lorries go round and deliveries still get in.
+- **M18c, lorry ban** (done 2026-11-01). Lorries may not cross the area's edge, in or out, during its hours (all day by default), except to reach or leave places inside it. Cars, buses, trams and bikes are not affected.
+  - Lorry routes count an hour (`BAN_SECONDS`) for every road over the edge while the ban applies (`Successor::ban`), so lorries passing through go round, and lorries to or from places inside cross it once, as deliveries are let in. The roads over the edge are found as a charge's roads in are, with junctions within 40 m of the edge counted as outside.
+  - Lorries route on metrics of their own on the hierarchy while a ban applies; otherwise they share the cars' (`Hierarchy::charges_changed`).
+  - The engine counts the lorries let in, and the `day` example writes the lorries driving onto each edge by the hour (`edge_lorries.bin`).
+  - In the app, the Build panel's Policies on an area offers a lorry ban, with its roads over the edge drawn. The budget pays for signs on each of them (€5,000 a road; 54 roads on Donji grad, €270,000) and police checks (€50,000 a year), estimates.
+  - Checked with day runs at 80 % on today's network, all day on Donji grad, seeds 1 and 2, against two runs of today (seeds 1 and 2, which match M16c's).
+    - Lorries driving into the area: 9,521-9,721 a day today, 3,179-3,279 with the ban, 66 % fewer: about two thirds of the lorries driving in were passing through. Lorries driving out fall 69 %, and lorry-km inside the area 46 %. Lorry-km over the whole map rise 0.7 % (1,376,000 to 1,386,000 a day) with the ways round.
+    - The ways round: Ksaverska cesta's busiest section carries 3,300 lorries a day (1,800 today), Ulica Vjekoslava Heinzela 1,900 (1,600) and Ulica grada Vukovara 2,200 (2,000). The steep streets above Gornji grad take some too: Tuškanac 500 (220), Jurjevska ulica 490 (330), Šestinski dol 530 (350).
+    - Within 4 km of Donji grad, 57,900-59,100 vehicle-hours queued (55,800-58,800 today), 1-2 % more, within the runs' noise. The second seed locked up round Mokrice in Zagorje, about 20 km away, from 15:00 to 20:00 (42,100 vehicle-hours queued beyond 4 km, against 32,200-33,800), which the first did not; vehicles removed 7,114 and 7,921 (6,839-6,979). The queues clear by night.
+  - Against what is known: Dublin had 80-94 % fewer lorries with five axles or more within its cordon once they were banned (with a port tunnel to take them). Zagreb already keeps lorries over 12 t out of its central zone, which the simulation does not model: its lorries are not told apart by weight, so today's runs let all of them through.
+  - Open: lorries are not kept off streets OpenStreetMap marks as closed to them or limited by weight (`hgv`, `maxweight`, which the network step does not read), so the ways round take steep residential streets such as Tuškanac.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
@@ -812,7 +823,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M15 Roads into the City** | Routes count fuel, so of two close ways drivers take the shorter: the roads from Dugo Selo, Sveta Nedelja and Lekenik fit their counts, 22-24 of 47 stations within ±25 %; drivers who weigh money differently tried and left out (done) |
 | **M16 Traffic within the City** | The City's junctions and corridors checked locally against its traffic studies' counts and GPS speeds on the bridges (their numbers not committed). Trams go with the traffic beside them, drivers sort into lanes earlier and go round full roundabouts, tram crossings no longer split junctions, and trips within the City are as long as Zagreb's. The counted junctions pass more, the bridges slow in the GPS data's order, and 21-26 of 47 stations are within ±25 % (done) |
 | **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: tried and left out, as joined crossings passed less and their guessed signals held up more (closed) |
-| **M18 Policies** | A congestion charge and parking surcharges (done: M18a, M18b), and lorry bans on areas the player draws, working through routes, the split with public transport and the budget |
+| **M18 Policies** | A congestion charge, parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget (done: M18a-c) |
 | **M19 Career mode** | Reality for analysis and Career with goals (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots |
 | **M20 Services** | Schools and health centres that growing districts need, placed by the player, with trips to them and their running costs |
 
