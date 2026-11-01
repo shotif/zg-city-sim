@@ -96,6 +96,9 @@ export const STAT = {
    * area (M18b). */
   parkingPaid: 25,
   parkingArrivals: 26,
+  /** Since the start: lorries that drove into an area banned to them while the ban applied
+   * (deliveries; M18c). */
+  lorriesIn: 27,
 } as const;
 
 /** Words per vehicle slot in the render buffer and what they hold (engine::write_render). */

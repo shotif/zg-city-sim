@@ -17,7 +17,7 @@ import {
 } from './builder';
 import { FREQUENCIES, MODE_NAME, type Mode, frequencyLabel } from '../world/transitLines';
 import { type LineMode, type LineStop, lineWords, placeStops } from './lines';
-import { type AreaPoint, MAX_AREA_POINTS, hoursText, roadsInto } from './policies';
+import { type AreaPoint, MAX_AREA_POINTS, hoursText, roadsAcross, roadsInto } from './policies';
 import type { RoadIndex } from './roadIndex';
 
 /** A road (one direction of travel): a point on it (scene x, z, m) and its heading there
@@ -73,6 +73,8 @@ export type Edit =
   | ChargeEdit
   /** A parking surcharge on an area (M18b). */
   | ParkingEdit
+  /** A lorry ban on an area (M18c). */
+  | LorryBanEdit
   /** A new road, a junction made a roundabout, a junction's traffic lights as the player
    * sets them (edit/builder.ts): built into the network before the other edits apply. */
   | RoadEdit
@@ -107,11 +109,29 @@ export interface ParkingEdit extends Omit<ChargeEdit, 'kind'> {
   kind: 'parking';
 }
 
+/** A lorry ban (M18c): lorries may not cross the edge of the area named `name` from `from`
+ * to `to` (minutes after midnight), except to reach or leave places inside it. */
+export interface LorryBanEdit extends Omit<ChargeEdit, 'kind' | 'euros'> {
+  kind: 'lorryBan';
+}
+
 /** A policy on an area. */
-export type AreaEdit = ChargeEdit | ParkingEdit;
+export type AreaEdit = ChargeEdit | ParkingEdit | LorryBanEdit;
+
+/** Euros a policy carries (none for a lorry ban). */
+export function eurosOf(edit: AreaEdit): number {
+  return edit.kind === 'lorryBan' ? 0 : edit.euros;
+}
 
 /** Parking surcharges the engine takes (€ an hour; sim/src/policy.rs `PARKING_RANGE`). */
 export const PARKING_RANGE = [0, 20] as const;
+
+/** The euros each kind of policy may carry (none for a lorry ban). */
+const AREA_RANGE: Record<AreaEdit['kind'], readonly [number, number]> = {
+  charge: CHARGE_RANGE,
+  parking: PARKING_RANGE,
+  lorryBan: [0, 0],
+};
 
 /** A new bus or tram line: its stops in order, and back again in reverse where `both`; a
  * trip from the first stop every `headway` seconds from `first` to `last` (s after
@@ -158,6 +178,7 @@ const KIND = {
   charge: 12,
   areaPoint: 13,
   parking: 14,
+  lorryBan: 15,
 } as const;
 /** Headways (s) and hours a new line may have (sim/src/transit.rs `LINE_HEADWAY`). */
 export const LINE_HEADWAY = [120, 7200] as const;
@@ -224,15 +245,23 @@ function resolveEdit(
       return { edit, edges: [], record, ways: ways.map((w) => w.stops) };
     }
     case 'charge':
-    case 'parking': {
+    case 'parking':
+    case 'lorryBan': {
       const n = edit.area.length;
-      const [lo, hi] = edit.kind === 'charge' ? CHARGE_RANGE : PARKING_RANGE;
-      if (n < 3 || n > MAX_AREA_POINTS || !(edit.euros >= lo && edit.euros <= hi)) return undefined;
+      const [lo, hi] = AREA_RANGE[edit.kind];
+      const euros = eurosOf(edit);
+      if (n < 3 || n > MAX_AREA_POINTS || !(euros >= lo && euros <= hi)) return undefined;
       const hours = (edit.from & 0xffff) | ((edit.to & 0xffff) << 16);
-      const record = [KIND[edit.kind], n, hours >>> 0, floatBits(edit.euros)];
+      const record = [KIND[edit.kind], n, hours >>> 0, floatBits(euros)];
       for (const p of edit.area) record.push(KIND.areaPoint, 0, floatBits(p.x), floatBits(p.z));
-      // Drawn: a charge's roads into the area, where its cameras stand.
-      const edges = edit.kind === 'charge' ? roadsInto(index.net, edit.area) : [];
+      // Drawn: a charge's roads into the area, where its cameras stand, and a lorry ban's
+      // roads over its edge, where its signs stand.
+      const edges =
+        edit.kind === 'charge'
+          ? roadsInto(index.net, edit.area)
+          : edit.kind === 'lorryBan'
+            ? roadsAcross(index.net, edit.area)
+            : [];
       return { edit, edges, record };
     }
     case 'frequency': {
@@ -325,6 +354,7 @@ export function sameTarget(a: Edit, b: Edit): boolean {
       return a.name === (b as typeof a).name && a.mode === (b as typeof a).mode;
     case 'charge':
     case 'parking':
+    case 'lorryBan':
       return a.name === (b as typeof a).name;
     case 'road': {
       const q = (b as typeof a).points;
@@ -367,6 +397,8 @@ export function describeEdit(edit: Edit): string {
       return `Congestion charge on ${edit.name}: €${edit.euros} ${hoursText(edit.from, edit.to)}`;
     case 'parking':
       return `Parking surcharge in ${edit.name}: €${edit.euros} an hour ${hoursText(edit.from, edit.to)}`;
+    case 'lorryBan':
+      return `Lorry ban on ${edit.name}: ${hoursText(edit.from, edit.to)}`;
     case 'line': {
       const ends = `${edit.stops[0]?.name ?? ''} - ${edit.stops.at(-1)?.name ?? ''}`;
       const every = Math.round((edit.headway / 60) * 10) / 10;
@@ -442,6 +474,7 @@ function compact(edit: Edit): Edit {
       return edit;
     case 'charge':
     case 'parking':
+    case 'lorryBan':
       return { ...edit, area: edit.area.map((p) => ({ x: Math.round(p.x), z: Math.round(p.z) })) };
     case 'line':
       return {
@@ -473,6 +506,7 @@ const KINDS = new Set([
   'line',
   'charge',
   'parking',
+  'lorryBan',
 ]);
 
 /** Edits from a saved list; throws if it is not one. Unknown kinds are dropped. */
@@ -528,17 +562,19 @@ export function parseEdits(text: string): Edit[] {
       case 'roundabout':
         return isJunction(e.junction) && (e.lanes === 1 || e.lanes === 2);
       case 'charge':
-      case 'parking': {
-        const [lo, hi] = e.kind === 'charge' ? CHARGE_RANGE : PARKING_RANGE;
+      case 'parking':
+      case 'lorryBan': {
+        const [lo, hi] = AREA_RANGE[e.kind];
+        const euros = eurosOf(e);
         return (
           typeof e.name === 'string' &&
           Array.isArray(e.area) &&
           e.area.length >= 3 &&
           e.area.length <= MAX_AREA_POINTS &&
           e.area.every((p) => Number.isFinite(p?.x) && Number.isFinite(p?.z)) &&
-          Number.isFinite(e.euros) &&
-          e.euros >= lo &&
-          e.euros <= hi &&
+          Number.isFinite(euros) &&
+          euros >= lo &&
+          euros <= hi &&
           Number.isInteger(e.from) &&
           Number.isInteger(e.to) &&
           e.from >= 0 &&

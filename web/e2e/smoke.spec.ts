@@ -1253,7 +1253,7 @@ test("shows Zagreb's weather, and drives and looks as the weather picked", async
   expect(errors).toEqual([]);
 });
 
-test('charges for driving and parking in Donji grad, and drivers pay', async ({
+test('charges for driving and parking in Donji grad, bans lorries there, and drivers pay', async ({
   page,
 }, testInfo) => {
   test.setTimeout(300_000);
@@ -1305,6 +1305,22 @@ test('charges for driving and parking in Donji grad, and drivers pay', async ({
     })
     .toBeGreaterThan(0);
   await expect(page.locator('.build-draw p').last()).toContainText('Parking surcharges paid');
+  // And lorries kept from crossing its edge, all day: those with places inside still get in.
+  await page.getByLabel('Policy', { exact: true }).selectOption({ label: 'Lorry ban' });
+  await expect(page.getByLabel('Charge', { exact: true })).toBeHidden();
+  await expect(page.getByLabel('Hours', { exact: true })).toHaveValue('5');
+  await page.getByRole('button', { name: 'Donji grad', exact: true }).click();
+  await expect(page.locator('.build-list li')).toHaveCount(3);
+  await expect(page.locator('.build-list li').last()).toContainText(
+    'Lorry ban on Donji grad: all day',
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.__ZG__?.sim?.stats?.[27] ?? 0), {
+      timeout: 180_000,
+      intervals: [5_000],
+    })
+    .toBeGreaterThan(0);
+  await expect(page.locator('.build-draw p').last()).toContainText('Lorries let into banned areas');
   await page.evaluate(() => window.__ZG__?.lookAt(250, 500, 4000));
   await page.waitForTimeout(2000);
   await page.screenshot({ path: testInfo.outputPath('charge.png') });

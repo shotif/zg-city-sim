@@ -333,7 +333,8 @@ pub fn frequency_edits(engine: &Engine, factor: f32) -> Vec<Edit> {
 
 /// Policies from the file `POLICY` names (M18), if set: a line per policy, `#` for comments.
 /// `charge 3 07:00 19:00 x,z x,z x,z ...`: €3 for driving into the area with those corners
-/// (scene coordinates, m) from 07:00 to 19:00.
+/// (scene coordinates, m) from 07:00 to 19:00; `parking 1 07:00 21:00 ...`: €1 an hour more
+/// to park there; `lorries 00:00 24:00 ...`: lorries kept from crossing its edge (M18c).
 pub fn policy_edits() -> Vec<Edit> {
     let Ok(path) = std::env::var("POLICY") else {
         return Vec::new();
@@ -345,9 +346,12 @@ pub fn policy_edits() -> Vec<Edit> {
     };
     let mut edits = Vec::new();
     for line in text.lines().map(str::trim) {
-        let words: Vec<&str> = line.split_whitespace().collect();
+        let mut words: Vec<&str> = line.split_whitespace().collect();
         if words.is_empty() || words[0].starts_with('#') {
             continue;
+        }
+        if words[0] == "lorries" {
+            words.insert(1, "0");
         }
         if words.len() < 7 {
             panic!("POLICY: cannot read {line:?}");
@@ -367,6 +371,7 @@ pub fn policy_edits() -> Vec<Edit> {
         match words[0] {
             "charge" => edits.push(Edit::Charge(charge)),
             "parking" => edits.push(Edit::Parking(charge)),
+            "lorries" => edits.push(Edit::LorryBan(charge)),
             _ => panic!("POLICY: cannot read {line:?}"),
         }
     }

@@ -1,5 +1,5 @@
 //! Policies on areas the player draws (M18): a congestion charge for driving into an area,
-//! and a surcharge on parking in one.
+//! a surcharge on parking in one, and a ban on lorries crossing one's edge.
 //!
 //! An area is a polygon in scene coordinates (x east, z south, metres). Its junctions are
 //! those whose position is inside it and more than `EDGE_FREE` from its edge, and the roads
@@ -21,6 +21,12 @@
 //! permits). Routes do not count it, as there is no way round it. The split counts half of
 //! the expected payment on each leg of trips to and from the area, and car trips that still
 //! end there pay it.
+//!
+//! A lorry ban (M18c) keeps lorries from crossing the area's edge, in or out, during its
+//! hours, except to reach or leave places inside it. Lorry routes count `BAN_SECONDS` for
+//! every road over the edge, so through lorries go round, and lorries to and from places
+//! inside cross it once, as deliveries are let in. Cars, buses, trams and bikes are not
+//! affected, and the split does not count it.
 
 use crate::demand::{Demand, HOURLY, purposes};
 use crate::network::Network;
@@ -41,6 +47,10 @@ pub const WORK_PAYING: f32 = 0.5;
 pub const ERRAND_STAY: f32 = 1.5 * 3600.0;
 /// Trips of each purpose drawn to estimate which share ends in a parking area.
 const PARKING_SAMPLES: usize = 4000;
+/// What lorry routes count for each road over a lorry ban's edge while it applies (s): an
+/// hour, more than any way round the area takes, so only lorries to or from places inside
+/// it cross the edge.
+pub const BAN_SECONDS: f32 = 3600.0;
 /// Most points an area may have.
 pub const MAX_POINTS: usize = 256;
 /// Junctions within this distance of an area's edge (m) count as outside it, so the roads
@@ -92,7 +102,8 @@ pub fn within(points: &[(f32, f32)], p: (f32, f32)) -> bool {
 }
 
 /// A congestion charge on an area: `euros` for driving into it between `from` and `to`
-/// (s after midnight; `from` after `to` runs over midnight).
+/// (s after midnight; `from` after `to` runs over midnight). Parking surcharges and lorry
+/// bans take the same form (a ban's `euros` is 0).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Charge {
     pub area: Vec<(f32, f32)>,
@@ -172,28 +183,44 @@ pub struct Policies {
     /// area.
     pub parking_paid: f64,
     pub parking_arrivals: u64,
+    /// Lorry bans (M18c), whether each applies now, and for each edge over a ban's edge the
+    /// ban and whether it leads in (sorted by edge).
+    pub bans: Vec<Charge>,
+    pub ban_active: Vec<bool>,
+    ban_by_edge: Vec<(u32, u16, bool)>,
+    /// Lorries that drove into a ban's area while it applied, since the start.
+    pub lorries_in: u64,
+}
+
+/// For each junction of `net`, whether it is in `area` (`within`).
+fn junctions_within(net: &Network, area: &[(f32, f32)]) -> Vec<bool> {
+    let n_junctions = net.d.junction_pos.len() / 2;
+    let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+    for &(x, z) in area {
+        (lo, hi) = ((lo.0.min(x), lo.1.min(z)), (hi.0.max(x), hi.1.max(z)));
+    }
+    (0..n_junctions)
+        .map(|j| {
+            let p = (net.d.junction_pos[2 * j], net.d.junction_pos[2 * j + 1]);
+            (lo.0..=hi.0).contains(&p.0) && (lo.1..=hi.1).contains(&p.1) && within(area, p)
+        })
+        .collect()
 }
 
 impl Policies {
-    /// The policies `charges` and `parking` on network `net`. What parking costs is
+    /// The policies `charges`, `parking` and `bans` on network `net`. What parking costs is
     /// estimated with `estimate_parking`.
-    pub fn new(net: &Network, charges: Vec<Charge>, parking: Vec<Charge>) -> Policies {
+    pub fn new(
+        net: &Network,
+        charges: Vec<Charge>,
+        parking: Vec<Charge>,
+        bans: Vec<Charge>,
+    ) -> Policies {
         let n_junctions = net.d.junction_pos.len() / 2;
         let mut entries = Vec::with_capacity(charges.len());
         let mut by_edge = Vec::new();
         for (c, charge) in charges.iter().enumerate() {
-            let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
-            for &(x, z) in &charge.area {
-                (lo, hi) = ((lo.0.min(x), lo.1.min(z)), (hi.0.max(x), hi.1.max(z)));
-            }
-            let is_in: Vec<bool> = (0..n_junctions)
-                .map(|j| {
-                    let p = (net.d.junction_pos[2 * j], net.d.junction_pos[2 * j + 1]);
-                    (lo.0..=hi.0).contains(&p.0)
-                        && (lo.1..=hi.1).contains(&p.1)
-                        && within(&charge.area, p)
-                })
-                .collect();
+            let is_in = junctions_within(net, &charge.area);
             let mut roads = Vec::new();
             for e in 0..net.edge_count() {
                 if net.is_internal_edge(e as u32) {
@@ -217,6 +244,20 @@ impl Policies {
             }
         }
         parking_by_edge.sort_unstable();
+        let mut ban_by_edge = Vec::new();
+        for (b, ban) in bans.iter().enumerate() {
+            let is_in = junctions_within(net, &ban.area);
+            for e in 0..net.edge_count() {
+                let (a, z) = (net.d.edge_from[e] as usize, net.d.edge_to[e] as usize);
+                if net.is_internal_edge(e as u32) || a >= n_junctions || z >= n_junctions {
+                    continue;
+                }
+                if is_in[a] != is_in[z] {
+                    ban_by_edge.push((e as u32, b as u16, is_in[z]));
+                }
+            }
+        }
+        ban_by_edge.sort_unstable();
         Policies {
             active: vec![false; charges.len()],
             charges,
@@ -230,11 +271,27 @@ impl Policies {
             parking_by_edge,
             parking_paid: 0.0,
             parking_arrivals: 0,
+            ban_active: vec![false; bans.len()],
+            bans,
+            ban_by_edge,
+            lorries_in: 0,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.charges.is_empty() && self.parking.is_empty()
+        self.charges.is_empty() && self.parking.is_empty() && self.bans.is_empty()
+    }
+
+    /// The roads over each lorry ban's edge, in and out.
+    pub fn ban_roads(&self, b: usize) -> Vec<u32> {
+        let mut roads: Vec<u32> = self
+            .ban_by_edge
+            .iter()
+            .filter(|&&(_, x, _)| x as usize == b)
+            .map(|&(e, _, _)| e)
+            .collect();
+        roads.dedup();
+        roads
     }
 
     /// What car trips ending in each parking area pay, from the trips `demand` draws: the
@@ -310,17 +367,34 @@ impl Policies {
         }
     }
 
-    /// Which charges apply at `time`; true if that changed since last asked.
+    /// Which charges and lorry bans apply at `time`; true if that changed since last asked.
     pub fn refresh(&mut self, time: f64) -> bool {
         let mut changed = false;
-        for (c, charge) in self.charges.iter().enumerate() {
-            let now = charge.applies(time);
-            if now != self.active[c] {
-                self.active[c] = now;
-                changed = true;
+        for (policies, active) in [
+            (&self.charges, &mut self.active),
+            (&self.bans, &mut self.ban_active),
+        ] {
+            for (c, policy) in policies.iter().enumerate() {
+                let now = policy.applies(time);
+                if now != active[c] {
+                    active[c] = now;
+                    changed = true;
+                }
             }
         }
         changed
+    }
+
+    /// Seconds lorry routes count for driving onto each edge for the lorry bans in force
+    /// now, into `out` sized for the network's edges.
+    pub fn ban_seconds(&self, out: &mut Vec<f32>, edges: usize) {
+        out.clear();
+        out.resize(edges, 0.0);
+        for &(e, b, _) in &self.ban_by_edge {
+            if self.ban_active[b as usize] && (e as usize) < edges {
+                out[e as usize] += BAN_SECONDS;
+            }
+        }
     }
 
     /// Seconds car and lorry routes count for driving onto each edge now (`charges[e]`;
@@ -335,9 +409,19 @@ impl Policies {
         }
     }
 
-    /// A car or lorry drove onto edge `e`: it pays the charges in force for the areas it
-    /// leads into.
-    pub fn entered(&mut self, e: u32) {
+    /// A car or lorry (`lorry`) drove onto edge `e`: it pays the charges in force for the
+    /// areas it leads into, and lorries driving into an area banned to them are counted.
+    pub fn entered(&mut self, e: u32, lorry: bool) {
+        if lorry && !self.bans.is_empty() {
+            let start = self.ban_by_edge.partition_point(|&(x, _, _)| x < e);
+            let into = self.ban_by_edge[start..]
+                .iter()
+                .take_while(|&&(x, _, _)| x == e)
+                .any(|&(_, b, into)| into && self.ban_active[b as usize]);
+            if into {
+                self.lorries_in += 1;
+            }
+        }
         let start = self.by_edge.partition_point(|&(x, _)| x < e);
         let mut paid = 0.0;
         for &(x, c) in &self.by_edge[start..] {

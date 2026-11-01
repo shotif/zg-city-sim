@@ -60,7 +60,7 @@
  * weekdays a year as above.
  */
 import type { Point } from '../edit/builder';
-import type { ChargeEdit, Edit } from '../edit/edits';
+import type { ChargeEdit, Edit, LorryBanEdit } from '../edit/edits';
 import { areaOf } from '../edit/policies';
 import type { Mode, Riders } from '../world/transitLines';
 import { ARCHETYPES, type Grown, NET_AREA, heights, occupants } from './growth';
@@ -107,8 +107,9 @@ export const CHARGE_GATE = 100_000;
 export const CHARGE_SYSTEM = 2_000_000;
 export const CHARGE_RUNNING = 0.3;
 export const CHARGE_DAYS = 250;
-/** Roads into a charge's area (`edit/policies.ts` `roadsInto`). */
-export type Gates = (edit: ChargeEdit) => number;
+/** Roads where a policy's cameras or signs stand: into a charge's area (`roadsInto`), and
+ * over a lorry ban's edge (`roadsAcross`, edit/policies.ts). */
+export type Gates = (edit: ChargeEdit | LorryBanEdit) => number;
 /** A parking surcharge (M18b): signs, the machines and the payment app changed (€50,000)
  * and more machines and wardens' rounds (€100,000 a km² of area), estimates; enforcement
  * and collection take 15 % of what is paid (an estimate); paid on 250 weekdays a year
@@ -116,6 +117,10 @@ export type Gates = (edit: ChargeEdit) => number;
 export const PARKING_SETUP = 50_000;
 export const PARKING_KM2 = 100_000;
 export const PARKING_RUNNING = 0.15;
+/** A lorry ban (M18c): signs on each road over its edge, in or out (€5,000 a road), and
+ * police checks to enforce it (€50,000 a year), estimates. */
+export const BAN_SIGNS = 5_000;
+export const BAN_UPKEEP = 50_000;
 
 /** Fares a year from the boardings the edits gain (lose, negative): by route, its mode
  * (`modeOf`; none: left out). */
@@ -204,6 +209,8 @@ function buildAndUpkeep(
       return { build: CHARGE_SYSTEM + CHARGE_GATE * (gates?.(edit) ?? 0), upkeep: 0 };
     case 'parking':
       return { build: PARKING_SETUP + (PARKING_KM2 * areaOf(edit.area)) / 1e6, upkeep: 0 };
+    case 'lorryBan':
+      return { build: BAN_SIGNS * (gates?.(edit) ?? 0), upkeep: BAN_UPKEEP };
     case 'frequency': {
       const km = lineKm?.(edit.line, edit.mode, false) ?? 0;
       const service = (edit.factor - 1) * km * SERVICE_DAYS[edit.mode] * VEHICLE_KM[edit.mode];

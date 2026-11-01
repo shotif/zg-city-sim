@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BUS_LANE,
   type Edit,
+  VCLASS,
   decodeEditsFromUrl,
   describeEdit,
   editWords,
@@ -303,6 +304,30 @@ describe('a congestion charge', () => {
     expect(parseEdits(serializeEdits([parking]))).toEqual([parking]);
     // Dearer than the engine takes: not sent.
     expect(resolveEdits(index, [{ ...parking, euros: 25 }]).missing).toHaveLength(1);
+  });
+
+  it('has a lorry ban on the same area beside it, with its roads over the edge drawn', () => {
+    const ban: Edit = {
+      kind: 'lorryBan',
+      name: 'Donji grad',
+      area: charge.area,
+      from: 0,
+      to: 1440,
+    };
+    // Roads lorries may not drive are left out: here, all of them.
+    expect(resolveEdits(index, [ban]).resolved[0].edges).toEqual([]);
+    const net = junction();
+    net.laneAllow.fill(VCLASS.passenger | VCLASS.truck);
+    const { resolved, missing } = resolveEdits(new RoadIndex(net), [charge, ban]);
+    expect(missing).toEqual([]);
+    // The road into the area, and both out of it.
+    expect(resolved[1].edges).toEqual([0, 1, 2]);
+    const words = editWords([resolved[1]]);
+    expect([words[0], words[1], words[2]]).toEqual([15, 4, 0 | (1440 << 16)]);
+    expect(new Float32Array(words.buffer)[3]).toBe(0);
+    expect(withEdit([charge], ban)).toEqual([charge, ban]);
+    expect(describeEdit(ban)).toBe('Lorry ban on Donji grad: all day');
+    expect(parseEdits(serializeEdits([ban]))).toEqual([ban]);
   });
 
   it('is saved, described and replaced by another charge on the same area', () => {

@@ -11,6 +11,9 @@
 use crate::network::{Network, vclass};
 use crate::policy::{CHARGE_RANGE, Charge, MAX_POINTS, PARKING_RANGE};
 
+/// What a lorry ban's record carries in place of euros: nothing.
+const NO_EUROS: (f32, f32) = (0.0, 0.0);
+
 /// Classes a closed road or lane keeps: buses and trams stay on their timetabled routes.
 pub const CLOSED_KEEPS: u16 = vclass::BUS | vclass::TRAM | vclass::RAIL;
 /// Speed limits edits may set (m/s): 5-130 km/h.
@@ -49,6 +52,9 @@ pub enum Edit {
     Charge(Charge),
     /// A parking surcharge on an area (M18b): `euros` an hour.
     Parking(Charge),
+    /// A lorry ban on an area (M18c): lorries may cross its edge only to reach or leave
+    /// places inside it (`euros` is 0).
+    LorryBan(Charge),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,6 +90,8 @@ pub mod kind {
     pub const AREA_POINT: u32 = 13;
     /// A parking surcharge takes the records of a congestion charge, with euros an hour.
     pub const PARKING: u32 = 14;
+    /// A lorry ban takes the records of a congestion charge, with no euros.
+    pub const LORRY_BAN: u32 = 15;
 }
 
 impl Edit {
@@ -118,7 +126,7 @@ impl Edit {
                 }
                 continue;
             }
-            if r[0] == kind::CHARGE || r[0] == kind::PARKING {
+            if [kind::CHARGE, kind::PARKING, kind::LORRY_BAN].contains(&r[0]) {
                 let n = r[1] as usize;
                 let rest = &records[k..];
                 if (3..=MAX_POINTS).contains(&n)
@@ -126,8 +134,11 @@ impl Edit {
                     && rest[..n].iter().all(|s| s[0] == kind::AREA_POINT)
                 {
                     let euros = f32::from_bits(r[3]);
-                    let parking = r[0] == kind::PARKING;
-                    let (lo, hi) = if parking { PARKING_RANGE } else { CHARGE_RANGE };
+                    let (lo, hi) = match r[0] {
+                        kind::PARKING => PARKING_RANGE,
+                        kind::LORRY_BAN => NO_EUROS,
+                        _ => CHARGE_RANGE,
+                    };
                     if (lo..=hi).contains(&euros) {
                         let charge = Charge {
                             area: rest[..n]
@@ -138,10 +149,10 @@ impl Edit {
                             from: (r[2] & 0xffff).min(1440) as f32 * 60.0,
                             to: (r[2] >> 16).min(1440) as f32 * 60.0,
                         };
-                        out.push(if parking {
-                            Edit::Parking(charge)
-                        } else {
-                            Edit::Charge(charge)
+                        out.push(match r[0] {
+                            kind::PARKING => Edit::Parking(charge),
+                            kind::LORRY_BAN => Edit::LorryBan(charge),
+                            _ => Edit::Charge(charge),
                         });
                     }
                     k += n;
@@ -230,14 +241,14 @@ impl Edit {
                 }
                 return out;
             }
-            Edit::Charge(ref charge) | Edit::Parking(ref charge) => {
+            Edit::Charge(ref charge) | Edit::Parking(ref charge) | Edit::LorryBan(ref charge) => {
                 let hours =
                     (charge.from / 60.0).round() as u32 | ((charge.to / 60.0).round() as u32) << 16;
                 let mut out = vec![
-                    if matches!(self, Edit::Parking(_)) {
-                        kind::PARKING
-                    } else {
-                        kind::CHARGE
+                    match self {
+                        Edit::Parking(_) => kind::PARKING,
+                        Edit::LorryBan(_) => kind::LORRY_BAN,
+                        _ => kind::CHARGE,
                     },
                     charge.area.len() as u32,
                     hours,
@@ -369,7 +380,8 @@ pub fn apply(net: &mut Network, edit: &Edit) -> bool {
         | Edit::Line(_)
         | Edit::Priority { .. }
         | Edit::Charge(_)
-        | Edit::Parking(_) => {
+        | Edit::Parking(_)
+        | Edit::LorryBan(_) => {
             return false;
         }
     }

@@ -8,6 +8,7 @@ import {
   type JunctionRef,
   type LineEdit,
   type ChargeEdit,
+  type LorryBanEdit,
   type ResolvedEdit,
   type TransitMatch,
   decodeEditsFromUrl,
@@ -89,7 +90,7 @@ import {
 } from './world/transitLines';
 import { ProjectsSection } from './ui/projectsSection';
 import { junctionName } from './edit/signals';
-import { roadsInto } from './edit/policies';
+import { roadsAcross, roadsInto } from './edit/policies';
 import { PolicySection } from './ui/policySection';
 import { RoadDrawer } from './ui/roadDrawer';
 import { BuildingLayer, buildingCentres, loadBuildings } from './world/buildingLayer';
@@ -802,8 +803,10 @@ export async function startApp(container: HTMLElement): Promise<void> {
         const route = isNew ? timetable.newRoute(line, mode) : timetable.routeIndex(line, mode);
         return route === undefined ? undefined : timetable.km(route);
       };
-      // A congestion charge's cameras stand on the roads into its area (M18a).
-      const gates = (charge: ChargeEdit) => roadsInto(current.net, charge.area).length;
+      // A congestion charge's cameras stand on the roads into its area (M18a), a lorry
+      // ban's signs on the roads over its edge (M18c).
+      const gates = (policy: ChargeEdit | LorryBanEdit) =>
+        (policy.kind === 'charge' ? roadsInto : roadsAcross)(current.net, policy.area).length;
       const costs = (list: readonly Edit[]) => editsCost(list, hasLights, lineKm, gates);
       const stopIndexes = new WeakMap<RoadNetwork, Map<LineMode, RoadIndex>>();
       const stopRoads = (mode: LineMode): RoadIndex => {
@@ -869,7 +872,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         layer.show(groups);
         areaLayer.show(
           edits.flatMap((e) =>
-            e.kind === 'charge' || e.kind === 'parking'
+            e.kind === 'charge' || e.kind === 'parking' || e.kind === 'lorryBan'
               ? [{ points: e.area, color: EDIT_COLORS[e.kind] }]
               : [],
           ),
@@ -1043,7 +1046,7 @@ export async function startApp(container: HTMLElement): Promise<void> {
         onRoad: (road) => tryNetworkEdit(road),
       });
       debug.drawer = drawer;
-      // Policies (M18): a congestion charge or a parking surcharge on an area.
+      // Policies (M18): a congestion charge, a parking surcharge or a lorry ban on an area.
       const policies = new PolicySection(panel.drawSlot, {
         onDrawing: (on) => {
           if (on) panel.select(undefined);
@@ -1767,6 +1770,11 @@ export async function startApp(container: HTMLElement): Promise<void> {
                     euros: parked,
                     count: s?.[STAT.parkingArrivals] ?? 0,
                     shown: edits.some((e) => e.kind === 'parking'),
+                  },
+                  {
+                    euros: 0,
+                    count: s?.[STAT.lorriesIn] ?? 0,
+                    shown: edits.some((e) => e.kind === 'lorryBan'),
                   },
                 );
               }

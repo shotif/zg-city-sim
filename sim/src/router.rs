@@ -506,8 +506,13 @@ impl Router {
                 }
                 let next = s.edge;
                 let toll = if *tolls { s.toll } else { 0.0 };
+                let ban = if fuel && vclass == vclass::TRUCK {
+                    s.ban
+                } else {
+                    0.0
+                };
                 let (fuel, charge) = if fuel { (s.fuel, s.charge) } else { (0.0, 0.0) };
-                let cost = g + travel_time[next as usize] + s.penalty + toll + fuel + charge;
+                let cost = g + travel_time[next as usize] + s.penalty + toll + fuel + charge + ban;
                 let n = &mut nodes[next as usize];
                 if n.epoch != epoch {
                     *n = Node {

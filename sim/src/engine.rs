@@ -195,7 +195,9 @@ pub mod stat {
     /// Parking surcharges paid (€), and car trips that ended in a parking area (M18b).
     pub const PARKING_PAID: usize = 25;
     pub const PARKING_ARRIVALS: usize = 26;
-    pub const LEN: usize = 27;
+    /// Lorries that drove into an area banned to them while the ban applied (M18c).
+    pub const LORRIES_IN: usize = 27;
+    pub const LEN: usize = 28;
 }
 
 /// Trip flags.
@@ -515,6 +517,8 @@ pub struct Engine {
     cycleway: Vec<u8>,
     /// Bikes that have ridden onto each edge (`edge_entered` counts the rest).
     pub edge_bikes: Vec<u32>,
+    /// Lorries that have driven onto each edge (also in `edge_entered`; M18c).
+    pub edge_lorries: Vec<u32>,
     /// Level crossings (M8b), as `net.crossings`: since when each has been closing for a
     /// train (s; NaN while open), and until when a train is due there.
     pub(crate) crossing_since: Vec<f64>,
@@ -1190,6 +1194,7 @@ impl Engine {
             bike_time: Vec::new(),
             cycleway: Vec::new(),
             edge_bikes: vec![0; n_edges],
+            edge_lorries: vec![0; n_edges],
             crossing_since: Vec::new(),
             crossing_due: Vec::new(),
             crossing_closures: Vec::new(),
@@ -3936,10 +3941,13 @@ impl Engine {
                 } else {
                     self.edge_entered[e] += 1;
                     let veh = &self.vehs[v as usize];
-                    let pays = veh.transit.is_none()
-                        && (veh.vtype == vtype::CAR || veh.vtype == vtype::TRUCK);
+                    let lorry = veh.transit.is_none() && veh.vtype == vtype::TRUCK;
+                    if lorry {
+                        self.edge_lorries[e] += 1;
+                    }
+                    let pays = veh.transit.is_none() && (veh.vtype == vtype::CAR || lorry);
                     if pays && !self.policies.is_empty() {
-                        self.policies.entered(e as u32);
+                        self.policies.entered(e as u32, lorry);
                     }
                 }
                 let veh = &self.vehs[v as usize];
@@ -5243,15 +5251,19 @@ impl Engine {
         }
     }
 
-    /// Count the charges in force in car and lorry routes (M18a).
+    /// Count the charges in force in car and lorry routes (M18a), and the lorry bans in
+    /// lorry routes (M18c).
     fn apply_charges(&mut self) {
         let mut seconds = std::mem::take(&mut self.charge_seconds);
         self.policies
             .route_seconds(&mut seconds, self.net.edge_count());
         self.net.set_charges(&seconds);
+        self.policies
+            .ban_seconds(&mut seconds, self.net.edge_count());
+        self.net.set_bans(&seconds);
         self.charge_seconds = seconds;
         if let Some(h) = self.hierarchy.as_mut() {
-            h.travel_changed();
+            h.charges_changed(&self.net);
         }
     }
 
@@ -5339,12 +5351,16 @@ impl Engine {
         let mut priority = vec![false; n_tls];
         let mut charges = Vec::new();
         let mut parking = Vec::new();
+        let mut bans = Vec::new();
         for edit in edits {
             if let Edit::Charge(charge) = edit {
                 charges.push(charge.clone());
                 applied.push(edit.clone());
             } else if let Edit::Parking(park) = edit {
                 parking.push(park.clone());
+                applied.push(edit.clone());
+            } else if let Edit::LorryBan(ban) = edit {
+                bans.push(ban.clone());
                 applied.push(edit.clone());
             } else if let Edit::Frequency { route, factor } = *edit {
                 // Lines the timetable runs, as often as edits may set.
@@ -5377,11 +5393,12 @@ impl Engine {
         // Policies carry over what was paid; their roads in, and the roads in their areas,
         // are found on the network now.
         let old = std::mem::take(&mut self.policies);
-        self.policies = Policies::new(&self.net, charges, parking);
+        self.policies = Policies::new(&self.net, charges, parking, bans);
         self.policies.paid = old.paid;
         self.policies.payers = old.payers;
         self.policies.parking_paid = old.parking_paid;
         self.policies.parking_arrivals = old.parking_arrivals;
+        self.policies.lorries_in = old.lorries_in;
         if let Some(demand) = self.demand.as_ref() {
             self.policies.estimate_parking(demand);
         }
@@ -5740,6 +5757,7 @@ impl Engine {
         out[stat::CHARGE_PAYERS] = self.policies.payers as f64;
         out[stat::PARKING_PAID] = self.policies.parking_paid;
         out[stat::PARKING_ARRIVALS] = self.policies.parking_arrivals as f64;
+        out[stat::LORRIES_IN] = self.policies.lorries_in as f64;
         out
     }
 

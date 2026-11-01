@@ -1,7 +1,7 @@
 /**
- * Policies on areas (M18): the areas on offer, and the roads into an area, where a
- * congestion charge's cameras stand. The engine works the same out for itself
- * (sim/src/policy.rs).
+ * Policies on areas (M18): the areas on offer, the roads into an area, where a congestion
+ * charge's cameras stand, and the roads over its edge, where a lorry ban's signs stand. The
+ * engine works the same out for itself (sim/src/policy.rs).
  */
 import type { RoadNetwork } from '../world/roadNetwork';
 
@@ -99,9 +99,8 @@ export function areaOf(area: readonly AreaPoint[]): number {
   return Math.abs(twice) / 2;
 }
 
-/** Roads cars may drive into the area by: edges from a junction outside it (or along its
- * edge) to one inside. */
-export function roadsInto(net: RoadNetwork, area: readonly AreaPoint[]): number[] {
+/** For each junction, whether it is in the area (`within`). */
+function junctionsWithin(net: RoadNetwork, area: readonly AreaPoint[]): Uint8Array {
   const n = net.junctionPos.length / 2;
   const isIn = new Uint8Array(n);
   let [x0, z0, x1, z1] = [Infinity, Infinity, -Infinity, -Infinity];
@@ -112,13 +111,38 @@ export function roadsInto(net: RoadNetwork, area: readonly AreaPoint[]): number[
     const p = { x: net.junctionPos[2 * j], z: net.junctionPos[2 * j + 1] };
     isIn[j] = p.x >= x0 && p.x <= x1 && p.z >= z0 && p.z <= z1 && within(area, p) ? 1 : 0;
   }
+  return isIn;
+}
+
+/** Whether vehicles of class bits `vclass` (1 cars, 8 lorries: `VCLASS` in edits.ts) may
+ * drive a lane of edge `e`. */
+function allows(net: RoadNetwork, e: number, vclass: number): boolean {
+  const lane = net.edgeLaneStart[e];
+  for (let l = lane; l < lane + net.edgeLaneCount[e]; l++) {
+    if ((net.laneAllow[l] & vclass) !== 0) return true;
+  }
+  return false;
+}
+
+/** Roads cars may drive into the area by: edges from a junction outside it (or along its
+ * edge) to one inside. */
+export function roadsInto(net: RoadNetwork, area: readonly AreaPoint[]): number[] {
+  const isIn = junctionsWithin(net, area);
   const roads: number[] = [];
   for (let e = 0; e < net.edgeFrom.length; e++) {
     if (net.isInternal(e) || isIn[net.edgeFrom[e]] || !isIn[net.edgeTo[e]]) continue;
-    const lane = net.edgeLaneStart[e];
-    let cars = false;
-    for (let l = lane; l < lane + net.edgeLaneCount[e]; l++) cars ||= (net.laneAllow[l] & 1) !== 0;
-    if (cars) roads.push(e);
+    if (allows(net, e, 1)) roads.push(e);
+  }
+  return roads;
+}
+
+/** Roads lorries may drive over the area's edge by, in or out (a lorry ban's, M18c). */
+export function roadsAcross(net: RoadNetwork, area: readonly AreaPoint[]): number[] {
+  const isIn = junctionsWithin(net, area);
+  const roads: number[] = [];
+  for (let e = 0; e < net.edgeFrom.length; e++) {
+    if (net.isInternal(e) || (isIn[net.edgeFrom[e]] ?? 0) === (isIn[net.edgeTo[e]] ?? 0)) continue;
+    if (allows(net, e, 8)) roads.push(e);
   }
   return roads;
 }

@@ -379,13 +379,19 @@ impl Metric {
                 continue;
             }
             let toll = if self.tolls { s.toll } else { 0.0 };
-            // Charges count where fuel does: car and lorry routes (M18a).
+            // Charges count where fuel does: car and lorry routes (M18a); lorry bans in
+            // lorry routes alone (M18c).
             let (fuel, charge) = if self.fuel {
                 (s.fuel, s.charge)
             } else {
                 (0.0, 0.0)
             };
-            let w = times[s.edge as usize] + s.penalty + toll + fuel + charge;
+            let ban = if self.fuel && self.vclass == vclass::TRUCK {
+                s.ban
+            } else {
+                0.0
+            };
+            let w = times[s.edge as usize] + s.penalty + toll + fuel + charge + ban;
             let slot = if cch.input_up[i] {
                 &mut self.up[a as usize]
             } else {
@@ -1041,11 +1047,11 @@ impl Flow {
     }
 }
 
-/// Whether trucks may make exactly the moves cars may.
+/// Whether trucks may make exactly the moves cars may, at the same cost (no lorry bans).
 fn trucks_as_cars(net: &Network) -> bool {
-    net.succ
-        .iter()
-        .all(|s| (s.allow & vclass::PASSENGER != 0) == (s.allow & vclass::TRUCK != 0))
+    net.succ.iter().all(|s| {
+        (s.allow & vclass::PASSENGER != 0) == (s.allow & vclass::TRUCK != 0) && s.ban == 0.0
+    })
 }
 
 /// Which travel times a search runs on (`Hierarchy::kind`).
@@ -1152,6 +1158,13 @@ impl Hierarchy {
                 self.stale[k] = true;
             }
         }
+    }
+
+    /// Charges or lorry bans changed (M18a, M18c): cars and trucks customise again, and
+    /// trucks route on their own metrics while a ban applies.
+    pub fn charges_changed(&mut self, net: &Network) {
+        self.trucks_as_cars = trucks_as_cars(net);
+        self.travel_changed();
     }
 
     /// The network's successors or permissions changed (edits): index them again, and

@@ -326,6 +326,7 @@ impl Engine {
         self.edge_speed_ratio.resize(n_edges, 255);
         self.edge_entered.resize(n_edges, 0);
         self.edge_bikes.resize(n_edges, 0);
+        self.edge_lorries.resize(n_edges, 0);
         if !self.bike_time.is_empty() {
             self.update_bike_times();
         }

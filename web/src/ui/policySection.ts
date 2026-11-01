@@ -53,6 +53,19 @@ const KINDS: Record<
       'hours, and residents park on permits (estimates). Through traffic does not pay, so ' +
       'only trips into the area move to trams and buses.',
   },
+  lorryBan: {
+    label: 'Lorry ban',
+    amounts: [],
+    amount: '',
+    per: '',
+    hours: 5,
+    note:
+      'Lorries may not cross the area’s edge, in or out, except to reach or leave places ' +
+      'inside it: their routes count an hour for every road over the edge, so lorries ' +
+      'passing through go round and deliveries still get in. Cars, buses and bikes are not ' +
+      'affected. Zagreb already keeps lorries over 12 t out of its central zone; the ' +
+      'simulation does not tell lorries apart by weight.',
+  },
 };
 
 export interface PolicySectionCallbacks {
@@ -74,10 +87,10 @@ export interface Paid {
 }
 
 /**
- * Policies on an area (M18), in the Build panel: a congestion charge (M18a) or a parking
- * surcharge (M18b). Choose the policy, its amount and hours, then an area (Donji grad, or
- * one drawn on the map). Policies in force are listed with the other edits, and taken back
- * there.
+ * Policies on an area (M18), in the Build panel: a congestion charge (M18a), a parking
+ * surcharge (M18b) or a lorry ban (M18c). Choose the policy, its amount and hours, then an
+ * area (Donji grad, or one drawn on the map). Policies in force are listed with the other
+ * edits, and taken back there.
  */
 export class PolicySection {
   readonly element: HTMLElement;
@@ -139,6 +152,8 @@ export class PolicySection {
         k.amounts.map((c) => [String(c), `€${c}${k.per}`]),
       );
       this.euros.value = k.amount;
+      // A lorry ban has no amount.
+      if (this.euros.parentElement) this.euros.parentElement.hidden = k.amounts.length === 0;
       this.hours.value = String(k.hours);
       this.note.textContent = k.note;
     };
@@ -179,8 +194,9 @@ export class PolicySection {
     return this.drawing;
   }
 
-  /** What has been paid in the simulation so far for charges and for parking. */
-  setPaid(charges: Paid, parking: Paid): void {
+  /** What has been paid in the simulation so far for charges and for parking, and the
+   * lorries let into banned areas (`count`). */
+  setPaid(charges: Paid, parking: Paid, lorries: Paid): void {
     const lines: string[] = [];
     const n = (x: number) => Math.round(x).toLocaleString('en-GB');
     if (charges.shown) {
@@ -192,6 +208,11 @@ export class PolicySection {
       lines.push(
         `Parking surcharges paid so far today: €${n(parking.euros)}, by ${n(parking.count)} ` +
           'car trips that ended in the area.',
+      );
+    }
+    if (lorries.shown) {
+      lines.push(
+        `Lorries let into banned areas so far today, to reach places there: ${n(lorries.count)}.`,
       );
     }
     this.paid.hidden = lines.length === 0;
@@ -263,18 +284,16 @@ export class PolicySection {
     const kind = this.kind.value as Kind;
     const hours = POLICY_HOURS[Number(this.hours.value)] ?? POLICY_HOURS[0];
     const euros = Number(this.euros.value);
-    const problem = this.callbacks.onPolicy({
-      kind,
-      name,
-      area,
-      euros,
-      from: hours.from,
-      to: hours.to,
-    });
+    const base = { name, area, from: hours.from, to: hours.to };
+    const problem = this.callbacks.onPolicy(
+      kind === 'lorryBan' ? { kind, ...base } : { kind, euros, ...base },
+    );
     const what =
       kind === 'charge'
         ? `€${euros} for driving into ${name}`
-        : `€${euros} an hour on parking in ${name}`;
+        : kind === 'parking'
+          ? `€${euros} an hour on parking in ${name}`
+          : `Lorries kept from crossing the edge of ${name}`;
     this.status.textContent = problem ?? `${what} ${hoursText(hours.from, hours.to)}.`;
     return problem === undefined;
   }

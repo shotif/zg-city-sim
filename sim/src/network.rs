@@ -199,6 +199,9 @@ pub struct Successor {
     /// Seconds a congestion charge for driving onto the edge it leads to is worth to car
     /// and lorry routes (M18a, `Network::set_charges`), 0 where none applies.
     pub charge: f32,
+    /// Seconds a lorry ban counts for driving onto the edge it leads to, in lorry routes
+    /// only (M18c, `Network::set_bans`), 0 where none applies.
+    pub ban: f32,
 }
 
 pub struct Network {
@@ -595,6 +598,7 @@ impl Network {
                 toll,
                 fuel: FUEL_TIME * length,
                 charge: 0.0,
+                ban: 0.0,
             });
         }
         for e in 0..n_edges {
@@ -609,6 +613,14 @@ impl Network {
     pub fn set_charges(&mut self, seconds: &[f32]) {
         for s in &mut self.succ {
             s.charge = seconds.get(s.edge as usize).copied().unwrap_or(0.0);
+        }
+    }
+
+    /// Lorry bans' time for driving onto each edge (s; `seconds[e]`, none past its end),
+    /// counted by lorry routes alone (M18c).
+    pub fn set_bans(&mut self, seconds: &[f32]) {
+        for s in &mut self.succ {
+            s.ban = seconds.get(s.edge as usize).copied().unwrap_or(0.0);
         }
     }
 

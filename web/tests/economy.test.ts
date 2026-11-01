@@ -13,6 +13,8 @@ import {
   INCOME_TAX,
   LANE_KM,
   NEW_LIGHTS,
+  BAN_SIGNS,
+  BAN_UPKEEP,
   PARKING_KM2,
   PARKING_RUNNING,
   PARKING_SETUP,
@@ -316,6 +318,27 @@ describe('a congestion charge', () => {
     // A new engine counts from nothing again.
     budget.chargesPaid(10, 9 * 3600);
     expect(budget.balance).toBeCloseTo(BASE_INCOME + year);
+  });
+});
+
+describe('a lorry ban', () => {
+  it('costs signs on each road over its edge, and police checks a year', () => {
+    const ban = {
+      kind: 'lorryBan' as const,
+      name: 'Donji grad',
+      area: [
+        { x: 0, z: 0 },
+        { x: 100, z: 0 },
+        { x: 100, z: 100 },
+      ],
+      from: 0,
+      to: 1440,
+    };
+    expect(editCost(ban, undefined, undefined, () => 60)).toEqual({
+      build: 60 * BAN_SIGNS,
+      upkeep: BAN_UPKEEP,
+      service: 0,
+    });
   });
 });
 

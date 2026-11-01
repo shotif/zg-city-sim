@@ -5093,7 +5093,7 @@ fn charges_round_trip_through_records_and_count_half_on_each_leg_of_the_split() 
     let share = charge.day_share();
     assert!(share > 0.7 && share < 0.9, "{share}");
     let (b, _, _) = straight_road(300.0, 1);
-    let policies = Policies::new(&b.build(), vec![charge], Vec::new());
+    let policies = Policies::new(&b.build(), vec![charge], Vec::new(), Vec::new());
     let centres = [(0.0, 0.0), (5000.0, 0.0), (100.0, 100.0)];
     let extra = policies.split_seconds(&centres).unwrap();
     let leg = 0.5 * 4.0 * SECONDS_PER_EURO * share;
@@ -5239,4 +5239,96 @@ fn a_parking_surcharge_on_one_zone_moves_car_trips_to_it_and_is_paid_by_those_th
     engine.set_edits(&[]);
     run_until(&mut engine, 600.0, |_| {});
     assert_eq!(engine.policies.parking_paid, paid);
+}
+
+#[test]
+fn a_lorry_ban_sends_through_lorries_round_and_lets_deliveries_in() {
+    // By A* and on the hierarchy.
+    for hierarchy in [false, true] {
+        lorry_ban(hierarchy);
+    }
+}
+
+fn lorry_ban(hierarchy: bool) {
+    use crate::policy::Charge;
+    // As in the charge's test: straight through B, or round through C. B is in the area,
+    // with a dead end inside it to D, where a lorry delivers.
+    let mut b = Builder::default();
+    let s0 = b.junction(-200.0, 0.0);
+    let a = b.junction(0.0, 0.0);
+    let bj = b.junction(500.0, 0.0);
+    let m = b.junction(1000.0, 0.0);
+    let c = b.junction(500.0, 500.0);
+    let z = b.junction(1200.0, 0.0);
+    let d = b.junction(500.0, -40.0);
+    let into = b.road(s0, a, 1, 13.9);
+    let ab = b.road(a, bj, 1, 13.9);
+    let bm = b.road(bj, m, 1, 13.9);
+    let up = b.road(a, c, 1, 13.9);
+    let down = b.road(c, m, 1, 13.9);
+    let last = b.road(m, z, 1, 13.9);
+    let bd = b.road(bj, d, 1, 13.9);
+    for (from, to, j) in [
+        (into, ab, a),
+        (into, up, a),
+        (ab, bm, bj),
+        (ab, bd, bj),
+        (up, down, c),
+        (bm, last, m),
+        (down, last, m),
+    ] {
+        let (fl, tl) = (b.lane(from, 0), b.lane(to, 0));
+        b.connect(fl, tl, j, dir::STRAIGHT, b'M');
+    }
+    let mut engine = Engine::new(b.build(), 5);
+    if hierarchy {
+        engine.build_hierarchy();
+    }
+    let ban = Charge {
+        area: square(500.0, 0.0, 100.0),
+        euros: 0.0,
+        from: 0.0,
+        to: 86_400.0,
+    };
+    // Through the records the app sends.
+    let edit = Edit::LorryBan(ban.clone());
+    assert_eq!(Edit::decode(&edit.encode()), vec![edit.clone()]);
+    assert_eq!(engine.set_edits(&[edit]), 1);
+    // The roads over its edge: in to B, and out of it.
+    assert_eq!(engine.policies.ban_roads(0), vec![ab, bm]);
+    // A car and a lorry through, and a lorry to D.
+    for (i, (vt, to)) in [(vtype::CAR, last), (vtype::TRUCK, last), (vtype::TRUCK, bd)]
+        .into_iter()
+        .enumerate()
+    {
+        engine.add_trip(Trip {
+            depart: i as f64 * 15.0,
+            from: into,
+            to,
+            vtype: vt,
+            flags: 0,
+        });
+    }
+    run_until(&mut engine, 300.0, |_| {});
+    assert_eq!(engine.stats.arrived, 3, "hierarchy {hierarchy}");
+    // The car drives through; the lorry through goes round; the delivery gets in.
+    assert_eq!(engine.edge_entered[bm as usize], 1);
+    assert_eq!(engine.edge_lorries[bm as usize], 0);
+    assert_eq!(engine.edge_lorries[up as usize], 1);
+    assert_eq!(engine.edge_lorries[ab as usize], 1);
+    assert_eq!(engine.edge_lorries[bd as usize], 1);
+    assert_eq!(engine.policies.lorries_in, 1);
+    assert_eq!(engine.stats_array()[stat::LORRIES_IN], 1.0);
+    // Lifted: what was counted carries over, and lorries take the straight way again.
+    engine.set_edits(&[]);
+    assert_eq!(engine.policies.lorries_in, 1);
+    engine.add_trip(Trip {
+        depart: engine.time + 1.0,
+        from: into,
+        to: last,
+        vtype: vtype::TRUCK,
+        flags: 0,
+    });
+    run_until(&mut engine, 200.0, |_| {});
+    assert_eq!(engine.edge_lorries[bm as usize], 1);
 }

@@ -16,7 +16,8 @@
 //! vehicles; towns as `demandTown`, beyond the map 40000 plus the gateway's index in the
 //! demand's list (65534 if not known), 65535 unknown; M13),
 //! `<out_dir>/town_commutes.bin` (commutes drawn from the demand by the town of home
-//! and of work, against the census: `run::write_town_commutes`, M13) and `<out_dir>/day.json`
+//! and of work, against the census: `run::write_town_commutes`, M13),
+//! `<out_dir>/edge_lorries.bin` (as `edge_counts.bin`, lorries alone; M18c) and `<out_dir>/day.json`
 //! (traffic statistics per hour, with the vehicle-hours queued at junctions by holdup).
 //!
 //! `FREQUENCY=2` runs every tram and bus line twice as often, `PRIORITY=all` gives trams and
@@ -110,7 +111,7 @@ fn main() {
         println!("priority for trams and buses at {} signals", priority.len());
         edits.extend(priority);
     }
-    // POLICY=file: congestion charges and parking surcharges (M18).
+    // POLICY=file: congestion charges, parking surcharges and lorry bans (M18).
     let policies = run::policy_edits();
     if !policies.is_empty() {
         println!("policies: {}", policies.len());
@@ -154,6 +155,7 @@ fn main() {
     let mut select_counts: std::collections::HashMap<(u32, u16, u16), u32> =
         std::collections::HashMap::new();
     let mut by_hour = vec![Vec::new(); 24];
+    let mut lorries_by_hour = vec![Vec::new(); 24];
     let mut speeds_by_hour = vec![Vec::new(); 24];
     // WATCH_JUNCTIONS=j1,j2 and WATCH_FROM=13: from that hour of the day, every simulated
     // minute, the stopped front vehicle of each queue into those junctions (as in `run`).
@@ -172,6 +174,7 @@ fn main() {
     for k in 0..24 {
         let hour = (START_HOUR + k) % 24;
         let entered = engine.edge_entered.clone();
+        let lorries = engine.edge_lorries.clone();
         let delay0 = delay_total(&engine);
         let s0 = engine.stats.clone();
         let (mut running, mut outside, mut speed, mut stopped, mut samples) = (0, 0, 0.0, 0, 0);
@@ -229,6 +232,12 @@ fn main() {
                 samples += 1;
             }
         }
+        lorries_by_hour[hour] = engine
+            .edge_lorries
+            .iter()
+            .zip(&lorries)
+            .map(|(a, b)| a - b)
+            .collect::<Vec<u32>>();
         by_hour[hour] = engine
             .edge_entered
             .iter()
@@ -282,6 +291,14 @@ fn main() {
         }
     }
     std::fs::write(format!("{out}/edge_counts.bin"), bytes).expect("write counts");
+    let mut bytes = Vec::with_capacity(4 + 24 * n * 4);
+    bytes.extend((n as u32).to_le_bytes());
+    for counts in &lorries_by_hour {
+        for c in counts {
+            bytes.extend(c.to_le_bytes());
+        }
+    }
+    std::fs::write(format!("{out}/edge_lorries.bin"), bytes).expect("write lorries");
     // Bikes over the whole day per edge (M8d): u32 edge count, then u32 per edge.
     let mut bytes = Vec::with_capacity(4 + engine.edge_bikes.len() * 4);
     bytes.extend((engine.edge_bikes.len() as u32).to_le_bytes());
@@ -367,7 +384,7 @@ fn main() {
     let summary = format!(
         "{{\"startHour\": {START_HOUR}, \"demandScale\": {}, \"riders\": {riders}, \"seconds\": {:.0}, \"departed\": {}, \"arrived\": {}, \
          \"removed\": {}, \"noRoute\": {}, \"notInserted\": {}, \"enRouteReroutes\": {}, \"rounds\": {}, \"removedBecause\": {:?}, \
-         \"removedAt\": [{}], \"transit\": {transit}, \"bikes\": {{\"departed\": {}, \"arrived\": {}, \"removed\": {}, \"km\": {:.0}}}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"charges\": {{\"paid\": {:.0}, \"payers\": {}}}, \"parking\": {{\"paid\": {:.0}, \"arrivals\": {}, \"meanPay\": {:?}}}, \"hours\": [\n  {}\n]}}\n",
+         \"removedAt\": [{}], \"transit\": {transit}, \"bikes\": {{\"departed\": {}, \"arrived\": {}, \"removed\": {}, \"km\": {:.0}}}, \"levelCrossings\": {}, \"crossingClosures\": [{}], \"delayKinds\": {:?}, \"delayHours\": [{}], \"charges\": {{\"paid\": {:.0}, \"payers\": {}}}, \"parking\": {{\"paid\": {:.0}, \"arrivals\": {}, \"meanPay\": {:?}}}, \"lorryBans\": {{\"lorriesIn\": {}}}, \"hours\": [\n  {}\n]}}\n",
         engine.demand_scale,
         started.elapsed().as_secs_f64(),
         s.departed,
@@ -392,6 +409,7 @@ fn main() {
         engine.policies.parking_paid,
         engine.policies.parking_arrivals,
         engine.policies.parking_mean(),
+        engine.policies.lorries_in,
         hours.join(",\n  "),
     );
     std::fs::write(format!("{out}/day.json"), summary).expect("write summary");
