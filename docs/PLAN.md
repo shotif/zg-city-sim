@@ -761,7 +761,10 @@ The policies' effects and costs are estimates, and the plan says from what. Each
 - **Metrics customised together.** When a search needs a metric on the measured times, every other stale metric on them is customised too, natively on threads of their own: 7 s instead of 22 s. The travel times change for all of them at once, so each is customised for the same times as before. The browser customises them one by one, as before.
 - **Planning on threads.** A vehicle's plan reads the decisions of vehicles planned before it in the same step (whether they will cross their stop line, the stop signs they have stopped at), so planning was in turn. Now, natively, all vehicles are planned at once on the state before the step, each noting whose decisions it read; then the plans are acted on in turn, and a vehicle whose plan read a decision changed before it is planned again there and then, as it would have been. About 5 vehicles a step are planned again. On four threads planning took 93 s instead of 162 s. `THREADS=n` sets the threads for the native runs (the machine's cores, up to four, by default; `THREADS=1` when runs share the machine). The browser plans on one thread: WebAssembly threads would need a nightly Rust toolchain (the standard library built with atomics) and a page isolated across origins, which GitHub Pages cannot set.
 - Tried and left out: keeping each vehicle's way on past its next junction (`choose_link`, 5 % of the instructions) as its lane scores are kept: no faster.
-- From 06:00 to 07:30 natively: 185 s instead of 293 s, 1.6 times faster, the output the same line for line. A test checks one thread and four agree on a busy give-way crossroads.
+- From 06:00 to 07:30 natively: 185 s instead of 293 s, 1.6 times faster, the output the same line for line. In the browser's engine (WebAssembly, timed in Node over the same 90 minutes) 313.5 s instead of 336.9 s, 7 % faster, its slowest simulated minute 4.7 s instead of 5.2 s: only the lane scores kept help it, as it runs on one thread.
+- A whole day on four threads (seed 1, with M21's lorry rules) is the same as M21's in everything it writes: the hourly statistics, the counts, lorries and speeds on every road, and the delay at every junction. A test checks one thread and four agree on a busy give-way crossroads.
+
+**Status (M22, done 2026-11-01).** The engine gives the same results 1.6 times faster natively (day runs, validation) and 7 % faster in the browser. Planning is still most of the time on one thread; what is left there is right of way at junctions, which reads decisions made in the same step.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
@@ -894,7 +897,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M19 Career mode** | Reality for analysis, Sandbox and Career with goals in stages (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots (done: M19a-c) |
 | **M20 Services** | Primary schools, kindergartens and health centres that growing homes need, and fire and police stations with response times on the simulated roads; today's from open data, new ones placed by the player, with trips to them and their costs (done: M20a-d) |
 | **M21 Lorry rules** | Roads OpenStreetMap closes to lorries or limits by weight, lorries told apart by weight, and the City's ban on lorries over 12 t in its central zone, in force in every city: heavy lorries into the zone 54-56 % fewer, lorries onto limited roads 81-83 % fewer (done) |
-| **M22 Faster engine** | The engine 1.6 times faster natively with the same results (lane scores kept, metrics customised together, vehicles planned on threads), a little faster in the browser (in progress) |
+| **M22 Faster engine** | The engine 1.6 times faster natively with the same results (lane scores kept, metrics customised together, vehicles planned on threads), 7 % faster in the browser (done) |
 | **M23 Full demand** | Find where Zagreb's big junctions lose capacity and raise the demand simulated from 80 % towards all of it, validated on the counts (next) |
 
 ## Risks and open questions
