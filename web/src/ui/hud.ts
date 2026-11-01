@@ -28,6 +28,8 @@ export interface HudCallbacks {
   onCities?(enabled: boolean): void;
   /** The Days panel open or closed (M19b). */
   onDays?(enabled: boolean): void;
+  /** The Career panel open or closed (M19c). */
+  onCareer?(enabled: boolean): void;
 }
 
 /** What the view can leave out. */
@@ -146,6 +148,8 @@ export class Hud {
   private cities = false;
   private readonly daysButton: HTMLButtonElement;
   private days = false;
+  private readonly careerButton: HTMLButtonElement;
+  private career = false;
   private readonly simDay: HTMLElement;
   private readonly showButtons = new Map<Shown, HTMLButtonElement>();
   private readonly shown = new Set<Shown>(SHOWN.map((s) => s.kind));
@@ -261,6 +265,13 @@ export class Hud {
     this.daysButton.hidden = true;
     this.daysButton.setAttribute('aria-pressed', 'false');
     this.daysButton.addEventListener('click', () => this.setDays(!this.days, callbacks));
+    this.careerButton = el('button', 'hud-button hud-speed', this.layers);
+    this.careerButton.type = 'button';
+    this.careerButton.textContent = 'Career';
+    this.careerButton.title = "The career's stage and its goals (G)";
+    this.careerButton.hidden = true;
+    this.careerButton.setAttribute('aria-pressed', 'false');
+    this.careerButton.addEventListener('click', () => this.setCareer(!this.career, callbacks));
     for (const { kind, label, title } of SHOWN) {
       const button = el('button', 'hud-button hud-speed', this.layers);
       button.type = 'button';
@@ -367,6 +378,8 @@ export class Hud {
         this.setZones(!this.zones, callbacks);
       } else if ((event.key === 'm' || event.key === 'M') && !this.budgetButton.hidden) {
         this.setBudget(!this.budget, callbacks);
+      } else if ((event.key === 'g' || event.key === 'G') && !this.careerButton.hidden) {
+        this.setCareer(!this.career, callbacks);
       } else if ((event.key === 'd' || event.key === 'D') && !this.daysButton.hidden) {
         this.setDays(!this.days, callbacks);
       } else if ((event.key === 'p' || event.key === 'P') && !this.transitButton.hidden) {
@@ -519,6 +532,19 @@ export class Hud {
     this.cities = enabled;
     this.cityButton.setAttribute('aria-pressed', String(enabled));
     callbacks?.onCities?.(enabled);
+  }
+
+  /** Offer the Career panel. */
+  enableCareer(): void {
+    this.layers.hidden = false;
+    this.careerButton.hidden = false;
+  }
+
+  /** Open or close the Career panel (`callbacks` given: tell the app). */
+  setCareer(enabled: boolean, callbacks?: HudCallbacks): void {
+    this.career = enabled;
+    this.careerButton.setAttribute('aria-pressed', String(enabled));
+    callbacks?.onCareer?.(enabled);
   }
 
   /** Offer the Days panel. */

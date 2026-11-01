@@ -370,6 +370,11 @@ export class Budget {
     this.yearly[kind] = (total - log[0][1]) * CHARGE_DAYS * kept;
   }
 
+  /** A career grant (M19c). */
+  grant(amount: number): void {
+    this.balance += amount;
+  }
+
   /** A building finished: its communal contribution. */
   contribute(amount: number): void {
     this.balance += amount;

@@ -1372,6 +1372,63 @@ test('counts the days played and reports each at midnight', async ({ page }, tes
   expect(errors).toEqual([]);
 });
 
+test('plays a career stage by stage, with a grant for each stage done', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(300_000);
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+  // Two days played already, with 2,100 and 2,200 residents grown and the balance above
+  // zero: the first stage's goals are met.
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('seeded')) return;
+    sessionStorage.setItem('seeded', '1');
+    const day = (n: number, residents: number) => ({
+      day: n,
+      from: 0,
+      trips: 400_000,
+      tripMinutes: 20,
+      vehicleHours: 150_000,
+      delayHours: 30_000,
+      vehicleKm: 1e7,
+      residents,
+      jobs: 0,
+      balance: 1e6,
+      ptShare: 0.4,
+    });
+    localStorage.setItem('zg-city-sim:days', JSON.stringify([day(1, 2100), day(2, 2200)]));
+  });
+  await page.goto('./?speed=16');
+  await page.waitForFunction(
+    () => window.__ZG__?.sim?.ready === true && window.__ZG__?.career !== undefined,
+    null,
+    { timeout: 150_000 },
+  );
+  expect(await page.evaluate(() => window.__ZG__!.career!.stage)).toBe(1);
+  await page.keyboard.press('g');
+  const panel = page.getByRole('complementary', { name: 'Career' });
+  await expect(panel).toContainText('Stage 2 of 5: Savska cesta');
+  await expect(panel).toContainText(
+    'Traffic at Savska cesta × Tratinska ulica at 20 % of the speed limit or more from 15:00 to 18:00',
+  );
+  await expect(panel).toContainText('Grant when its goals are met: €10.0 million.');
+  await expect(panel).toContainText('First steps, on day 2: €5.0 million grant.');
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: testInfo.outputPath('career.png') });
+  // Kept with the city: not paid again.
+  const balance = () => page.evaluate(() => window.__ZG__!.budget!.budget.balance);
+  const before = await balance();
+  await page.reload();
+  await page.waitForFunction(() => window.__ZG__?.career !== undefined, null, { timeout: 150_000 });
+  expect(await page.evaluate(() => window.__ZG__!.career!.done.length)).toBe(1);
+  expect(await balance()).toBeLessThan(before + 1_000_000);
+
+  expect(errors).toEqual([]);
+});
+
 test.describe('a first visit', () => {
   // Nothing kept in the browser yet.
   test.use({ storageState: { cookies: [], origins: [] } });

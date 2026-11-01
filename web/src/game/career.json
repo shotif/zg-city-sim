@@ -1,0 +1,56 @@
+{
+  "about": "Career stages (M19c), in order. Goals are judged at midnight on the days played. Jam goals use a news hotspot's roads: the mean speed as a share of the speed limit, weighted by length, from 07:00 to 09:00 (am) or 15:00 to 18:00 (pm), as the mean of the last two whole days; 'today' is that share in two day runs of today's roads (2026-11-01, seeds 1 and 2). Transit and traffic goals compare with the mean of the career's first two whole days. Grants are game balance, not real figures.",
+  "stages": [
+    {
+      "id": "first-steps",
+      "name": "First steps",
+      "text": "Zone land for homes and work, and keep the City's books in the black while it grows.",
+      "grant": 5000000,
+      "goals": [
+        { "kind": "residents", "target": 2000 },
+        { "kind": "balance", "days": 2 }
+      ]
+    },
+    {
+      "id": "savska",
+      "name": "Savska cesta",
+      "text": "Every afternoon traffic stands still on Savska cesta at Tratinska ulica. Get it moving.",
+      "grant": 10000000,
+      "goals": [
+        { "kind": "jam", "hotspot": "savska-tratinska", "peak": "pm", "target": 0.2, "today": 0.07 }
+      ]
+    },
+    {
+      "id": "transit",
+      "name": "Trams and buses",
+      "text": "Win riders for ZET: more trips by tram and bus than when the career began.",
+      "grant": 10000000,
+      "goals": [{ "kind": "transit", "points": 2 }]
+    },
+    {
+      "id": "novi-zagreb",
+      "name": "Novi Zagreb grows",
+      "text": "Let Novi Zagreb – zapad grow without the city's traffic getting worse.",
+      "grant": 15000000,
+      "goals": [
+        { "kind": "residents", "target": 5000, "district": "Novi Zagreb - zapad" },
+        { "kind": "traffic", "most": 1.05 }
+      ]
+    },
+    {
+      "id": "slavonska",
+      "name": "Slavonska avenija",
+      "text": "The morning queues where Slavonska avenija crosses Savska cesta, by the Vjesnik tower, are the City's best known. Clear them.",
+      "grant": 20000000,
+      "goals": [
+        {
+          "kind": "jam",
+          "hotspot": "slavonska-savska",
+          "peak": "am",
+          "target": 0.6,
+          "today": 0.465
+        }
+      ]
+    }
+  ]
+}

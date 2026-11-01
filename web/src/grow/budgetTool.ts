@@ -41,6 +41,13 @@ export class BudgetTool {
     return this.deps.limit ? this.budget.afford(build - this.budget.spent) : undefined;
   }
 
+  /** A career grant paid in (M19c). */
+  grant(amount: number): void {
+    this.budget.grant(amount);
+    saveBudget(this.budget);
+    this.show();
+  }
+
   /** Keep the balance as it is now. */
   save(): void {
     saveBudget(this.budget);

@@ -710,14 +710,15 @@ The policies' effects and costs are estimates, and the plan says from what. Each
   - A visit's first day is counted from when the streets have filled, so it is marked with its start time and not compared. Days are kept with the city (up to 365), in its file too.
   - A visit goes on from the day after the one it left: leaving the page now keeps the balance as it is, with its point in the history, rather than as last saved (every 10 simulated minutes), so a reload just after midnight keeps the new day.
   - The panel says that two runs of the same day differ by about a sixth in the hours lost, so days are compared over several.
-- **M19c, career stages and goals.** A career runs in stages, each with two to four goals measured on whole simulated days. Meeting all of a stage's goals pays a grant (its size an estimate) and opens the next stage. Goals of these kinds:
-  - cut a named jam (one of the news hotspots: the minutes lost on its worst way in, in the peaks, as M12 measures them) by a share;
-  - grow a district's residents or jobs on zoned land to a number;
-  - keep the balance above zero for a number of days;
-  - raise public transport's share of trips by points;
-  - keep queues from growing while a district grows.
-  - Two runs of the same day differ by about 16 % in delay, so goals on traffic are measured as the mean of two days and set well beyond that noise.
-  - Stages are written as data (a JSON file), so they can be tuned without code changes.
+- **M19c, career stages and goals** (done 2026-11-01). A career runs in five stages (`web/src/game/career.json`), each with goals judged at midnight on the days played (`career.ts`, `judge`); meeting all of a stage's goals pays its grant into the budget and opens the next. The Career panel (`G`, Career mode only) shows the stage, where each goal stands and the stages done.
+  - *First steps*: 2,000 residents grown on zoned land, and the balance above zero at midnight two days running (€5 million).
+  - *Savska cesta*: traffic at Savska cesta × Tratinska ulica at 20 % of the speed limit or more from 15:00 to 18:00 (today about 7 %; €10 million).
+  - *Trams and buses*: public transport's share of trips 2 points above the career's first two whole days (€10 million).
+  - *Novi Zagreb grows*: 5,000 residents grown in Novi Zagreb – zapad, with the hours lost in traffic no more than 5 % above the career's first two whole days when the stage closes (€15 million).
+  - *Slavonska avenija*: traffic where Slavonska avenija crosses Savska cesta at 60 % of the limit or more from 07:00 to 09:00 (today about 47 %; €20 million).
+  - Jam goals use the news hotspot's roads: the mean of the speed shares sampled each simulated minute in the peak (`PeakMeter`), length-weighted, kept with each day; "today" is the same share in two day runs of today's roads (seeds 1 and 2, within 0.02 of each other at these two places). Goals on traffic take the mean of the last two whole days, as days differ by about a sixth in the hours lost.
+  - A lot's district is that of the street in front where people live along it (the demand's districts), else of the nearest such street (`districts.ts`).
+  - The grants are game balance, not real figures. A career cannot be lost, as the owner chose: debt only stops building.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
@@ -847,7 +848,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M16 Traffic within the City** | The City's junctions and corridors checked locally against its traffic studies' counts and GPS speeds on the bridges (their numbers not committed). Trams go with the traffic beside them, drivers sort into lanes earlier and go round full roundabouts, tram crossings no longer split junctions, and trips within the City are as long as Zagreb's. The counted junctions pass more, the bridges slow in the GPS data's order, and 21-26 of 47 stations are within ±25 % (done) |
 | **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: tried and left out, as joined crossings passed less and their guessed signals held up more (closed) |
 | **M18 Policies** | A congestion charge, parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget (done: M18a-c) |
-| **M19 Career mode** | Reality for analysis, Sandbox and Career with goals in stages (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots (plan chosen 2026-11-01) |
+| **M19 Career mode** | Reality for analysis, Sandbox and Career with goals in stages (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots (done: M19a-c) |
 | **M20 Services** | Schools and health centres that growing districts need, placed by the player, with trips to them and their running costs |
 
 ## Risks and open questions

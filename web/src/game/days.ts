@@ -4,6 +4,7 @@
  * totals between one midnight and the next; the first day of a visit starts when the
  * streets have filled, so it is counted from then (`from`).
  */
+import { PEAKS } from './career';
 import { cityKey } from './cities';
 
 /** Seconds in a simulated day. */
@@ -30,10 +31,15 @@ export interface DayExtras {
    * map, as estimated (M9d). */
   ptTrips?: number;
   ptShare?: number;
-  /** Residents and jobs in buildings grown on zoned land. */
+  /** Residents and jobs in buildings grown on zoned land, in all and by district (the
+   * demand's names; M19c). */
   residents?: number;
   jobs?: number;
+  districts?: Record<string, [number, number]>;
   balance?: number;
+  /** Mean speed as a share of the limit on the career's hotspots in the morning and
+   * afternoon peaks (`PeakMeter`; null where not measured; M19c). */
+  peaks?: Record<string, [number | null, number | null]>;
 }
 
 export interface DayRecord extends DayExtras {
@@ -79,6 +85,40 @@ export function saveDays(
     storage?.setItem(cityKey('days'), JSON.stringify(days.slice(-MAX_DAYS)));
   } catch {
     // Storage full or blocked: the days last the visit.
+  }
+}
+
+/**
+ * Speeds on places' roads in the peaks of the day going on (M19c): the mean of the shares
+ * of the speed limit sampled from 07:00 to 09:00 and from 15:00 to 18:00.
+ */
+export class PeakMeter {
+  private readonly sums = new Map<string, [number, number, number, number]>();
+
+  /** Place `id`'s share of the limit (0-1) at engine time `time`. */
+  add(time: number, id: string, share: number): void {
+    const hour = Math.floor((time % DAY) / 3600);
+    const am = hour >= PEAKS.am[0] && hour < PEAKS.am[1];
+    if (!am && !(hour >= PEAKS.pm[0] && hour < PEAKS.pm[1])) return;
+    const s = this.sums.get(id) ?? [0, 0, 0, 0];
+    if (am) {
+      s[0] += share;
+      s[1] += 1;
+    } else {
+      s[2] += share;
+      s[3] += 1;
+    }
+    this.sums.set(id, s);
+  }
+
+  /** The day's means, and start again. */
+  take(): Record<string, [number | null, number | null]> {
+    const out: Record<string, [number | null, number | null]> = {};
+    for (const [id, [am, amN, pm, pmN]] of this.sums) {
+      out[id] = [amN ? am / amN : null, pmN ? pm / pmN : null];
+    }
+    this.sums.clear();
+    return out;
   }
 }
 

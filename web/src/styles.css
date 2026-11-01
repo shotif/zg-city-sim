@@ -395,6 +395,15 @@ canvas {
 
 .hud-layers {
   padding: 4px;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+/* Wide screens: wrap before the panels on the right (400 px and gutters). */
+@media (min-width: 641px) {
+  .hud-layers {
+    max-width: calc(100vw - 2 * var(--gutter) - 424px);
+  }
 }
 
 .hud-layers[hidden] {
@@ -1303,4 +1312,9 @@ a.news-headline:hover {
 /* The Days panel (M19b). */
 .days-today .build-note {
   margin: 2px 0;
+}
+
+/* The Career panel (M19c): goals met. */
+.career-met strong {
+  color: #7ee2a8;
 }

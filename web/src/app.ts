@@ -61,7 +61,11 @@ import { loadLots } from './grow/lots';
 import { BudgetTool } from './grow/budgetTool';
 import { type Cities, type City, GAME_MODES, LINK_CITY } from './game/cities';
 import { CitiesPanel } from './ui/citiesPanel';
-import { DayLog, type DayRecord } from './game/days';
+import { DayLog, type DayRecord, PeakMeter } from './game/days';
+import { STAGES, judge, loadCareer, saveCareer } from './game/career';
+import { lotDistricts } from './game/districts';
+import { CareerPanel, stagesDoneNotice } from './ui/careerPanel';
+import { finished, occupants } from './grow/growth';
 import { DaysPanel, change, hoursLost } from './ui/daysPanel';
 import { CitySound } from './ui/sound';
 import {
@@ -366,6 +370,8 @@ export interface DebugApi {
   cities?: CitiesPanel;
   /** The days played (M19b). */
   days?: DayLog;
+  /** The career's progress (M19c). */
+  career?: import('./game/career').CareerState;
   /** The ground point under a screen point (CSS pixels in the canvas). */
   groundAt?(x: number, y: number): { x: number; z: number } | undefined;
   /** The Zones tool, once the lots are loaded. */
@@ -570,6 +576,11 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
       daysPanel.setVisible(enabled);
       showDays();
     },
+    onCareer: (enabled) => {
+      if (enabled) closeOthers('career');
+      careerPanel?.setVisible(enabled);
+      showCareer();
+    },
     onTransit: (enabled) => {
       transitWanted = enabled;
       if (enabled) {
@@ -583,7 +594,9 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
     },
   };
   /** One panel on the right at a time: close the others than `keep`. */
-  const closeOthers = (keep: 'build' | 'zones' | 'budget' | 'transit' | 'cities' | 'days') => {
+  const closeOthers = (
+    keep: 'build' | 'zones' | 'budget' | 'transit' | 'cities' | 'days' | 'career',
+  ) => {
     if (keep !== 'transit' && transitPanel?.visible) hud.setTransit(false, hudCallbacks);
     if (keep !== 'build' && buildPanel?.visible) {
       hud.setBuild(false);
@@ -604,6 +617,10 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
     if (keep !== 'days' && daysPanel.visible) {
       hud.setDays(false);
       daysPanel.setVisible(false);
+    }
+    if (keep !== 'career' && careerPanel?.visible) {
+      hud.setCareer(false);
+      careerPanel.setVisible(false);
     }
   };
   const hud = new Hud(container, hudCallbacks);
@@ -647,6 +664,68 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
   let daySoFar: DayRecord | undefined;
   const showDays = () => daysPanel.show(daySoFar, dayLog.days, (day) => dayLog.before(day));
   let dayNoticeUntil = 0;
+  // The career (M19c): its stage and goals, judged at midnight; Career mode only.
+  const career = mode === 'career' ? loadCareer() : undefined;
+  debug.career = career;
+  /** The news hotspots the career's goals name, once the news is loaded. */
+  let careerPlaces: { id: string; name: string; edges: number[] }[] = [];
+  const careerHotspots = new Set(
+    STAGES.flatMap((s) => s.goals.flatMap((g) => (g.kind === 'jam' ? [g.hotspot] : []))),
+  );
+  const peakMeter = new PeakMeter();
+  const careerPanel = career
+    ? new CareerPanel(
+        hud.element,
+        () => hud.setCareer(false, hudCallbacks),
+        (id) => careerPlaces.find((p) => p.id === id)?.name ?? id,
+      )
+    : undefined;
+  const showCareer = () => {
+    if (career && careerPanel?.visible) careerPanel.show(career, dayLog.days);
+  };
+  /** Judge the stage on the days played; pay the grants of stages done. */
+  const judgeCareer = (): string | undefined => {
+    if (!career) return undefined;
+    const done = judge(career, dayLog.days);
+    for (const stage of done) budgetTool.grant(stage.grant);
+    saveCareer(career);
+    showCareer();
+    return done.length ? stagesDoneNotice(done, STAGES[career.stage]) : undefined;
+  };
+  if (career) {
+    hud.enableCareer();
+    judgeCareer();
+  }
+  /** Each zoned lot's district, and the districts' names, once known (M19c). */
+  let lotDistrict: Int16Array | undefined;
+  let districtNames: string[] | undefined;
+  const districtTotals = (now: number) => {
+    if (!zoning || !districtNames) return undefined;
+    if (!lotDistrict) {
+      const a = todayDemand?.arrays;
+      const net = networkNow?.net;
+      if (!a?.demandEdge || !a.demandDistrict || !net) return undefined;
+      lotDistrict = lotDistricts(
+        zoning.lots,
+        net,
+        a.demandEdge,
+        a.demandDistrict,
+        districtNames.length,
+      );
+    }
+    const out: Record<string, [number, number]> = {};
+    for (const b of zoning.growth.buildings) {
+      if (!b || !finished(b, now)) continue;
+      const d = lotDistrict[b.lots[0]];
+      if (d === undefined || d < 0) continue;
+      const o = occupants(b);
+      const v = (out[districtNames[d]] ??= [0, 0]);
+      v[0] += o.residents;
+      v[1] += o.jobs;
+    }
+    return out;
+  };
+
   hud.setTrafficLegend(TRAFFIC_BANDS.map(({ color, label }) => ({ color, label })));
 
   try {
@@ -1468,6 +1547,7 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
           if (newsInfo) {
             loadNews(newsInfo.index)
               .then((data) => {
+                careerPlaces = data.hotspots.filter((h) => careerHotspots.has(h.id));
                 const layer = new NewsLayer(net, surface, data);
                 news = layer;
                 scene.add(layer.object);
@@ -1819,11 +1899,17 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
                       ptShare: r && motorised > 0 ? r.now / motorised : undefined,
                       residents: g?.residents,
                       jobs: g?.jobs,
+                      districts: career ? districtTotals(now) : undefined,
                       balance: mode === 'reality' ? undefined : budgetTool.budget.balance,
+                      peaks: career ? peakMeter.take() : undefined,
                     };
                   });
                   daySoFar = dayLog.sofar();
-                  if (ended) {
+                  const stageNotice = ended ? judgeCareer() : undefined;
+                  if (stageNotice) {
+                    hud.setNotice(stageNotice);
+                    dayNoticeUntil = performance.now() + 30_000;
+                  } else if (ended) {
                     const before = dayLog.before(ended.day);
                     hud.setNotice(
                       `Day ${ended.day} ended: ${hoursLost(ended.delayHours)} in traffic` +
@@ -1862,6 +1948,13 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
               if (latest.length !== (networkNow?.net ?? net).edgeCount) return;
               speeds = latest;
               traffic?.setSpeeds(latest);
+              // The career's hotspots in the peaks (M19c).
+              if (career && running.cur && !running.warming) {
+                for (const p of careerPlaces) {
+                  const t = placeTraffic(net, p.edges, latest);
+                  if (t) peakMeter.add(running.cur.time, p.id, t.share);
+                }
+              }
               const place = news?.selected;
               if (place) newsPanel?.setTraffic(placeTraffic(net, place.edges, latest));
               invalidate();
@@ -1910,6 +2003,15 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
     // The Zones tool: lots along streets, painted with zones.
     const zoningInfo = manifest.layers.zoning;
     const demandInfo = manifest.layers.demand;
+    // The City's districts by name, for the career's goals on growth (M19c).
+    if (career && demandInfo) {
+      fetch(DATA_URL + demandInfo.index)
+        .then((r) => (r.ok ? r.json() : undefined))
+        .then((index: { districts?: { name: string }[] } | undefined) => {
+          districtNames = index?.districts?.map((d) => d.name);
+        })
+        .catch(() => console.warn("The City's districts could not be loaded"));
+    }
     if (zoningInfo && mode !== 'reality') {
       loadLots(zoningInfo.index)
         .then((lots) => {
