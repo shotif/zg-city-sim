@@ -30,7 +30,7 @@ export const EDIT_COLORS: Record<Exclude<Edit['kind'], 'frequency' | 'line'> | '
   };
 
 /** Today's lorry rules (M21): the central zone and the roads limited by weight. */
-export const LORRY_RULES_COLOR = 0x8c4f1a;
+export const LORRY_RULES_COLOR = 0xe040fb;
 
 /** Roads changed by edits, and the road being edited, drawn over the map. */
 export class EditLayer {
