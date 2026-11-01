@@ -118,6 +118,7 @@ Known gaps:
 - Junctions with tram or rail tracks through them cannot be made roundabouts, and a roundabout's ring is a fixed template (14 m radius with one lane, 18 m with two, larger where roads meet at sharp angles), not drawn by the player.
 - A project's numbers come from the morning peak only, with today as the mean of two runs; more runs, and the afternoon, would narrow the noise.
 - A congestion charge (M18a) cuts traffic into Donji grad about twice as much as charges did in London, Stockholm and Milan: every driver counts €1 as 225 s, so nearly all through traffic goes round, and trips are not dropped, retimed or sent elsewhere.
+- A parking surcharge (M18b) estimates how long car trips park from their purpose, and moves trips only to public transport: none go elsewhere, or park outside the area and walk in.
 
 **Plan (M4 Build, 2026-10-06).** Netconvert builds the network offline and cannot run in the browser, so edits take their own path: the engine changes the arrays it already has (lanes, links, signal programs, the routing graph) while it runs. Steps, each pushed to `main` when it works:
 
@@ -670,7 +671,18 @@ The policies' effects and costs are estimates, and the plan says from what. Each
     - Nobody drops a trip, goes at another time or goes elsewhere because of the charge. Only the split with public transport moves trips.
   - Income at €3: about €21.6 million a year after running costs, for €4.8 million of cameras and system (Milan's Area C took about €20 million in 2012).
   - Open: drivers who weigh money differently (as M15d tried for tolls) would keep some through traffic paying.
-- **M18b, parking surcharge.** Areas with a surcharge per hour on today's parking prices (the City's parking zones are not open data). Car trips to the area pay it for an estimated stay, and the split counts half of it on each leg. Income comes from the stays of the car trips that still end there.
+- **M18b, parking surcharge** (done 2026-11-01). An area and a surcharge per hour on top of today's parking prices (the City's parking zones are not open data), paid by car trips that end in the area for the part of their stay within the hours (07:00-21:00 by default). Lorries, buses, trams and bikes don't pay.
+  - How long trips park is estimated: commuters 8 hours, half of them paying as the rest park at work; other trips 1.5 hours; trips home nothing, as residents park on permits. The engine (`Policies::estimate_parking`) draws 4,000 trips of each purpose from the demand to find the share that end in the area, and weights them by each hour's purposes and trips. That gives what a car trip arriving each hour pays, and the mean over the day (€1.79 a trip at €1 an hour on Donji grad).
+  - Routes don't count it, as the trip ends in the area whichever way it drives. The split with public transport counts half the mean payment on each leg of trips to or from a zone inside the area.
+  - A car trip that ends on a road inside the area pays what the estimate gives for the hour it set off.
+  - In the app, the Build panel's Policies on an area (the Congestion charge section before) puts a congestion charge or a parking surcharge (€0.50-5 an hour) on Donji grad or on an area drawn on the map, with its hours. The budget pays €50,000, and €100,000 a km², to set it up (€350,000 on Donji grad), and counts what is paid as 250 weekdays a year, less 15 % to collect it (estimates).
+  - Checked with day runs at 80 % on today's network, on Donji grad from 07:00 to 21:00: no surcharge (seed 1), €1 an hour (seeds 1 and 2) and €2 an hour (seed 1).
+    - Car trips ending in the area: 42,436 a day with no surcharge; 40,368-40,421 at €1, 4.7-4.9 % fewer; 38,422 at €2, 9.5 % fewer. The split moves 4,709 car trips a day to and from the area to public transport at €1, and 9,331 at €2.
+    - The trips that still end there pay €73,000-73,900 a day at €1 (€1.81 a trip, against the €1.79 estimated) and €140,100 at €2.
+    - Against the literature: the central zone costs about €1.60 an hour, so €1 more is 62 % more, and elasticities of -0.1 to -0.3 give 6-19 % fewer trips that pay. Trips home pay nothing here, so the simulated fall sits at the low end of that range.
+    - Over the whole network: 6,647 and 7,539 vehicles removed at €1 and 7,836 at €2 (6,839 with none), 87,600 and 93,900 vehicle-hours queued at €1 and 97,200 at €2 (91,000). The two seeds at €1 differ by as much as the runs with and without the surcharge. The queues clear by night.
+  - Income at €1: about €15.6 million a year after collection.
+  - Open: stays are estimated by purpose, not taken from each trip; and trips only move to public transport, none to another destination or to parking outside the area and walking in.
 - **M18c, lorry ban.** Lorries may not cross the area's edge, except to reach or leave places inside it. Lorry routes count an hour for every crossing, so through lorries go round and deliveries still get in.
 
 **Vehicles.**
@@ -800,7 +812,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M15 Roads into the City** | Routes count fuel, so of two close ways drivers take the shorter: the roads from Dugo Selo, Sveta Nedelja and Lekenik fit their counts, 22-24 of 47 stations within ±25 %; drivers who weigh money differently tried and left out (done) |
 | **M16 Traffic within the City** | The City's junctions and corridors checked locally against its traffic studies' counts and GPS speeds on the bridges (their numbers not committed). Trams go with the traffic beside them, drivers sort into lanes earlier and go round full roundabouts, tram crossings no longer split junctions, and trips within the City are as long as Zagreb's. The counted junctions pass more, the bridges slow in the GPS data's order, and 21-26 of 47 stations are within ±25 % (done) |
 | **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: tried and left out, as joined crossings passed less and their guessed signals held up more (closed) |
-| **M18 Policies** | A congestion charge (done: M18a), parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget |
+| **M18 Policies** | A congestion charge and parking surcharges (done: M18a, M18b), and lorry bans on areas the player draws, working through routes, the split with public transport and the budget |
 | **M19 Career mode** | Reality for analysis and Career with goals (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots |
 | **M20 Services** | Schools and health centres that growing districts need, placed by the player, with trips to them and their running costs |
 
