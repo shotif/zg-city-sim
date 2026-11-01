@@ -696,6 +696,23 @@ The policies' effects and costs are estimates, and the plan says from what. Each
   - Against what is known: Dublin had 80-94 % fewer lorries with five axles or more within its cordon once they were banned (with a port tunnel to take them). Zagreb already keeps lorries over 12 t out of its central zone, which the simulation does not model: its lorries are not told apart by weight, so today's runs let all of them through.
   - Open: lorries are not kept off streets OpenStreetMap marks as closed to them or limited by weight (`hgv`, `maxweight`, which the network step does not read), so the ways round take steep residential streets such as Tuškanac.
 
+**Plan (M19 Career mode, chosen 2026-11-01).** The owner's choices: three modes (Reality, Sandbox and Career), career goals given in stages in order, and a career that cannot be lost (debt only stops building, as now). Today the browser keeps one city (its edits, zoning, grown buildings and budget, each under a key of its own), and money always limits what is built. Each step is pushed to `main` when it works.
+- **M19a, modes and save slots.** On the first visit, and from the HUD after that, the player chooses a mode and a city to play.
+  - *Reality*: today's Zagreb, for analysis. Edits cost nothing and the budget is hidden; zoning and growth are off. Links with edits in them open in Reality.
+  - *Sandbox*: zoning, growth and the budget as now, but money never stops building.
+  - *Career*: as now, money limits what is built, and the stages' goals (M19c) are set.
+  - Each city is a save slot: its mode, edits, zoning, grown buildings, budget and history, the simulated days played and the career's progress. Slots are kept in the browser, named by the player, and can be saved to a file and loaded from one. The city kept today becomes the first slot, in Sandbox, so nothing is lost.
+- **M19b, progress over simulated days.** A day counter in the HUD. At midnight a report on the day just ended: vehicle-hours queued, trips made and their mean time, public transport's share, residents and jobs grown, and the balance. Each day's numbers are kept in the slot and charted against the days before.
+  - The engine already counts trips and queues; the day's totals are taken from its statistics at midnight. A slot's days carry over visits, as the budget's history does now.
+- **M19c, career stages and goals.** A career runs in stages, each with two to four goals measured on whole simulated days. Meeting all of a stage's goals pays a grant (its size an estimate) and opens the next stage. Goals of these kinds:
+  - cut a named jam (one of the news hotspots: the minutes lost on its worst way in, in the peaks, as M12 measures them) by a share;
+  - grow a district's residents or jobs on zoned land to a number;
+  - keep the balance above zero for a number of days;
+  - raise public transport's share of trips by points;
+  - keep queues from growing while a district grows.
+  - Two runs of the same day differ by about 16 % in delay, so goals on traffic are measured as the mean of two days and set well beyond that noise.
+  - Stages are written as data (a JSON file), so they can be tuned without code changes.
+
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
 - Gap acceptance and right-of-way at junctions, signal control.
@@ -824,7 +841,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M16 Traffic within the City** | The City's junctions and corridors checked locally against its traffic studies' counts and GPS speeds on the bridges (their numbers not committed). Trams go with the traffic beside them, drivers sort into lanes earlier and go round full roundabouts, tram crossings no longer split junctions, and trips within the City are as long as Zagreb's. The counted junctions pass more, the bridges slow in the GPS data's order, and 21-26 of 47 stations are within ±25 % (done) |
 | **M17 Junctions in parts** | Junctions that netconvert left in parts, a few metres apart and joined by road pieces too short to wait on, joined into one: tried and left out, as joined crossings passed less and their guessed signals held up more (closed) |
 | **M18 Policies** | A congestion charge, parking surcharges and lorry bans on areas the player draws, working through routes, the split with public transport and the budget (done: M18a-c) |
-| **M19 Career mode** | Reality for analysis and Career with goals (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots |
+| **M19 Career mode** | Reality for analysis, Sandbox and Career with goals in stages (a jam cut, a district grown, the budget kept), progress over simulated days, cities kept in save slots (plan chosen 2026-11-01) |
 | **M20 Services** | Schools and health centres that growing districts need, placed by the player, with trips to them and their running costs |
 
 ## Risks and open questions
