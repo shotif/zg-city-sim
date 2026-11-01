@@ -7,7 +7,7 @@
 //! the afternoon, residents doing the opposite, errands both ways, and through traffic
 //! between two gateways (mostly on the motorway ring).
 
-use std::cell::OnceCell;
+use std::sync::OnceLock;
 
 use crate::engine::{Trip, trip};
 use crate::network::{NONE, Network, vclass};
@@ -239,7 +239,7 @@ pub struct Demand {
     /// Through traffic leaving at each gateway (vehicles per day).
     through_exit: Vec<f32>,
     /// Home and work weights by edge id, made when first asked for.
-    by_edge: OnceCell<(Vec<f32>, Vec<f32>)>,
+    by_edge: OnceLock<(Vec<f32>, Vec<f32>)>,
     /// The vehicle type of every trip made within the map, if not cars and lorries (bikes).
     pub vtype: Option<u8>,
     /// Car trips moved to public transport or back, where edits change it (M9d).
@@ -419,7 +419,7 @@ impl Demand {
             outbound: Flow::default(),
             through: Flow::default(),
             through_exit: Vec::new(),
-            by_edge: OnceCell::new(),
+            by_edge: OnceLock::new(),
             vtype: None,
             shift: None,
         }
@@ -545,7 +545,7 @@ impl Demand {
         self.work_alias = fresh.work_alias;
         self.any_alias = fresh.any_alias;
         self.daily_trips = daily_trips;
-        self.by_edge = OnceCell::new();
+        self.by_edge = OnceLock::new();
         // The shift names the old edges: the engine sets it again.
         self.shift = None;
     }

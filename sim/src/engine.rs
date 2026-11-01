@@ -132,6 +132,20 @@ const LANE_CHANGE_ROOM: f32 = 150.0;
 const LANE_CHANGE_SECONDS: f32 = 10.0;
 /// How many short edges ahead lane choice looks through.
 const SHORT_EDGE_LOOKAHEAD: u32 = 4;
+/// Route edges a lane's score depends on: the one it is on, the next, and the
+/// `SHORT_EDGE_LOOKAHEAD` edges `lane_continues` looks past it.
+const LANE_SCORE_KEY: usize = SHORT_EDGE_LOOKAHEAD as usize + 2;
+
+/// A vehicle's lanes' scores on the road it is on (`Engine::refresh_lane_scores`), with
+/// what they were scored for: the network's epoch (0: never), the route edges ahead from
+/// the one it is on (`NONE` past the end) and the vehicle class.
+#[derive(Clone, Copy, Default)]
+struct LaneScores {
+    epoch: u32,
+    key: [u32; LANE_SCORE_KEY],
+    vclass: u16,
+    scores: [i8; 16],
+}
 /// Most times a driver goes round a roundabout again for a full exit in one trip (M16d).
 pub(crate) const MAX_ROUNDS: u8 = 3;
 /// Lane score of a lane that also leads into a lane of the next road that reaches the road
@@ -429,6 +443,25 @@ struct LinkUser {
     can_stop: bool,
 }
 
+/// Fewest vehicles a thread plans (M22): fewer are not worth a thread (tests split even
+/// small runs, to check the threads agree).
+const PLAN_SHARE: usize = if cfg!(test) { 8 } else { 256 };
+
+thread_local! {
+    /// While planning in parallel (M22): the vehicles whose decisions made while planning
+    /// (`will_pass`, `stop_done`) the plan being made has read. None otherwise.
+    static READS: std::cell::RefCell<Option<Vec<u32>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Note that the plan being made read vehicle `u`'s decisions (`READS`).
+fn note_read(u: u32) {
+    READS.with(|r| {
+        if let Some(log) = r.borrow_mut().as_mut() {
+            log.push(u);
+        }
+    });
+}
+
 /// What a vehicle decided this step.
 struct Plan {
     acc: f32,
@@ -500,6 +533,11 @@ pub struct Engine {
     free: Vec<u32>,
     next_serial: u32,
     acc: Vec<f32>,
+    /// Per vehicle slot, its lanes' scores on the road it is on (`LaneScores`, M22).
+    lane_cache: Vec<LaneScores>,
+    /// Bumped whenever lanes' permissions, links or roads change (edits, a network swapped
+    /// in), so cached lane scores are scored again.
+    network_epoch: u32,
     /// Vehicles on each lane, sorted by position (rearmost first).
     lane_vehs: Vec<Vec<u32>>,
     /// Space on each lane promised to vehicles inside the junction before it (m).
@@ -576,6 +614,17 @@ pub struct Engine {
     pub track_delay: bool,
     /// Actuated signals skip green phases nobody is waiting for (`skip_idle_phases`).
     pub skip_phases: bool,
+    /// Threads vehicles are planned on (M22; natively only, 1 in the browser): the results
+    /// are the same on any number.
+    pub plan_threads: usize,
+    /// Vehicles planned again after their plan read a decision changed earlier in the step,
+    /// while planning on threads.
+    pub replans: u64,
+    /// Scratch for `plan_in_parallel`: the vehicles in turn (lane, index, whether first on
+    /// it), each vehicle slot's turn, and whether its decisions changed this step.
+    plan_order: Vec<(u32, u32, u32)>,
+    plan_turn: Vec<u32>,
+    plan_changed: Vec<bool>,
     /// Drivers look for another way when the roads ahead jam (`reroute_en_route`).
     pub reroute: bool,
     /// Each step works on the riders (`work_riders`); the app does it between steps instead,
@@ -1178,6 +1227,11 @@ impl Engine {
             delay_root: Vec::new(),
             track_delay: false,
             skip_phases: true,
+            plan_threads: 1,
+            replans: 0,
+            plan_order: Vec::new(),
+            plan_turn: Vec::new(),
+            plan_changed: Vec::new(),
             riders_in_step: true,
             reroute: true,
             travel_time: free_time.clone(),
@@ -1214,6 +1268,8 @@ impl Engine {
             free: Vec::new(),
             next_serial: 1,
             acc: Vec::new(),
+            lane_cache: Vec::new(),
+            network_epoch: 1,
             pending: BinaryHeap::new(),
             waiting: VecDeque::new(),
             demand: None,
@@ -1925,33 +1981,140 @@ impl Engine {
         if self.acc.len() < self.vehs.len() {
             self.acc.resize(self.vehs.len(), 0.0);
         }
+        if self.plan_threads > 1 && cfg!(not(target_arch = "wasm32")) {
+            return self.plan_in_parallel();
+        }
         let mut round = Vec::new();
         for i in 0..self.active_lanes.len() {
             let lane = self.active_lanes[i] as usize;
             let n = self.lane_vehs[lane].len();
             for k in (0..n).rev() {
                 let v = self.lane_vehs[lane][k];
-                let bike = self.vehs[v as usize].vtype == vtype::BIKE;
-                let leader = self.ahead_of(lane as u32, k + 1, bike);
+                let leader = self.leader_at(lane, k);
                 let plan = self.plan_vehicle(v, leader);
-                if plan.at_stop || plan.missed_stop {
-                    self.serve_stop(v, plan.missed_stop);
-                }
-                self.acc[v as usize] = plan.acc;
-                if k + 1 == n && plan.pass == Some(false) && self.net.is_roundabout_lane(lane) {
-                    round.push(v);
-                }
-                let veh = &mut self.vehs[v as usize];
-                if let Some(pass) = plan.pass {
-                    veh.will_pass = pass;
-                }
-                if plan.stopped_at != NONE {
-                    veh.stop_done = plan.stopped_at;
-                }
-                veh.blink = plan.blink;
-                veh.coop = NONE;
+                self.apply_plan(v, &plan, k + 1 == n, &mut round);
             }
         }
+        for v in round {
+            self.go_round(v);
+        }
+    }
+
+    /// The vehicle ahead of the `k`th on `lane` that it follows.
+    fn leader_at(&self, lane: usize, k: usize) -> Option<u32> {
+        let v = self.lane_vehs[lane][k];
+        let bike = self.vehs[v as usize].vtype == vtype::BIKE;
+        self.ahead_of(lane as u32, k + 1, bike)
+    }
+
+    /// Act on vehicle `v`'s plan (`front`: it is the first on its lane): serve its stop,
+    /// keep its acceleration, and record its decisions.
+    fn apply_plan(&mut self, v: u32, plan: &Plan, front: bool, round: &mut Vec<u32>) {
+        if plan.at_stop || plan.missed_stop {
+            self.serve_stop(v, plan.missed_stop);
+        }
+        self.acc[v as usize] = plan.acc;
+        let lane = self.vehs[v as usize].lane as usize;
+        if front && plan.pass == Some(false) && self.net.is_roundabout_lane(lane) {
+            round.push(v);
+        }
+        let veh = &mut self.vehs[v as usize];
+        if let Some(pass) = plan.pass {
+            veh.will_pass = pass;
+        }
+        if plan.stopped_at != NONE {
+            veh.stop_done = plan.stopped_at;
+        }
+        veh.blink = plan.blink;
+        veh.coop = NONE;
+    }
+
+    /// `plan` on `plan_threads` threads (M22), with the same result. Vehicles are planned in
+    /// turn (by active lane, front to back), and a plan can read the decisions of vehicles
+    /// planned before it in the same step (whether they will cross their stop line, and the
+    /// stop signs they have stopped at). So every vehicle is planned at once on the state
+    /// before the step, noting whose decisions it read (`READS`); then the plans are acted
+    /// on in turn, and a vehicle is planned again, there and then, if it read the decisions
+    /// of one acted on before it that changed them.
+    fn plan_in_parallel(&mut self) {
+        let mut order = std::mem::take(&mut self.plan_order);
+        order.clear();
+        for &lane in &self.active_lanes {
+            let n = self.lane_vehs[lane as usize].len();
+            for k in (0..n).rev() {
+                order.push((lane, k as u32, (k + 1 == n) as u32));
+            }
+        }
+        if self.plan_turn.len() < self.vehs.len() {
+            self.plan_turn.resize(self.vehs.len(), u32::MAX);
+            self.plan_changed.resize(self.vehs.len(), false);
+        }
+        for (i, &(lane, k, _)) in order.iter().enumerate() {
+            let v = self.lane_vehs[lane as usize][k as usize];
+            self.plan_turn[v as usize] = i as u32;
+        }
+        let threads = self
+            .plan_threads
+            .min(order.len().div_ceil(PLAN_SHARE))
+            .max(1);
+        let chunk = order.len().div_ceil(threads).max(1);
+        let this = &*self;
+        let parts: Vec<(Vec<Plan>, Vec<u32>, Vec<u32>)> = std::thread::scope(|scope| {
+            let handles: Vec<_> = order
+                .chunks(chunk)
+                .map(|part| {
+                    scope.spawn(move || {
+                        READS.with(|r| *r.borrow_mut() = Some(Vec::new()));
+                        let mut plans = Vec::with_capacity(part.len());
+                        let (mut reads, mut ends) = (Vec::new(), Vec::with_capacity(part.len()));
+                        for &(lane, k, _) in part {
+                            let v = this.lane_vehs[lane as usize][k as usize];
+                            let leader = this.leader_at(lane as usize, k as usize);
+                            plans.push(this.plan_vehicle(v, leader));
+                            READS.with(|r| reads.append(r.borrow_mut().as_mut().unwrap()));
+                            ends.push(reads.len() as u32);
+                        }
+                        READS.with(|r| *r.borrow_mut() = None);
+                        (plans, reads, ends)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        let mut round = Vec::new();
+        let mut i = 0;
+        for (plans, reads, ends) in &parts {
+            let mut start = 0;
+            for (plan, &end) in plans.iter().zip(ends) {
+                let (lane, k, front) = order[i];
+                let v = self.lane_vehs[lane as usize][k as usize];
+                let stale = reads[start..end as usize].iter().any(|&u| {
+                    self.plan_changed[u as usize] && (self.plan_turn[u as usize] as usize) < i
+                });
+                start = end as usize;
+                let before = (
+                    self.vehs[v as usize].will_pass,
+                    self.vehs[v as usize].stop_done,
+                );
+                if stale {
+                    self.replans += 1;
+                    let leader = self.leader_at(lane as usize, k as usize);
+                    let plan = self.plan_vehicle(v, leader);
+                    self.apply_plan(v, &plan, front == 1, &mut round);
+                } else {
+                    self.apply_plan(v, plan, front == 1, &mut round);
+                }
+                let veh = &self.vehs[v as usize];
+                self.plan_changed[v as usize] = (veh.will_pass, veh.stop_done) != before;
+                i += 1;
+            }
+        }
+        for &(lane, k, _) in &order {
+            let v = self.lane_vehs[lane as usize][k as usize];
+            self.plan_turn[v as usize] = u32::MAX;
+            self.plan_changed[v as usize] = false;
+        }
+        self.plan_order = order;
         for v in round {
             self.go_round(v);
         }
@@ -2352,6 +2515,7 @@ impl Engine {
             }
             for &u in self.lane_vehs[f as usize].iter().rev().take(3) {
                 let uv = &self.vehs[u as usize];
+                note_read(u);
                 if !uv.will_pass {
                     break; // it stops at the line, and so does everyone behind it
                 }
@@ -2911,6 +3075,7 @@ impl Engine {
                     break;
                 }
                 let uv = &self.vehs[u as usize];
+                note_read(u);
                 if !uv.will_pass {
                     break; // it stops at the line, and so does everyone behind it
                 }
@@ -3024,6 +3189,8 @@ impl Engine {
         let &u = self.lane_vehs[from].last()?;
         let uv = &self.vehs[u as usize];
         let at_line = d.lane_length[from] - uv.pos < 3.0 && uv.speed < 0.5;
+        // Its `stop_done` is read: a decision made while planning (M22).
+        note_read(u);
         (uv.next_link == link && at_line).then_some(uv)
     }
 
@@ -4083,6 +4250,7 @@ impl Engine {
                 veh.lc_timer -= DT;
                 continue;
             }
+            self.refresh_lane_scores(v);
             match self.lane_change_decision(v) {
                 Some(LaneChange::To(target)) => self.change_lane(v, target),
                 Some(LaneChange::AskToYield(f)) => self.vehs[f as usize].coop = v,
@@ -4093,6 +4261,50 @@ impl Engine {
                 None => {}
             }
         }
+    }
+
+    /// Score the lanes of the road vehicle `v` is on for its route (`lane_score`), unless
+    /// they were scored for the same route ahead on the same network: they depend on nothing
+    /// else, and lane changes ask for them every step (M22: 12 % of the engine's time in the
+    /// morning peak).
+    fn refresh_lane_scores(&mut self, v: u32) {
+        if self.lane_cache.len() < self.vehs.len() {
+            self.lane_cache
+                .resize(self.vehs.len(), LaneScores::default());
+        }
+        let veh = &self.vehs[v as usize];
+        let d = &self.net.d;
+        if self.net.lane_internal[veh.lane as usize] {
+            return;
+        }
+        let edge = d.lane_edge[veh.lane as usize];
+        let n = (d.edge_lane_count[edge as usize] as u32).min(16);
+        if n < 2 {
+            return;
+        }
+        let i = veh.route_idx as usize;
+        let mut key = [NONE; LANE_SCORE_KEY];
+        for (k, slot) in key.iter_mut().enumerate() {
+            if let Some(&e) = veh.route.get(i + k) {
+                *slot = e;
+            }
+        }
+        let vclass = veh.params().vclass;
+        let cache = &self.lane_cache[v as usize];
+        if cache.epoch == self.network_epoch && cache.key == key && cache.vclass == vclass {
+            return;
+        }
+        let start = d.edge_lane_start[edge as usize];
+        let mut scores = [-1i8; 16];
+        for k in 0..n {
+            scores[k as usize] = self.lane_score(start + k, &veh.route, i, vclass) as i8;
+        }
+        self.lane_cache[v as usize] = LaneScores {
+            epoch: self.network_epoch,
+            key,
+            vclass,
+            scores,
+        };
     }
 
     fn lane_change_decision(&self, v: u32) -> Option<LaneChange> {
@@ -4139,12 +4351,9 @@ impl Engine {
         }
         let start = d.edge_lane_start[edge as usize];
         let i = lane - start;
-        let i_route = veh.route_idx as usize;
-        let mut scores = [-1i32; 16];
         let n = n.min(16);
-        for k in 0..n {
-            scores[k as usize] = self.lane_score(start + k, &veh.route, i_route, p.vclass);
-        }
+        // Scored by `refresh_lane_scores` for the route ahead (M22).
+        let scores = self.lane_cache[v as usize].scores.map(i32::from);
         let best = *scores[..n as usize].iter().max().unwrap();
         let here = scores[i as usize];
 
@@ -5369,6 +5578,7 @@ impl Engine {
     /// road faster, the landmark tables are rebuilt over the next steps, and routes use the
     /// straight-line bound meanwhile.
     pub fn set_edits(&mut self, edits: &[Edit]) -> usize {
+        self.network_epoch = self.network_epoch.wrapping_add(1).max(1);
         self.loaded.restore(&mut self.net);
         let mut applied = Vec::with_capacity(edits.len());
         let mut frequencies = Vec::new();

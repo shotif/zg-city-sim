@@ -4378,8 +4378,9 @@ fn the_engine_routes_on_the_hierarchy_through_edits_and_closures() {
     assert!(engine.route_time(up, last).unwrap() < CLOSED_TIME);
     let h = engine.hierarchy().unwrap();
     assert_eq!(h.searches, 6);
-    // Customised once for each change of the network or the times that a search followed.
-    assert_eq!(h.customisations, 5);
+    // Customised for each change of the network or the times that a search followed: the
+    // cars' metrics with and without tolls together (M22).
+    assert_eq!(h.customisations, 10);
 }
 
 #[test]
@@ -5484,4 +5485,66 @@ fn lorry_rules(hierarchy: bool) {
     });
     run_until(&mut e, 200.0, |_| {});
     assert_eq!(e.edge_lorries[bm as usize], through);
+}
+
+#[test]
+fn planning_on_threads_gives_the_same_run() {
+    // A crossroads where drivers give way to the one from their right, busy enough that
+    // decisions at the line depend on each other: the same run planned on one thread and on
+    // four (M22).
+    let run = |threads: usize| {
+        let mut b = Builder::default();
+        let c = b.junction(0.0, 0.0);
+        let dirs = [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)];
+        let far: Vec<u32> = dirs
+            .iter()
+            .map(|&(x, z)| b.junction(x * 400.0, z * 400.0))
+            .collect();
+        let into: Vec<u32> = far.iter().map(|&f| b.road(f, c, 1, 13.9)).collect();
+        let out: Vec<u32> = far.iter().map(|&f| b.road(c, f, 1, 13.9)).collect();
+        for k in 0..4 {
+            let (fl, tl) = (b.lane(into[k], 0), b.lane(out[(k + 2) % 4], 0));
+            b.connect(fl, tl, c, dir::STRAIGHT, b'=');
+        }
+        let right = [3usize, 0, 1, 2];
+        let rows: Vec<(u32, u32)> = (0..4)
+            .map(|k| (1 << right[k], (1 << ((k + 1) % 4)) | (1 << ((k + 3) % 4))))
+            .collect();
+        b.set_logic(c, &rows);
+        let mut engine = Engine::new(b.build(), 5);
+        engine.plan_threads = threads;
+        for k in 0..4 {
+            for t in 0..300 {
+                engine.add_trip(Trip {
+                    depart: t as f64 * (1.6 + 0.3 * k as f64),
+                    from: into[k],
+                    to: out[(k + 2) % 4],
+                    vtype: if t % 7 == 0 { vtype::TRUCK } else { vtype::CAR },
+                    flags: 0,
+                });
+            }
+        }
+        run_until(&mut engine, 600.0, |_| {});
+        let state: Vec<(u32, u32, u32, u32, bool)> = engine
+            .vehs
+            .iter()
+            .map(|v| {
+                (
+                    v.serial,
+                    v.lane,
+                    v.pos.to_bits(),
+                    v.speed.to_bits(),
+                    v.will_pass,
+                )
+            })
+            .collect();
+        (engine.stats_array()[stat::ARRIVED], state, engine.replans)
+    };
+    let (arrived, one, _) = run(1);
+    let (arrived4, four, replans) = run(4);
+    assert!(arrived > 100.0, "{arrived}");
+    assert_eq!(arrived, arrived4);
+    assert!(one == four, "the runs differ");
+    // Some plans read decisions made before them in the step, and were made again.
+    assert!(replans > 0, "{replans}");
 }

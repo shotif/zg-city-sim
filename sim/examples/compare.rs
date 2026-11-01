@@ -123,6 +123,7 @@ fn main() {
         );
     }
     let edges = place_edges(&engine.net);
+    engine.plan_threads = run::threads();
     engine.set_time(((from - 1) * 3600) as f64);
     for _ in 0..(3600.0 / DT) as u32 {
         engine.step();

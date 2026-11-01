@@ -114,6 +114,16 @@ pub fn load(dir: &str) -> NetworkData {
     data
 }
 
+/// Threads to plan vehicles on (M22): `THREADS`, else the machine's cores up to four. The
+/// results are the same on any number; `THREADS=1` when runs share the machine.
+pub fn threads() -> usize {
+    std::env::var("THREADS")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(4)))
+        .max(1)
+}
+
 /// The timetable from `dir/transit.*`.
 pub fn load_transit(dir: &str) -> Option<TransitData> {
     let (arrays, blob) = read_packed(dir, "transit")?;
@@ -988,6 +998,7 @@ fn main() {
     engine.set_time(start * 3600.0);
     engine.track_delay = true;
     engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
+    engine.plan_threads = threads();
     engine.reroute = std::env::var("NO_REROUTE").is_err();
 
     // WATCH_JUNCTIONS=j1,j2: every simulated minute, the stopped front vehicle of each queue
@@ -1192,6 +1203,10 @@ fn main() {
     println!(
         "lorries driving into areas banned to them: {}",
         engine.policies.lorries_in
+    );
+    println!(
+        "planned on {} threads, {} vehicles planned again",
+        engine.plan_threads, engine.replans
     );
     let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
     places.sort_unstable_by(|a, b| b.cmp(a));

@@ -1251,9 +1251,7 @@ impl Hierarchy {
         #[cfg(feature = "profile")]
         let start = std::time::Instant::now();
         if self.stale[kind] {
-            self.metrics[kind].customize(&self.cch, net, times);
-            self.stale[kind] = false;
-            self.customisations += 1;
+            self.customize_with(kind, net, times);
             #[cfg(feature = "profile")]
             {
                 self.custom_seconds += start.elapsed().as_secs_f64();
@@ -1286,12 +1284,52 @@ impl Hierarchy {
         out: &mut Vec<f32>,
     ) -> bool {
         if self.stale[kind] {
-            self.metrics[kind].customize(&self.cch, net, times);
-            self.stale[kind] = false;
-            self.customisations += 1;
+            self.customize_with(kind, net, times);
         }
         self.query
             .one_to_all(&self.cch, &self.metrics[kind], from, out)
+    }
+
+    /// Customise metric `kind` for `times`, and with it (natively, on threads of their own)
+    /// every other stale metric on the same times that routes are searched on (M22): the
+    /// travel times change for all of them at once, once a simulated minute, and each is
+    /// customised for the same times whenever its first search comes, so the results are
+    /// the same. Lorries' metrics are left while lorries route as cars.
+    fn customize_with(&mut self, kind: usize, net: &Network, times: &[f32]) {
+        let (t, _, _, fuel, _) = KINDS[kind];
+        let mut todo = vec![false; KINDS.len()];
+        todo[kind] = true;
+        if cfg!(not(target_arch = "wasm32")) && t == Times::Travel && fuel {
+            for (k, &(tk, v, _, fk, w)) in KINDS.iter().enumerate() {
+                let heavy = w > HEAVY_FROM_TONNES;
+                let unused = v == vclass::TRUCK && self.lorries_as_cars[heavy as usize];
+                if self.stale[k] && tk == t && fk == fuel && !unused {
+                    todo[k] = true;
+                }
+            }
+        }
+        let cch = &self.cch;
+        let mut chosen: Vec<&mut Metric> = self
+            .metrics
+            .iter_mut()
+            .zip(&todo)
+            .filter_map(|(m, &on)| on.then_some(m))
+            .collect();
+        if chosen.len() == 1 {
+            chosen[0].customize(cch, net, times);
+        } else {
+            std::thread::scope(|scope| {
+                for m in chosen {
+                    scope.spawn(move || m.customize(cch, net, times));
+                }
+            });
+        }
+        for (k, &on) in todo.iter().enumerate() {
+            if on {
+                self.stale[k] = false;
+                self.customisations += 1;
+            }
+        }
     }
 
     /// Ranks the last search visited.

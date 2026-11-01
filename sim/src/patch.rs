@@ -95,6 +95,7 @@ impl Engine {
         pieces: &[LanePiece],
     ) -> Result<(), NetworkError> {
         let mut net = Network::build(d)?;
+        self.network_epoch = self.network_epoch.wrapping_add(1).max(1);
         let n_lanes = net.lane_count();
         let n_edges = net.edge_count();
         for p in pieces {

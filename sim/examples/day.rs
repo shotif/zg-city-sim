@@ -126,6 +126,7 @@ fn main() {
     // Where junctions lose time (M7a).
     engine.track_delay = true;
     engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
+    engine.plan_threads = run::threads();
     engine.reroute = std::env::var("NO_REROUTE").is_err();
     let delay_total = |e: &Engine| -> [f64; Holdup::COUNT] {
         let mut sum = [0f64; Holdup::COUNT];
