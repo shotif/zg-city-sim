@@ -19,6 +19,7 @@
 //! route, whose shortcuts are then unpacked into road edges.
 
 use crate::network::{NONE, Network, vclass};
+use crate::vtype::{HEAVY_FROM_TONNES, HEAVY_LORRY_TONNES, LIGHT_LORRY_TONNES};
 
 /// Subgraphs this small are ordered by minimum degree instead of being cut further.
 const LEAF: usize = 24;
@@ -331,6 +332,8 @@ pub struct Metric {
     pub vclass: u16,
     pub tolls: bool,
     pub fuel: bool,
+    /// For lorries, the weight (t) roads' limits and lorry bans count (M21).
+    pub weight: f32,
     /// Whether routes are unpacked on it (else only times are read, `Query::one_to_all`, and
     /// the middles are not kept).
     paths: bool,
@@ -340,6 +343,13 @@ impl Metric {
     /// A metric for searches on the measured travel times: fuel counts but for bikes.
     pub fn new(vclass: u16, tolls: bool) -> Metric {
         Metric::with_paths(vclass, tolls, vclass != vclass::BICYCLE, true)
+    }
+
+    /// A lorry metric for lorries of `weight` t (M21).
+    pub fn lorries(weight: f32, tolls: bool) -> Metric {
+        let mut m = Metric::new(vclass::TRUCK, tolls);
+        m.weight = weight;
+        m
     }
 
     pub fn with_paths(vclass: u16, tolls: bool, fuel: bool, paths: bool) -> Metric {
@@ -352,6 +362,11 @@ impl Metric {
             vclass,
             tolls,
             fuel,
+            weight: if vclass == vclass::TRUCK {
+                LIGHT_LORRY_TONNES
+            } else {
+                0.0
+            },
             paths,
         }
     }
@@ -386,8 +401,9 @@ impl Metric {
             } else {
                 (0.0, 0.0)
             };
+            // Lorry bans and roads' weight limits in lorry routes alone (M18c, M21).
             let ban = if self.fuel && self.vclass == vclass::TRUCK {
-                s.ban
+                s.lorry_cost(self.weight)
             } else {
                 0.0
             };
@@ -1047,11 +1063,21 @@ impl Flow {
     }
 }
 
-/// Whether trucks may make exactly the moves cars may, at the same cost (no lorry bans).
-fn trucks_as_cars(net: &Network) -> bool {
+/// Whether lorries of `weight` t may make exactly the moves cars may, at the same cost (no
+/// lorry bans or weight limits that apply to them).
+fn lorries_as_cars(net: &Network, weight: f32) -> bool {
     net.succ.iter().all(|s| {
-        (s.allow & vclass::PASSENGER != 0) == (s.allow & vclass::TRUCK != 0) && s.ban == 0.0
+        (s.allow & vclass::PASSENGER != 0) == (s.allow & vclass::TRUCK != 0)
+            && s.lorry_cost(weight) == 0.0
     })
+}
+
+/// For light and heavy lorries, whether they route as cars (`lorries_as_cars`).
+fn lorry_classes_as_cars(net: &Network) -> [bool; 2] {
+    [
+        lorries_as_cars(net, LIGHT_LORRY_TONNES),
+        lorries_as_cars(net, HEAVY_LORRY_TONNES),
+    ]
 }
 
 /// Which travel times a search runs on (`Hierarchy::kind`).
@@ -1068,19 +1094,33 @@ pub enum Times {
     Peak,
 }
 
-/// The metrics the engine routes on (times, class, tolls counted, fuel counted): cars and
-/// trucks on the measured times, each with and without tolls and with fuel (M15b), bikes on
-/// their own times, cars in the morning peak (times only, for the riders), and cars on the
-/// measured times alone (for `Engine::reach`). Each is customised only once a search needs
-/// it.
-const KINDS: [(Times, u16, bool, bool); 7] = [
-    (Times::Travel, vclass::PASSENGER, true, true),
-    (Times::Travel, vclass::PASSENGER, false, true),
-    (Times::Travel, vclass::TRUCK, true, true),
-    (Times::Travel, vclass::TRUCK, false, true),
-    (Times::Bike, vclass::BICYCLE, true, false),
-    (Times::Peak, vclass::PASSENGER, false, false),
-    (Times::Travel, vclass::PASSENGER, false, false),
+/// The metrics the engine routes on (times, class, tolls counted, fuel counted, lorries'
+/// weight): cars and light and heavy lorries (M21) on the measured times, each with and
+/// without tolls and with fuel (M15b), bikes on their own times, cars in the morning peak
+/// (times only, for the riders), and cars on the measured times alone (for
+/// `Engine::reach`). Each is customised only once a search needs it.
+const KINDS: [(Times, u16, bool, bool, f32); 9] = [
+    (Times::Travel, vclass::PASSENGER, true, true, 0.0),
+    (Times::Travel, vclass::PASSENGER, false, true, 0.0),
+    (Times::Travel, vclass::TRUCK, true, true, LIGHT_LORRY_TONNES),
+    (
+        Times::Travel,
+        vclass::TRUCK,
+        false,
+        true,
+        LIGHT_LORRY_TONNES,
+    ),
+    (Times::Bike, vclass::BICYCLE, true, false, 0.0),
+    (Times::Peak, vclass::PASSENGER, false, false, 0.0),
+    (Times::Travel, vclass::PASSENGER, false, false, 0.0),
+    (Times::Travel, vclass::TRUCK, true, true, HEAVY_LORRY_TONNES),
+    (
+        Times::Travel,
+        vclass::TRUCK,
+        false,
+        true,
+        HEAVY_LORRY_TONNES,
+    ),
 ];
 /// The kind of `KINDS` that counts the measured times alone.
 const TIME_ONLY: usize = 6;
@@ -1091,9 +1131,10 @@ pub struct Hierarchy {
     pub cch: Cch,
     metrics: Vec<Metric>,
     stale: Vec<bool>,
-    /// Whether trucks may make every move cars may and no other (true of Zagreb's roads as
-    /// mapped): then they route on the cars' metrics.
-    trucks_as_cars: bool,
+    /// Whether light and heavy lorries may make every move cars may and no other, at the
+    /// same cost (no lorry bans or weight limits for them): then they route on the cars'
+    /// metrics.
+    lorries_as_cars: [bool; 2],
     query: Query,
     /// Searches, ranks they visited, and customisations so far.
     pub searches: u64,
@@ -1110,14 +1151,16 @@ impl Hierarchy {
         Hierarchy {
             metrics: KINDS
                 .iter()
-                .map(|&(times, v, t, fuel)| {
+                .map(|&(times, v, t, fuel, weight)| {
                     // Routes are unpacked only on the metrics searched for routes.
                     let paths = times == Times::Bike || (times == Times::Travel && fuel);
-                    Metric::with_paths(v, t, fuel, paths)
+                    let mut m = Metric::with_paths(v, t, fuel, paths);
+                    m.weight = weight;
+                    m
                 })
                 .collect(),
             stale: vec![true; KINDS.len()],
-            trucks_as_cars: trucks_as_cars(net),
+            lorries_as_cars: lorry_classes_as_cars(net),
             cch,
             query,
             searches: 0,
@@ -1128,18 +1171,20 @@ impl Hierarchy {
         }
     }
 
-    /// The metric a search on `times` for `vclass` uses (tolls counted or not), if any:
-    /// other searches (buses, trams and trains, transit legs at the speed limits) are left
-    /// to A*.
-    pub fn kind(&self, times: Times, vclass: u16, tolls: bool) -> Option<usize> {
-        let vclass = if vclass == vclass::TRUCK && self.trucks_as_cars {
+    /// The metric a search on `times` for `vclass` uses (tolls counted or not; `weight`: a
+    /// lorry's, t), if any: other searches (buses, trams and trains, transit legs at the
+    /// speed limits) are left to A*.
+    pub fn kind(&self, times: Times, vclass: u16, weight: f32, tolls: bool) -> Option<usize> {
+        let heavy = weight > HEAVY_FROM_TONNES;
+        let vclass = if vclass == vclass::TRUCK && self.lorries_as_cars[heavy as usize] {
             vclass::PASSENGER
         } else {
             vclass
         };
-        KINDS.iter().position(|&(t, v, toll, fuel)| {
+        KINDS.iter().position(|&(t, v, toll, fuel, w)| {
             t == times
                 && v == vclass
+                && (v != vclass::TRUCK || (w > HEAVY_FROM_TONNES) == heavy)
                 && (toll == tolls || times == Times::Bike)
                 && fuel == (times == Times::Travel)
         })
@@ -1153,7 +1198,7 @@ impl Hierarchy {
 
     /// The measured times changed: cars and trucks customise again.
     pub fn travel_changed(&mut self) {
-        for (k, &(t, _, _, _)) in KINDS.iter().enumerate() {
+        for (k, &(t, _, _, _, _)) in KINDS.iter().enumerate() {
             if t == Times::Travel {
                 self.stale[k] = true;
             }
@@ -1163,7 +1208,7 @@ impl Hierarchy {
     /// Charges or lorry bans changed (M18a, M18c): cars and trucks customise again, and
     /// trucks route on their own metrics while a ban applies.
     pub fn charges_changed(&mut self, net: &Network) {
-        self.trucks_as_cars = trucks_as_cars(net);
+        self.lorries_as_cars = lorry_classes_as_cars(net);
         self.travel_changed();
     }
 
@@ -1171,13 +1216,13 @@ impl Hierarchy {
     /// every metric customises again.
     pub fn network_changed(&mut self, net: &Network) {
         self.cch.index_inputs(net);
-        self.trucks_as_cars = trucks_as_cars(net);
+        self.lorries_as_cars = lorry_classes_as_cars(net);
         self.stale.fill(true);
     }
 
     /// The peak times changed.
     pub fn peak_changed(&mut self) {
-        for (k, &(t, _, _, _)) in KINDS.iter().enumerate() {
+        for (k, &(t, _, _, _, _)) in KINDS.iter().enumerate() {
             if t == Times::Peak {
                 self.stale[k] = true;
             }
@@ -1186,7 +1231,7 @@ impl Hierarchy {
 
     /// Bikes' times changed.
     pub fn bike_changed(&mut self) {
-        for (k, &(t, _, _, _)) in KINDS.iter().enumerate() {
+        for (k, &(t, _, _, _, _)) in KINDS.iter().enumerate() {
             if t == Times::Bike {
                 self.stale[k] = true;
             }

@@ -1836,6 +1836,15 @@ function finish(
       ne.map(() => 255),
     );
   }
+  // Roads' weight limits for lorries (M21): none on roads drawn. The central zone stays.
+  if (a.edgeMaxWeight) {
+    out.edgeMaxWeight = grow(
+      a.edgeMaxWeight as Uint16Array,
+      Uint16Array,
+      ne.map(() => 0),
+    );
+  }
+  if (a.lorryZone) out.lorryZone = (a.lorryZone as Float32Array).slice();
 
   // Lanes and their shapes.
   out.laneEdge = grow(

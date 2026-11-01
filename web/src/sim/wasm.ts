@@ -125,7 +125,9 @@ export const INFO = {
   blinkRight: 1 << 11,
 } as const;
 
-export const VEHICLE_TYPES = ['car', 'truck', 'bus', 'tram', 'train', 'bike'] as const;
+/** Vehicle types by the engine's numbers (`sim/src/vtype.rs`): lorries up to 12 t are
+ * `truck`, heavier ones `heavy` (M21). */
+export const VEHICLE_TYPES = ['car', 'truck', 'bus', 'tram', 'train', 'bike', 'heavy'] as const;
 
 /** The signal programs as the engine runs them: netconvert's guesses re-timed, with edits. */
 export interface SignalPrograms {

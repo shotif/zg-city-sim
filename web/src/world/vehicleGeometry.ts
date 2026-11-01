@@ -28,7 +28,8 @@ export const HZ_BLUE = 0x1b3c8c;
 export function vehicleColor(type: number, seed: number, out: THREE.Color): THREE.Color {
   if (type === 2 || type === 3) return out.setHex(ZET_BLUE, THREE.SRGBColorSpace);
   if (type === 4) return out.setHex(HZ_BLUE, THREE.SRGBColorSpace);
-  if (type === 1) return out.setHex(TRUCK_CABS[seed % TRUCK_CABS.length], THREE.SRGBColorSpace);
+  if (type === 1 || type === 6)
+    return out.setHex(TRUCK_CABS[seed % TRUCK_CABS.length], THREE.SRGBColorSpace);
   let pick = (seed / 65536) * CAR_COLOR_TOTAL;
   for (const [hex, weight] of CAR_COLORS) {
     pick -= weight;

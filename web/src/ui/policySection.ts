@@ -7,6 +7,7 @@ import {
   clock,
   hoursText,
 } from '../edit/policies';
+import { type LorryRules, lorryRulesText } from '../edit/lorryRules';
 import { button, el } from './buildPanel';
 
 /** Congestion charges on offer (€ a drive into the area). */
@@ -62,9 +63,9 @@ const KINDS: Record<
     note:
       'Lorries may not cross the area’s edge, in or out, except to reach or leave places ' +
       'inside it: their routes count an hour for every road over the edge, so lorries ' +
-      'passing through go round and deliveries still get in. Cars, buses and bikes are not ' +
-      'affected. Zagreb already keeps lorries over 12 t out of its central zone; the ' +
-      'simulation does not tell lorries apart by weight.',
+      'passing through go round and deliveries still get in. It keeps out every lorry, ' +
+      'over 3.5 t; cars, buses and bikes are not affected. Zagreb already keeps lorries over ' +
+      '12 t out of its central zone (today’s lorry rules, below).',
   },
 };
 
@@ -76,6 +77,8 @@ export interface PolicySectionCallbacks {
   /** A policy to put in force (replacing one of the same kind on an area of the same name):
    * undefined if done, else why not. */
   onPolicy(policy: AreaEdit): string | undefined;
+  /** Today's lorry rules shown on the map or not (M21). */
+  onRules?(shown: boolean): void;
 }
 
 /** What has been paid in the simulation so far: euros, and by how many (drivers who paid a
@@ -109,6 +112,7 @@ export class PolicySection {
   constructor(
     parent: HTMLElement,
     private readonly callbacks: PolicySectionCallbacks,
+    rules?: LorryRules,
   ) {
     this.element = el('section', 'build-draw', parent);
     el('h3', 'build-count', this.element).textContent = 'Policies on an area';
@@ -177,8 +181,22 @@ export class PolicySection {
     button('Remove last point', this.controls, () => this.undoPoint(), 'Backspace');
     this.status = el('p', 'build-draw-status', this.element);
     this.status.setAttribute('role', 'status');
-    this.paid = el('p', 'build-note', this.element);
+    this.paid = el('p', 'build-note build-paid', this.element);
     this.paid.hidden = true;
+    if (rules) {
+      // Today's lorry rules (M21), in force whatever the player does.
+      const part = el('div', 'build-lorry-rules', this.element);
+      el('h4', 'build-count', part).textContent = 'Today’s lorry rules';
+      el('p', 'build-note', part).textContent = lorryRulesText(rules);
+      let shown = false;
+      const show = button('Show on the map', part, () => {
+        shown = !shown;
+        show.setAttribute('aria-pressed', String(shown));
+        show.textContent = shown ? 'Hide from the map' : 'Show on the map';
+        this.callbacks.onRules?.(shown);
+      });
+      show.setAttribute('aria-pressed', 'false');
+    }
 
     window.addEventListener('keydown', (event) => {
       if (!this.drawing || event.target instanceof HTMLInputElement) return;

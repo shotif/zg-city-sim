@@ -27,10 +27,15 @@
 //! every road over the edge, so through lorries go round, and lorries to and from places
 //! inside cross it once, as deliveries are let in. Cars, buses, trams and bikes are not
 //! affected, and the split does not count it.
+//!
+//! Bans count lorries by weight (M21): the player's keep out every lorry (over 3.5 t), and
+//! Zagreb's central zone, which the City keeps lorries over 12 t out of all day, is a ban of
+//! its own on heavy lorries (`Policies::add_zone`), in force whatever the player does.
 
 use crate::demand::{Demand, HOURLY, purposes};
 use crate::network::Network;
 use crate::rng::Rng;
+use crate::vtype::LIGHT_LORRY_TONNES;
 
 /// Seconds drivers count a euro as: the €16 an hour behind `network::TOLL_TIME` and
 /// `network::FUEL_TIME` (an estimate).
@@ -51,6 +56,8 @@ const PARKING_SAMPLES: usize = 4000;
 /// hour, more than any way round the area takes, so only lorries to or from places inside
 /// it cross the edge.
 pub const BAN_SECONDS: f32 = 3600.0;
+/// Lorries the player's bans keep out: those over 3.5 t, every lorry the simulation has.
+pub const BAN_TONNES: f32 = 3.5;
 /// Most points an area may have.
 pub const MAX_POINTS: usize = 256;
 /// Junctions within this distance of an area's edge (m) count as outside it, so the roads
@@ -183,9 +190,11 @@ pub struct Policies {
     /// area.
     pub parking_paid: f64,
     pub parking_arrivals: u64,
-    /// Lorry bans (M18c), whether each applies now, and for each edge over a ban's edge the
-    /// ban and whether it leads in (sorted by edge).
+    /// Lorry bans (M18c), the weight (t) lorries they keep out are over (M21), whether each
+    /// applies now, and for each edge over a ban's edge the ban and whether it leads in
+    /// (sorted by edge). The player's bans come first, then standing ones (`add_zone`).
     pub bans: Vec<Charge>,
+    pub ban_tonnes: Vec<f32>,
     pub ban_active: Vec<bool>,
     ban_by_edge: Vec<(u32, u16, bool)>,
     /// Lorries that drove into a ban's area while it applied, since the start.
@@ -205,6 +214,23 @@ fn junctions_within(net: &Network, area: &[(f32, f32)]) -> Vec<bool> {
             (lo.0..=hi.0).contains(&p.0) && (lo.1..=hi.1).contains(&p.1) && within(area, p)
         })
         .collect()
+}
+
+/// The roads over `area`'s edge, in or out, for ban `b`: each edge and whether it leads in.
+fn roads_across(net: &Network, area: &[(f32, f32)], b: u16) -> Vec<(u32, u16, bool)> {
+    let n_junctions = net.d.junction_pos.len() / 2;
+    let is_in = junctions_within(net, area);
+    let mut out = Vec::new();
+    for e in 0..net.edge_count() {
+        let (a, z) = (net.d.edge_from[e] as usize, net.d.edge_to[e] as usize);
+        if net.is_internal_edge(e as u32) || a >= n_junctions || z >= n_junctions {
+            continue;
+        }
+        if is_in[a] != is_in[z] {
+            out.push((e as u32, b, is_in[z]));
+        }
+    }
+    out
 }
 
 impl Policies {
@@ -246,16 +272,7 @@ impl Policies {
         parking_by_edge.sort_unstable();
         let mut ban_by_edge = Vec::new();
         for (b, ban) in bans.iter().enumerate() {
-            let is_in = junctions_within(net, &ban.area);
-            for e in 0..net.edge_count() {
-                let (a, z) = (net.d.edge_from[e] as usize, net.d.edge_to[e] as usize);
-                if net.is_internal_edge(e as u32) || a >= n_junctions || z >= n_junctions {
-                    continue;
-                }
-                if is_in[a] != is_in[z] {
-                    ban_by_edge.push((e as u32, b as u16, is_in[z]));
-                }
-            }
+            ban_by_edge.extend(roads_across(net, &ban.area, b as u16));
         }
         ban_by_edge.sort_unstable();
         Policies {
@@ -272,10 +289,30 @@ impl Policies {
             parking_paid: 0.0,
             parking_arrivals: 0,
             ban_active: vec![false; bans.len()],
+            ban_tonnes: vec![BAN_TONNES; bans.len()],
             bans,
             ban_by_edge,
             lorries_in: 0,
         }
+    }
+
+    /// Keep lorries over `tonnes` out of `area` all day, as Zagreb keeps lorries over 12 t
+    /// out of its central zone (M21): a standing ban, after the player's.
+    pub fn add_zone(&mut self, net: &Network, area: Vec<(f32, f32)>, tonnes: f32) {
+        if area.len() < 3 {
+            return;
+        }
+        let b = self.bans.len() as u16;
+        self.ban_by_edge.extend(roads_across(net, &area, b));
+        self.ban_by_edge.sort_unstable();
+        self.bans.push(Charge {
+            area,
+            euros: 0.0,
+            from: 0.0,
+            to: 86_400.0,
+        });
+        self.ban_tonnes.push(tonnes);
+        self.ban_active.push(false);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -386,12 +423,14 @@ impl Policies {
     }
 
     /// Seconds lorry routes count for driving onto each edge for the lorry bans in force
-    /// now, into `out` sized for the network's edges.
-    pub fn ban_seconds(&self, out: &mut Vec<f32>, edges: usize) {
+    /// now, into `out` sized for the network's edges: for bans on every lorry, or (`heavy`)
+    /// for those on heavy lorries alone (M21).
+    pub fn ban_seconds(&self, out: &mut Vec<f32>, edges: usize, heavy: bool) {
         out.clear();
         out.resize(edges, 0.0);
         for &(e, b, _) in &self.ban_by_edge {
-            if self.ban_active[b as usize] && (e as usize) < edges {
+            let light = self.ban_tonnes[b as usize] < LIGHT_LORRY_TONNES;
+            if self.ban_active[b as usize] && (e as usize) < edges && light != heavy {
                 out[e as usize] += BAN_SECONDS;
             }
         }
@@ -409,15 +448,18 @@ impl Policies {
         }
     }
 
-    /// A car or lorry (`lorry`) drove onto edge `e`: it pays the charges in force for the
-    /// areas it leads into, and lorries driving into an area banned to them are counted.
-    pub fn entered(&mut self, e: u32, lorry: bool) {
-        if lorry && !self.bans.is_empty() {
+    /// A car or lorry (`weight`: a lorry's, t; 0 for a car) drove onto edge `e`: it pays the
+    /// charges in force for the areas it leads into, and lorries driving into an area banned
+    /// to them are counted.
+    pub fn entered(&mut self, e: u32, weight: f32) {
+        if weight > 0.0 && !self.bans.is_empty() {
             let start = self.ban_by_edge.partition_point(|&(x, _, _)| x < e);
             let into = self.ban_by_edge[start..]
                 .iter()
                 .take_while(|&&(x, _, _)| x == e)
-                .any(|&(_, b, into)| into && self.ban_active[b as usize]);
+                .any(|&(_, b, into)| {
+                    into && self.ban_active[b as usize] && weight > self.ban_tonnes[b as usize]
+                });
             if into {
                 self.lorries_in += 1;
             }

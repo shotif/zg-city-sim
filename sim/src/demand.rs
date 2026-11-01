@@ -95,6 +95,28 @@ const THROUGH_PEAKED: f32 = 0.7;
 /// Truck shares by day (6-20 h) and by night.
 const TRUCKS: (f32, f32) = (0.06, 0.12);
 const THROUGH_TRUCKS: (f32, f32) = (0.25, 0.5);
+/// Shares of lorries that are heavy, over 12 t (M21), from Hrvatske ceste's 2025 counts by
+/// vehicle group (heavy lorries, lorries with trailers and tractor units among all lorries;
+/// estimates): on trips within the map half, as at the 19 counted state roads inside it
+/// (53 %, with lorries passing through among them); across the map's edge 55 %, as at all
+/// the counted roads in and around it; through it 75 %, between the 68 % with four axles or
+/// more on the A1 at Lučko and the 70-78 % on the D1 beyond the map.
+const HEAVY_SHARE: f32 = 0.5;
+const HEAVY_SHARE_EDGE: f32 = 0.55;
+const HEAVY_SHARE_THROUGH: f32 = 0.75;
+
+/// A car, a light lorry or a heavy one, from a uniform draw `u`: a lorry if below `lorries`
+/// (and lorries may drive there), heavy if below `lorries * heavy`, so the lorries drawn
+/// are as before heavy ones were told apart.
+fn vehicle(u: f32, lorries: f32, heavy: f32, ok: bool) -> u8 {
+    if !ok || u >= lorries {
+        vtype::CAR
+    } else if u < lorries * heavy {
+        vtype::HEAVY
+    } else {
+        vtype::TRUCK
+    }
+}
 
 /// Where a road crosses the map's edge.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -757,10 +779,13 @@ impl Demand {
             let Some((o, d)) = pair else {
                 continue;
             };
-            let truck = rng.f32() < truck_share && self.truck_ok[o] && self.truck_ok[d];
+            let ok = self.truck_ok[o] && self.truck_ok[d];
+            let kind = vehicle(rng.f32(), truck_share, HEAVY_SHARE, ok);
             // Car trips public transport took, or gave back (M9d).
             let copies = match &self.shift {
-                Some(shift) if !truck && self.vtype.is_none() => shift.copies(o, d, rng),
+                Some(shift) if kind == vtype::CAR && self.vtype.is_none() => {
+                    shift.copies(o, d, rng)
+                }
                 _ => 1,
             };
             for _ in 0..copies {
@@ -768,9 +793,7 @@ impl Demand {
                     depart: t + rng.f64() * dt,
                     from: self.edges[o],
                     to: self.edges[d],
-                    vtype: self
-                        .vtype
-                        .unwrap_or(if truck { vtype::TRUCK } else { vtype::CAR }),
+                    vtype: self.vtype.unwrap_or(kind),
                     flags: 0,
                 });
             }
@@ -794,7 +817,6 @@ impl Demand {
         } else {
             (TRUCKS.1, THROUGH_TRUCKS.1)
         };
-        let vtype = |truck: bool| if truck { vtype::TRUCK } else { vtype::CAR };
 
         // Into the map: commuters to work, residents coming home, everyone else.
         let (n, mix) = self.inbound.due(t + INBOUND_LEAD, dt, scale);
@@ -815,12 +837,13 @@ impl Demand {
             ) else {
                 continue;
             };
-            let truck = rng.f32() < trucks && self.entry_truck_ok[g] && self.truck_ok[d];
+            let ok = self.entry_truck_ok[g] && self.truck_ok[d];
+            let kind = vehicle(rng.f32(), trucks, HEAVY_SHARE_EDGE, ok);
             emit(Trip {
                 depart: t + rng.f64() * dt,
                 from: self.gateways[g].entry,
                 to: self.edges[d],
-                vtype: vtype(truck),
+                vtype: kind,
                 flags: trip::ENTER,
             });
         }
@@ -844,12 +867,13 @@ impl Demand {
             ) else {
                 continue;
             };
-            let truck = rng.f32() < trucks && self.exit_truck_ok[g] && self.truck_ok[o];
+            let ok = self.exit_truck_ok[g] && self.truck_ok[o];
+            let kind = vehicle(rng.f32(), trucks, HEAVY_SHARE_EDGE, ok);
             emit(Trip {
                 depart: t + rng.f64() * dt,
                 from: self.edges[o],
                 to: self.gateways[g].exit,
-                vtype: vtype(truck),
+                vtype: kind,
                 flags: trip::EXIT,
             });
         }
@@ -863,13 +887,13 @@ impl Demand {
             let Some(h) = self.far_exit(g, rng) else {
                 continue;
             };
-            let truck =
-                rng.f32() < through_trucks && self.entry_truck_ok[g] && self.exit_truck_ok[h];
+            let ok = self.entry_truck_ok[g] && self.exit_truck_ok[h];
+            let kind = vehicle(rng.f32(), through_trucks, HEAVY_SHARE_THROUGH, ok);
             emit(Trip {
                 depart: t + rng.f64() * dt,
                 from: self.gateways[g].entry,
                 to: self.gateways[h].exit,
-                vtype: vtype(truck),
+                vtype: kind,
                 flags: trip::ENTER | trip::EXIT,
             });
         }
@@ -959,8 +983,9 @@ impl Demand {
 
 #[cfg(test)]
 mod alias_tests {
-    use super::Alias;
+    use super::{Alias, vehicle};
     use crate::rng::Rng;
+    use crate::vtype;
 
     #[test]
     fn alias_draws_in_proportion_to_weights() {
@@ -984,5 +1009,24 @@ mod alias_tests {
             );
         }
         assert!(Alias::new(&[0.0, 0.0]).sample(&mut rng).is_none());
+    }
+
+    #[test]
+    fn heavy_lorries_are_drawn_among_the_lorries_as_before() {
+        // The same draw makes the same lorries; half of them heavy.
+        let (lorries, heavy) = (0.06, 0.5);
+        assert_eq!(vehicle(0.02, lorries, heavy, true), vtype::HEAVY);
+        assert_eq!(vehicle(0.04, lorries, heavy, true), vtype::TRUCK);
+        assert_eq!(vehicle(0.07, lorries, heavy, true), vtype::CAR);
+        // Where lorries may not drive, a car.
+        assert_eq!(vehicle(0.02, lorries, heavy, false), vtype::CAR);
+        let mut rng = Rng::new(3);
+        let n = 100_000;
+        let kinds: Vec<u8> = (0..n)
+            .map(|_| vehicle(rng.f32(), lorries, heavy, true))
+            .collect();
+        let count = |k: u8| kinds.iter().filter(|&&v| v == k).count() as f32 / n as f32;
+        assert!((count(vtype::HEAVY) + count(vtype::TRUCK) - lorries).abs() < 0.003);
+        assert!((count(vtype::HEAVY) - lorries * heavy).abs() < 0.003);
     }
 }

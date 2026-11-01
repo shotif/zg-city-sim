@@ -106,6 +106,11 @@ pub fn load(dir: &str) -> NetworkData {
         }
     }
     data.lane_shape = shape;
+    // NO_LORRY_RULES leaves out roads' weight limits and the central zone, as before M21.
+    if std::env::var("NO_LORRY_RULES").is_ok() {
+        data.edge_max_weight.clear();
+        data.lorry_zone.clear();
+    }
     data
 }
 
@@ -959,6 +964,27 @@ fn main() {
         let applied = engine.set_edits(&edits);
         println!("edits: {applied} of {} applied", edits.len());
     }
+    // Lorry rules (M21): roads limited by weight, and the central zone's roads over its edge.
+    let limited = engine
+        .net
+        .d
+        .edge_max_weight
+        .iter()
+        .filter(|&&w| w > 0)
+        .count();
+    let zone = engine
+        .policies
+        .bans
+        .len()
+        .checked_sub(1)
+        .filter(|_| engine.policies.ban_tonnes.last().is_some_and(|&t| t > 3.5));
+    println!(
+        "lorry rules: {limited} roads limited by weight, central zone {}",
+        zone.map_or("none".to_string(), |b| format!(
+            "with {} roads over its edge",
+            engine.policies.ban_roads(b).len()
+        ))
+    );
     engine.set_time(start * 3600.0);
     engine.track_delay = true;
     engine.skip_phases = std::env::var("NO_PHASE_SKIP").is_err();
@@ -1163,6 +1189,10 @@ fn main() {
         s.rounds
     );
     println!("removed vehicles were: {:?}", s.teleport_reasons);
+    println!(
+        "lorries driving into areas banned to them: {}",
+        engine.policies.lorries_in
+    );
     let mut places: Vec<(u32, u32)> = s.removed_at.iter().map(|(&e, &n)| (n, e)).collect();
     places.sort_unstable_by(|a, b| b.cmp(a));
     let top: Vec<String> = places

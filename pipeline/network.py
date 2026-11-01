@@ -24,6 +24,7 @@ from scipy.ndimage import gaussian_filter
 
 from .config import CACHE_DIR, CRS, OUTPUT_DIR, WORLD
 from .landcover import BUILT_UP, landcover_grid
+from .lorries import ORDER_URL, ZONE_TONNES, edge_max_weight, lorry_rules, zone_area
 
 if TYPE_CHECKING:
     from .projects import Patch
@@ -519,6 +520,20 @@ def export_network(net_file: Path, out_dir: Path) -> dict:
     arrays, tables = pack_network(net)
     # The roads' speeds in the morning peak, from day runs (M10d: car journey times).
     arrays["edgePeak"] = peak_shares(arrays, tables["flags"]["internal"])
+    # Roads closed to lorries or limited by weight, and the central zone (M21).
+    rules = lorry_rules(fetch_osm())
+    arrays["edgeMaxWeight"] = edge_max_weight(
+        [e.params.get("origId", "") for e in net.edges], rules["limits"]
+    )
+    arrays["lorryZone"] = np.asarray(rules["zone"], np.float32).reshape(-1)
+    tables["lorryZones"] = [
+        {
+            "name": "Central zone",
+            "tonnes": ZONE_TONNES,
+            "areaKm2": round(zone_area(rules["zone"]), 2),
+            "source": ORDER_URL,
+        }
+    ]
     for stale in ("roads.bin.gz", "roads.json"):
         (out_dir / stale).unlink(missing_ok=True)
     packed = write_packed(out_dir / "net.bin.gz", arrays)
@@ -540,6 +555,7 @@ def export_network(net_file: Path, out_dir: Path) -> dict:
             "links": len(arrays["linkFrom"]),
             "trafficLights": len(net.tls),
             "roadKm": round(road_km),
+            "lorryLimited": int((arrays["edgeMaxWeight"] > 0).sum()),
         },
     }
 

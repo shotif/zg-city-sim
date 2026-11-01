@@ -1288,7 +1288,7 @@ test('charges for driving and parking in Donji grad, bans lorries there, and dri
       intervals: [5_000],
     })
     .toBeGreaterThan(0);
-  await expect(page.locator('.build-draw p').last()).toContainText('Charges paid so far today');
+  await expect(page.locator('.build-paid')).toContainText('Charges paid so far today');
   // And €2 an hour on parking there, from 07:00 to 21:00: car trips that end there pay.
   await page.getByLabel('Policy', { exact: true }).selectOption({ label: 'Parking surcharge' });
   await expect(page.getByLabel('Hours', { exact: true })).toHaveValue('1');
@@ -1304,7 +1304,7 @@ test('charges for driving and parking in Donji grad, bans lorries there, and dri
       intervals: [5_000],
     })
     .toBeGreaterThan(0);
-  await expect(page.locator('.build-draw p').last()).toContainText('Parking surcharges paid');
+  await expect(page.locator('.build-paid')).toContainText('Parking surcharges paid');
   // And lorries kept from crossing its edge, all day: those with places inside still get in.
   await page.getByLabel('Policy', { exact: true }).selectOption({ label: 'Lorry ban' });
   await expect(page.getByLabel('Charge', { exact: true })).toBeHidden();
@@ -1320,7 +1320,18 @@ test('charges for driving and parking in Donji grad, bans lorries there, and dri
       intervals: [5_000],
     })
     .toBeGreaterThan(0);
-  await expect(page.locator('.build-draw p').last()).toContainText('Lorries let into banned areas');
+  await expect(page.locator('.build-paid')).toContainText('Lorries let into banned areas');
+  // Today's lorry rules (M21): the central zone and the roads limited by weight, on the map
+  // when asked.
+  await expect(page.locator('.build-lorry-rules')).toContainText(
+    'lorries over 12 t may not drive into the central zone',
+  );
+  await expect(page.locator('.build-lorry-rules')).toContainText('limited by weight');
+  await page.getByRole('button', { name: 'Show on the map' }).click();
+  await expect(page.getByRole('button', { name: 'Hide from the map' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
   await page.evaluate(() => window.__ZG__?.lookAt(250, 500, 4000));
   await page.waitForTimeout(2000);
   await page.screenshot({ path: testInfo.outputPath('charge.png') });

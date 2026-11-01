@@ -19,6 +19,8 @@ export interface RoadNetworkIndex extends PackedIndex {
   linkDirs: string[];
   linkStates: string[];
   none: number;
+  /** Zones lorries over a weight may not enter (M21): Zagreb's central zone. */
+  lorryZones?: { name: string; tonnes: number; areaKm2: number; source: string }[];
 }
 
 export type RoadClass =

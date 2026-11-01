@@ -5366,3 +5366,122 @@ fn response_times_are_the_soonest_from_any_station() {
         );
     }
 }
+
+#[test]
+fn heavy_lorries_keep_off_roads_limited_by_weight_and_out_of_the_central_zone() {
+    // By A* and on the hierarchy.
+    for hierarchy in [false, true] {
+        lorry_rules(hierarchy);
+    }
+}
+
+fn lorry_rules(hierarchy: bool) {
+    // As in the lorry ban's test: straight through B, or round through C, with a dead end
+    // from B to D; the road from B to M limited by weight, and B in a central zone.
+    let mut b = Builder::default();
+    let s0 = b.junction(-200.0, 0.0);
+    let a = b.junction(0.0, 0.0);
+    let bj = b.junction(500.0, 0.0);
+    let m = b.junction(1000.0, 0.0);
+    let c = b.junction(500.0, 500.0);
+    let z = b.junction(1200.0, 0.0);
+    let d = b.junction(500.0, -40.0);
+    let into = b.road(s0, a, 1, 13.9);
+    let ab = b.road(a, bj, 1, 13.9);
+    let bm = b.road(bj, m, 1, 13.9);
+    let up = b.road(a, c, 1, 13.9);
+    let down = b.road(c, m, 1, 13.9);
+    let last = b.road(m, z, 1, 13.9);
+    let bd = b.road(bj, d, 1, 13.9);
+    for (from, to, j) in [
+        (into, ab, a),
+        (into, up, a),
+        (ab, bm, bj),
+        (ab, bd, bj),
+        (up, down, c),
+        (bm, last, m),
+        (down, last, m),
+    ] {
+        let (fl, tl) = (b.lane(from, 0), b.lane(to, 0));
+        b.connect(fl, tl, j, dir::STRAIGHT, b'M');
+    }
+    let base = b.data();
+    // `limit`: B to M's, 0.1 t (0: none).
+    let route = |zone: bool, limit: u16| {
+        let mut data = base.clone();
+        data.edge_max_weight = vec![0; data.edge_flags.len()];
+        data.edge_max_weight[bm as usize] = limit;
+        if zone {
+            data.lorry_zone = square(500.0, 0.0, 100.0)
+                .into_iter()
+                .flat_map(|(x, z)| [x, z])
+                .collect();
+        }
+        let mut engine = Engine::new(Network::build(data).unwrap(), 5);
+        if hierarchy {
+            engine.build_hierarchy();
+        }
+        // A light lorry and a heavy one through, and a heavy one to D.
+        for (i, (vt, to)) in [
+            (vtype::TRUCK, last),
+            (vtype::HEAVY, last),
+            (vtype::HEAVY, bd),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            engine.add_trip(Trip {
+                depart: i as f64 * 15.0,
+                from: into,
+                to,
+                vtype: vt,
+                flags: 0,
+            });
+        }
+        run_until(&mut engine, 300.0, |_| {});
+        assert_eq!(engine.stats.arrived, 3, "hierarchy {hierarchy}");
+        engine
+    };
+    // No rules: both through lorries drive straight on.
+    let e = route(false, 0);
+    assert_eq!(e.edge_lorries[bm as usize], 2);
+    assert_eq!(e.edge_heavy[bm as usize], 1);
+    // B to M limited to 10 t: the light lorry (7.5 t) drives on, the heavy one goes round.
+    let e = route(false, 100);
+    assert_eq!(e.edge_lorries[bm as usize], 1);
+    assert_eq!(e.edge_heavy[bm as usize], 0);
+    assert_eq!(e.edge_heavy[up as usize], 1);
+    // Limited to 5 t: both go round.
+    let e = route(false, 50);
+    assert_eq!(e.edge_lorries[bm as usize], 0);
+    // The central zone around B: heavy lorries through go round, the light one drives
+    // through it, and the heavy one to D gets in, counted.
+    let e = route(true, 0);
+    assert_eq!(e.policies.ban_roads(0), vec![ab, bm]);
+    assert_eq!(e.edge_lorries[bm as usize], 1);
+    assert_eq!(e.edge_heavy[bm as usize], 0);
+    assert_eq!(e.edge_heavy[ab as usize], 1);
+    assert_eq!(e.edge_heavy[bd as usize], 1);
+    assert_eq!(e.policies.lorries_in, 1);
+    // The player's ban keeps every lorry out, and the zone stays with it.
+    let mut e = route(true, 0);
+    let ban = crate::policy::Charge {
+        area: square(500.0, 0.0, 100.0),
+        euros: 0.0,
+        from: 0.0,
+        to: 86_400.0,
+    };
+    e.set_edits(&[Edit::LorryBan(ban)]);
+    assert_eq!(e.policies.bans.len(), 2);
+    assert_eq!(e.policies.ban_tonnes, vec![3.5, 12.0]);
+    let through = e.edge_lorries[bm as usize];
+    e.add_trip(Trip {
+        depart: e.time + 1.0,
+        from: into,
+        to: last,
+        vtype: vtype::TRUCK,
+        flags: 0,
+    });
+    run_until(&mut e, 200.0, |_| {});
+    assert_eq!(e.edge_lorries[bm as usize], through);
+}

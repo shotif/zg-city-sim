@@ -17,7 +17,8 @@
 //! demand's list (65534 if not known), 65535 unknown; M13),
 //! `<out_dir>/town_commutes.bin` (commutes drawn from the demand by the town of home
 //! and of work, against the census: `run::write_town_commutes`, M13),
-//! `<out_dir>/edge_lorries.bin` (as `edge_counts.bin`, lorries alone; M18c) and `<out_dir>/day.json`
+//! `<out_dir>/edge_lorries.bin` (as `edge_counts.bin`, lorries alone; M18c),
+//! `<out_dir>/edge_heavy.bin` (the same for lorries over 12 t; M21) and `<out_dir>/day.json`
 //! (traffic statistics per hour, with the vehicle-hours queued at junctions by holdup).
 //!
 //! `FREQUENCY=2` runs every tram and bus line twice as often, `PRIORITY=all` gives trams and
@@ -156,6 +157,7 @@ fn main() {
         std::collections::HashMap::new();
     let mut by_hour = vec![Vec::new(); 24];
     let mut lorries_by_hour = vec![Vec::new(); 24];
+    let mut heavy_by_hour = vec![Vec::new(); 24];
     let mut speeds_by_hour = vec![Vec::new(); 24];
     // WATCH_JUNCTIONS=j1,j2 and WATCH_FROM=13: from that hour of the day, every simulated
     // minute, the stopped front vehicle of each queue into those junctions (as in `run`).
@@ -175,6 +177,7 @@ fn main() {
         let hour = (START_HOUR + k) % 24;
         let entered = engine.edge_entered.clone();
         let lorries = engine.edge_lorries.clone();
+        let heavy = engine.edge_heavy.clone();
         let delay0 = delay_total(&engine);
         let s0 = engine.stats.clone();
         let (mut running, mut outside, mut speed, mut stopped, mut samples) = (0, 0, 0.0, 0, 0);
@@ -193,7 +196,8 @@ fn main() {
                 for lane in engine.net.edge_lanes(e) {
                     for &v in engine.vehicles_on(lane) {
                         let veh = &engine.vehs[v as usize];
-                        if veh.vtype > vtype::TRUCK || !seen.insert((e, v, veh.serial)) {
+                        let road = matches!(veh.vtype, vtype::CAR | vtype::TRUCK | vtype::HEAVY);
+                        if !road || !seen.insert((e, v, veh.serial)) {
                             continue;
                         }
                         let town = |edge: u32, beyond: bool| {
@@ -236,6 +240,12 @@ fn main() {
             .edge_lorries
             .iter()
             .zip(&lorries)
+            .map(|(a, b)| a - b)
+            .collect::<Vec<u32>>();
+        heavy_by_hour[hour] = engine
+            .edge_heavy
+            .iter()
+            .zip(&heavy)
             .map(|(a, b)| a - b)
             .collect::<Vec<u32>>();
         by_hour[hour] = engine
@@ -299,6 +309,14 @@ fn main() {
         }
     }
     std::fs::write(format!("{out}/edge_lorries.bin"), bytes).expect("write lorries");
+    let mut bytes = Vec::with_capacity(4 + 24 * n * 4);
+    bytes.extend((n as u32).to_le_bytes());
+    for counts in &heavy_by_hour {
+        for c in counts {
+            bytes.extend(c.to_le_bytes());
+        }
+    }
+    std::fs::write(format!("{out}/edge_heavy.bin"), bytes).expect("write heavy lorries");
     // Bikes over the whole day per edge (M8d): u32 edge count, then u32 per edge.
     let mut bytes = Vec::with_capacity(4 + engine.edge_bikes.len() * 4);
     bytes.extend((engine.edge_bikes.len() as u32).to_le_bytes());

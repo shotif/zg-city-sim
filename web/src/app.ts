@@ -123,6 +123,7 @@ import { ProjectsSection } from './ui/projectsSection';
 import { junctionName } from './edit/signals';
 import { roadsAcross, roadsInto } from './edit/policies';
 import { PolicySection } from './ui/policySection';
+import { lorryRules } from './edit/lorryRules';
 import { RoadDrawer } from './ui/roadDrawer';
 import { BuildingLayer, buildingCentres, loadBuildings } from './world/buildingLayer';
 import {
@@ -133,7 +134,7 @@ import {
   placeClosures,
   zagrebNow,
 } from './world/closures';
-import { AreaLayer, DrawLayer, EDIT_COLORS, EditLayer } from './world/editLayer';
+import { AreaLayer, DrawLayer, EDIT_COLORS, EditLayer, LORRY_RULES_COLOR } from './world/editLayer';
 import { WorldFrame } from './world/frame';
 import type { HeightFn } from './world/roadGeometry';
 import { RoadLayer } from './world/roadLayer';
@@ -1125,6 +1126,9 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
       scene.add(drawLayer.object);
       const areaLayer = new AreaLayer(surface);
       scene.add(areaLayer.object);
+      // Today's lorry rules (M21): drawn while the Policies section shows them.
+      const rules = lorryRules(net);
+      let showRules = false;
       let resolved: ResolvedEdit[] = [];
       const redraw = () => {
         const groups: { edges: number[]; color: number; width?: number }[] = (
@@ -1143,14 +1147,18 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
         if (selected !== undefined) {
           groups.push({ color: EDIT_COLORS.selected, edges: [selected], width: 8 });
         }
+        if (showRules && rules) groups.push({ color: LORRY_RULES_COLOR, edges: rules.limited });
         layer.show(groups);
-        areaLayer.show(
-          edits.flatMap((e) =>
+        areaLayer.show([
+          ...edits.flatMap((e) =>
             e.kind === 'charge' || e.kind === 'parking' || e.kind === 'lorryBan'
               ? [{ points: e.area, color: EDIT_COLORS[e.kind] }]
               : [],
           ),
-        );
+          ...(showRules && rules?.zone.length
+            ? [{ points: rules.zone, color: LORRY_RULES_COLOR }]
+            : []),
+        ]);
         invalidate();
       };
       /** The network loaded with these roads and junctions (built once per list). */
@@ -1331,24 +1339,32 @@ export async function startApp(container: HTMLElement, game: Game): Promise<void
       });
       debug.drawer = drawer;
       // Policies (M18): a congestion charge, a parking surcharge or a lorry ban on an area.
-      const policies = new PolicySection(panel.drawSlot, {
-        onDrawing: (on) => {
-          if (on) panel.select(undefined);
-          if (on && drawer.active) drawer.cancel();
-          invalidate();
+      const policies = new PolicySection(
+        panel.drawSlot,
+        {
+          onDrawing: (on) => {
+            if (on) panel.select(undefined);
+            if (on && drawer.active) drawer.cancel();
+            invalidate();
+          },
+          onPoints: (points) => {
+            drawLayer.show(points);
+            invalidate();
+          },
+          onPolicy: (policy) => {
+            const list = withEdit(edits, policy);
+            const unpaid = budgetTool.afford(costs(list).build);
+            if (unpaid) return unpaid;
+            apply(list);
+            return undefined;
+          },
+          onRules: (shown) => {
+            showRules = shown;
+            redraw();
+          },
         },
-        onPoints: (points) => {
-          drawLayer.show(points);
-          invalidate();
-        },
-        onPolicy: (policy) => {
-          const list = withEdit(edits, policy);
-          const unpaid = budgetTool.afford(costs(list).build);
-          if (unpaid) return unpaid;
-          apply(list);
-          return undefined;
-        },
-      });
+        rules,
+      );
       debug.policies = policies;
       placeService = (kind, at) => {
         const name = nextServiceName(kind, SERVICE_KINDS[kind].one, edits);

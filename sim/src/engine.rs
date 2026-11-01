@@ -517,8 +517,10 @@ pub struct Engine {
     cycleway: Vec<u8>,
     /// Bikes that have ridden onto each edge (`edge_entered` counts the rest).
     pub edge_bikes: Vec<u32>,
-    /// Lorries that have driven onto each edge (also in `edge_entered`; M18c).
+    /// Lorries that have driven onto each edge (also in `edge_entered`; M18c), and of them
+    /// the heavy ones (over 12 t, M21).
     pub edge_lorries: Vec<u32>,
+    pub edge_heavy: Vec<u32>,
     /// Level crossings (M8b), as `net.crossings`: since when each has been closing for a
     /// train (s; NaN while open), and until when a train is due there.
     pub(crate) crossing_since: Vec<f64>,
@@ -1195,6 +1197,7 @@ impl Engine {
             cycleway: Vec::new(),
             edge_bikes: vec![0; n_edges],
             edge_lorries: vec![0; n_edges],
+            edge_heavy: vec![0; n_edges],
             crossing_since: Vec::new(),
             crossing_due: Vec::new(),
             crossing_closures: Vec::new(),
@@ -1237,7 +1240,18 @@ impl Engine {
         };
         engine.reset_signals();
         engine.refresh_peak_time();
+        engine.add_standing_bans();
+        engine.policies.refresh(engine.time);
+        engine.apply_charges();
         engine
+    }
+
+    /// Zagreb's central zone keeps lorries over 12 t out all day (M21): a standing lorry
+    /// ban, in force with or without the player's policies.
+    fn add_standing_bans(&mut self) {
+        let zone = self.net.lorry_zone();
+        self.policies
+            .add_zone(&self.net, zone, vtype::HEAVY_FROM_TONNES);
     }
 
     /// Jump to a time of day (s since midnight); signals restart their cycles from it.
@@ -1333,14 +1347,15 @@ impl Engine {
     }
 
     /// The fastest route from `from` to `to` (both included) for `vclass` on `times`,
-    /// tolls counted or not: on the hierarchy where it covers the search, else by A*.
-    /// `router.purpose` says what the search is for, for the log.
+    /// tolls counted or not (`weight`: a lorry's, t, M21): on the hierarchy where it covers
+    /// the search, else by A*. `router.purpose` says what the search is for, for the log.
     fn find_route(
         &mut self,
         times: Times,
         from: u32,
         to: u32,
         vclass: u16,
+        weight: f32,
         tolls: bool,
     ) -> Option<Vec<u32>> {
         let t: &[f32] = match times {
@@ -1350,7 +1365,7 @@ impl Engine {
             Times::Peak => &self.peak_time,
         };
         if let Some(h) = self.hierarchy.as_mut()
-            && let Some(kind) = h.kind(times, vclass, tolls)
+            && let Some(kind) = h.kind(times, vclass, weight, tolls)
         {
             let route = h.route(&self.net, t, kind, from, to);
             let router = &mut self.router;
@@ -1371,6 +1386,7 @@ impl Engine {
         }
         self.router.tolls = tolls;
         self.router.fuel = times == Times::Travel;
+        self.router.lorry_weight = weight;
         self.router.route(&self.net, t, from, to, vclass)
     }
 
@@ -1983,7 +1999,8 @@ impl Engine {
         let next = d.lane_edge[d.link_to[on as usize] as usize];
         let times = self.times_for(vtype);
         self.router.purpose = purpose::LANE;
-        let Some(route) = self.find_route(times, next, dest, vclass, tolls) else {
+        let weight = TYPES[vtype as usize].weight;
+        let Some(route) = self.find_route(times, next, dest, vclass, weight, tolls) else {
             return;
         };
         let veh = &mut self.vehs[v as usize];
@@ -3288,7 +3305,7 @@ impl Engine {
             let kind = self
                 .hierarchy
                 .as_ref()
-                .and_then(|h| h.kind(Times::Peak, vclass::PASSENGER, false));
+                .and_then(|h| h.kind(Times::Peak, vclass::PASSENGER, 0.0, false));
             if let (Some(h), Some(kind)) = (self.hierarchy.as_mut(), kind)
                 && h.one_to_all(&self.net, &self.peak_time, kind, from, &mut self.one_to_all)
             {
@@ -3941,13 +3958,17 @@ impl Engine {
                 } else {
                     self.edge_entered[e] += 1;
                     let veh = &self.vehs[v as usize];
-                    let lorry = veh.transit.is_none() && veh.vtype == vtype::TRUCK;
+                    let lorry = veh.transit.is_none() && vtype::is_lorry(veh.vtype);
                     if lorry {
                         self.edge_lorries[e] += 1;
+                        if veh.vtype == vtype::HEAVY {
+                            self.edge_heavy[e] += 1;
+                        }
                     }
                     let pays = veh.transit.is_none() && (veh.vtype == vtype::CAR || lorry);
                     if pays && !self.policies.is_empty() {
-                        self.policies.entered(e as u32, lorry);
+                        let weight = if lorry { veh.params().weight } else { 0.0 };
+                        self.policies.entered(e as u32, weight);
                     }
                 }
                 let veh = &self.vehs[v as usize];
@@ -4339,7 +4360,8 @@ impl Engine {
                 continue;
             }
             let to_edge = self.net.d.lane_edge[self.net.d.link_to[l as usize] as usize];
-            if let Some(route) = self.find_route(times, to_edge, dest, vclass, tolls) {
+            let weight = TYPES[self.vehs[v as usize].vtype as usize].weight;
+            if let Some(route) = self.find_route(times, to_edge, dest, vclass, weight, tolls) {
                 let veh = &mut self.vehs[v as usize];
                 veh.route.clear();
                 veh.route.push(here);
@@ -4385,7 +4407,8 @@ impl Engine {
             let tolls = self.weighs_tolls(&trip);
             self.router.purpose = purpose::DEPART;
             let times = self.times_for(trip.vtype);
-            let route = self.find_route(times, trip.from, trip.to, vclass, tolls);
+            let weight = TYPES[trip.vtype as usize].weight;
+            let route = self.find_route(times, trip.from, trip.to, vclass, weight, tolls);
             self.stats.routes += 1;
             self.stats.route_settled += self.router.last_settled as u64;
             match route {
@@ -5259,8 +5282,11 @@ impl Engine {
             .route_seconds(&mut seconds, self.net.edge_count());
         self.net.set_charges(&seconds);
         self.policies
-            .ban_seconds(&mut seconds, self.net.edge_count());
+            .ban_seconds(&mut seconds, self.net.edge_count(), false);
         self.net.set_bans(&seconds);
+        self.policies
+            .ban_seconds(&mut seconds, self.net.edge_count(), true);
+        self.net.set_heavy_bans(&seconds);
         self.charge_seconds = seconds;
         if let Some(h) = self.hierarchy.as_mut() {
             h.charges_changed(&self.net);
@@ -5394,6 +5420,7 @@ impl Engine {
         // are found on the network now.
         let old = std::mem::take(&mut self.policies);
         self.policies = Policies::new(&self.net, charges, parking, bans);
+        self.add_standing_bans();
         self.policies.paid = old.paid;
         self.policies.payers = old.payers;
         self.policies.parking_paid = old.parking_paid;
@@ -5484,7 +5511,7 @@ impl Engine {
             return None;
         }
         self.router.purpose = purpose::INFO;
-        let route = self.find_route(Times::Travel, from, to, vclass::PASSENGER, true)?;
+        let route = self.find_route(Times::Travel, from, to, vclass::PASSENGER, 0.0, true)?;
         Some(
             route[1..]
                 .iter()
@@ -5628,11 +5655,11 @@ impl Engine {
         let Some(&dest) = veh.route.last() else {
             return;
         };
-        let vclass = veh.params().vclass;
+        let (vclass, weight) = (veh.params().vclass, veh.params().weight);
         let here = self.net.d.lane_edge[lane as usize];
         let (tolls, times) = (veh.weighs_tolls, self.times_for(veh.vtype));
         self.router.purpose = purpose::REPLAN;
-        let Some(route) = self.find_route(times, here, dest, vclass, tolls) else {
+        let Some(route) = self.find_route(times, here, dest, vclass, weight, tolls) else {
             return;
         };
         let veh = &self.vehs[v as usize];
@@ -5714,12 +5741,12 @@ impl Engine {
         if room < REPLAN_MARGIN {
             return;
         }
-        let vclass = veh.params().vclass;
+        let (vclass, weight) = (veh.params().vclass, veh.params().weight);
         let here = d.lane_edge[lane as usize];
         let dest = *veh.route.last().unwrap();
         let tolls = veh.weighs_tolls;
         self.router.purpose = purpose::EN_ROUTE;
-        let found = self.find_route(Times::Travel, here, dest, vclass, tolls);
+        let found = self.find_route(Times::Travel, here, dest, vclass, weight, tolls);
         let veh = &self.vehs[v as usize];
         if let Some(route) = found
             && route[..] != veh.route[veh.route_idx as usize..]

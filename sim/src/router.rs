@@ -347,6 +347,8 @@ pub struct Router {
     /// searches on the measured travel times do; buses' and trams' ways between stops and
     /// bikes do not.
     pub fuel: bool,
+    /// The weight (t) lorries' routes count against roads' limits and lorry bans (M21).
+    pub lorry_weight: f32,
     /// Weight on the heuristic (`HEURISTIC_WEIGHT`; the `routes` example tries others).
     pub weight: f32,
     /// Time spent in `route` (s); counted only with the `profile` feature.
@@ -372,6 +374,7 @@ impl Router {
             last_settled: 0,
             tolls: true,
             fuel: true,
+            lorry_weight: crate::vtype::LIGHT_LORRY_TONNES,
             weight: HEURISTIC_WEIGHT,
             seconds: 0.0,
             searches: 0,
@@ -458,9 +461,11 @@ impl Router {
             tolls,
             fuel,
             weight,
+            lorry_weight,
             ..
         } = self;
         let weight = *weight;
+        let lorry_weight = *lorry_weight;
         let fuel = *fuel && vclass != vclass::BICYCLE;
         let (tx, tz) = net.edge_mid[to as usize];
         let landmarks = landmarks.as_ref();
@@ -507,7 +512,7 @@ impl Router {
                 let next = s.edge;
                 let toll = if *tolls { s.toll } else { 0.0 };
                 let ban = if fuel && vclass == vclass::TRUCK {
-                    s.ban
+                    s.lorry_cost(lorry_weight)
                 } else {
                     0.0
                 };

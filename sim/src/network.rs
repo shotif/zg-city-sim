@@ -38,6 +38,11 @@ pub const TOLL_TIME: f32 = 0.018;
 /// old road through Velika Mlaka.
 pub const FUEL_TIME: f32 = 0.020;
 
+/// Seconds lorry routes count for driving onto a road limited to less than the lorry weighs,
+/// or closed to lorries (M21): an hour, as a lorry ban (`policy::BAN_SECONDS`), so lorries
+/// take such roads only to reach places on them.
+pub const LIMIT_SECONDS: f32 = 3600.0;
+
 /// Link directions (pipeline/simnet.py LINK_DIRS).
 pub mod dir {
     pub const STRAIGHT: u8 = 0;
@@ -98,6 +103,12 @@ pub struct NetworkData {
     /// Per edge, the share of its speed limit (%) traffic moves at in the morning peak as a
     /// day run had it (M10d, `pipeline/peak.py`); 255 or missing where not known.
     pub edge_peak: Vec<u8>,
+    /// Per edge, the weight lorries may not exceed on it (0.1 t; 0 or missing: no limit),
+    /// from OpenStreetMap's `maxweight` and `hgv` (M21, `pipeline/lorries.py`).
+    pub edge_max_weight: Vec<u16>,
+    /// Zagreb's central zone, which lorries over 12 t may not enter (M21): its corners (x, z
+    /// in turn). Empty: no such zone.
+    pub lorry_zone: Vec<f32>,
     /// Where turns wait inside their junction (SUMO's internal junctions, M7b): the
     /// junction lane that waits, sorted, and per wait (offsets) the lanes it gives way to
     /// there: the junction lanes of the movements it crosses, and the lanes they come from.
@@ -174,6 +185,8 @@ named_arrays! {
     "phaseStates" => phase_states: u8,
     "tlsFixed" => tls_fixed: u8,
     "edgePeak" => edge_peak: u8,
+    "edgeMaxWeight" => edge_max_weight: u16,
+    "lorryZone" => lorry_zone: f32,
     "waitLane" => wait_lane: u32,
     "waitFoeOffsets" => wait_foe_offsets: u32,
     "waitFoes" => wait_foes: u32,
@@ -202,6 +215,26 @@ pub struct Successor {
     /// Seconds a lorry ban counts for driving onto the edge it leads to, in lorry routes
     /// only (M18c, `Network::set_bans`), 0 where none applies.
     pub ban: f32,
+    /// The same for bans on heavy lorries alone (over 12 t: Zagreb's central zone, M21).
+    pub heavy_ban: f32,
+    /// The weight (t) lorries may not exceed on the edge it leads to (infinite: no limit).
+    pub limit: f32,
+}
+
+impl Successor {
+    /// What a lorry of `weight` t counts for this move besides time, tolls, fuel and
+    /// charges: the lorry bans that apply to it, and `LIMIT_SECONDS` if the road it leads
+    /// to is limited to less than it weighs (M21).
+    pub fn lorry_cost(&self, weight: f32) -> f32 {
+        let mut cost = self.ban;
+        if weight > crate::vtype::HEAVY_FROM_TONNES {
+            cost += self.heavy_ban;
+        }
+        if weight > self.limit {
+            cost += LIMIT_SECONDS;
+        }
+        cost
+    }
 }
 
 pub struct Network {
@@ -591,6 +624,10 @@ impl Network {
             } else {
                 0.0
             };
+            let limit = match d.edge_max_weight.get(to as usize) {
+                Some(&w) if w > 0 => w as f32 / 10.0,
+                _ => f32::INFINITY,
+            };
             succ.push(Successor {
                 edge: to,
                 allow,
@@ -599,6 +636,8 @@ impl Network {
                 fuel: FUEL_TIME * length,
                 charge: 0.0,
                 ban: 0.0,
+                heavy_ban: 0.0,
+                limit,
             });
         }
         for e in 0..n_edges {
@@ -622,6 +661,22 @@ impl Network {
         for s in &mut self.succ {
             s.ban = seconds.get(s.edge as usize).copied().unwrap_or(0.0);
         }
+    }
+
+    /// The same for bans on heavy lorries alone (M21).
+    pub fn set_heavy_bans(&mut self, seconds: &[f32]) {
+        for s in &mut self.succ {
+            s.heavy_ban = seconds.get(s.edge as usize).copied().unwrap_or(0.0);
+        }
+    }
+
+    /// Zagreb's central zone (`NetworkData::lorry_zone`) as corners.
+    pub fn lorry_zone(&self) -> Vec<(f32, f32)> {
+        self.d
+            .lorry_zone
+            .chunks_exact(2)
+            .map(|p| (p[0], p[1]))
+            .collect()
     }
 
     pub fn lane_count(&self) -> usize {

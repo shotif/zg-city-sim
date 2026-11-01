@@ -513,6 +513,8 @@ export const MODELS: Model[][] = [
   [TRAM],
   [TRAIN],
   [BIKE],
+  // Lorries over 12 t (M21) look like the lighter ones for now.
+  LORRIES,
 ];
 
 const CAR_TOTAL = CARS.reduce((n, c) => n + c.weight, 0);
@@ -528,6 +530,6 @@ export function modelOf(type: number, seed: number): number {
     }
     return 0;
   }
-  if (type === 1) return seed % LORRIES.length;
+  if (type === 1 || type === 6) return seed % LORRIES.length;
   return 0;
 }
