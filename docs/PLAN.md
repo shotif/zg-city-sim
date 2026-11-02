@@ -784,7 +784,17 @@ The policies' effects and costs are estimates, and the plan says from what. Each
   - Time lost other than at red lights is 70 % within 6 km of the centre, and 76 % of it is at give-way junctions. It is spread thin: the 20 worst junctions hold 13 % of it, the 300 worst half. The worst are give-way crossings that are signalled in Zagreb (Avenija Marina Držića at Lastovska ulica and at Branimirova, Osječka ulica at Branimirova, Kruge at Slavonska avenija), Zabok's roundabouts and junctions where drivers stand in the wrong lane (Savska cesta, Jadranski most, motorway ramps).
   - Give way, checked again against the Highway Capacity Manual at heavier flows than M12a's one case: turning right or left into a main road or crossing it, and turning left across oncoming traffic, from the stop line or waiting inside the junction (M7b). Against Tanner's formula for the test's traffic (vehicles at least 2 s apart) with the HCM's gaps, the engine lets as many through or more: the left turn waiting inside the junction 1.2 times as many with 600-800 oncoming vehicles an hour. Give way as such is not short of capacity.
   - Side roads into a queue starve. A side road joining a main road queued back from a signal 150 m on (in a test) got 60 of its 300 vehicles an hour through, and its queue filled it, where Zagreb's drivers let one in now and then or take turns. Three causes: a driver creeping up to the stop line (0.4 m, from where it waits for room to where it waits for a gap) started its waiting time again, so it never grew impatient enough to push in; a driver standing at the line counted as unable to stop, so it never let a driver who had waited long go first; and nothing made drivers in a slow queue take turns.
-- **M23b, side roads into queues** (in progress). Creeping up to the line keeps the waiting time that makes a driver push in (the time standing still, after which a driver enters a full junction, starts again as before). In the test the side road gets 117 vehicles an hour through (60). Over a 90 % day (seed 1) it changes little: 138,500 vehicle-hours queued at junctions within 6 km of the centre (133,700 without), 16,116 vehicles removed (16,157), 24 of 47 stations within ±25 % (22). Being checked at 80 % on seeds 1 and 2.
+- **M23b, side roads into queues** (done 2026-11-02). Creeping up to the line keeps the waiting time that makes a driver push in (the time standing still, after which a driver enters a full junction, starts again as before). In the test the side road gets 117 vehicles an hour through (60). Over whole days it changes little, within what seeds vary by:
+
+  | Whole day, 80 % | Seed 1 before | Seed 2 before | Seed 1 | Seed 2 |
+  |---|---:|---:|---:|---:|
+  | Removed for gridlock | 6,989 | 8,154 | 7,922 | 7,002 |
+  | Queued at junctions (vehicle-hours) | 89,376 | 102,538 | 99,494 | 91,822 |
+  | of which within 6 km of the centre | 71,538 | 72,242 | 73,650 | 73,281 |
+  | Stations within ±25 % (of 47) | 22 | 24 | 24 | 22 |
+  | Mean absolute difference from the counts | 50 % | 51 % | 50 % | 49 % |
+
+  At 90 % (seed 1): 138,500 vehicle-hours queued within 6 km of the centre (133,700 before), 16,116 vehicles removed (16,157), 24 stations within ±25 % (22).
   - Tried and left out, by 90 % days on seed 1:
     - A driver standing at the line letting a driver who waited long go first (it counted as unable to stop): 162,500 vehicle-hours in the centre (+22 %), 17,176 removed, and Zabok's roundabouts jammed (16,300 vehicle-hours within 5 km, from 11,400). In a queue on a main road every driver can then stop, so the side road gets priority over it, and the main road's queue backs up across the junctions behind.
     - Drivers coming up slower than 18 km/h into a queue just beyond the junction taking turns with a driver waiting to join the same lane: with both other changes, 168,600 vehicle-hours in the centre and 21,401 removed; without turn-taking, 166,500 and 19,681.
@@ -923,7 +933,7 @@ The multi-year backfill happens in development sessions. Automated monitoring co
 | **M20 Services** | Primary schools, kindergartens and health centres that growing homes need, and fire and police stations with response times on the simulated roads; today's from open data, new ones placed by the player, with trips to them and their costs (done: M20a-d) |
 | **M21 Lorry rules** | Roads OpenStreetMap closes to lorries or limits by weight, lorries told apart by weight, and the City's ban on lorries over 12 t in its central zone, in force in every city: heavy lorries into the zone 54-56 % fewer, lorries onto limited roads 81-83 % fewer (done) |
 | **M22 Faster engine** | The engine 1.6 times faster natively with the same results (lane scores kept, metrics customised together, vehicles planned on threads), 7 % faster in the browser (done) |
-| **M23 Full demand** | Find where Zagreb's big junctions lose capacity and raise the demand simulated from 80 % towards all of it, validated on the counts (next) |
+| **M23 Full demand** | Find where Zagreb's big junctions lose capacity and raise the demand simulated from 80 % towards all of it, validated on the counts (in progress: M23a-b done) |
 
 ## Risks and open questions
 
