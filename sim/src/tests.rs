@@ -5665,7 +5665,7 @@ fn side_road_into_a_queue(main: f64, side: f64) -> (f64, f64) {
 fn a_side_road_into_a_queue_gets_drivers_in() {
     // The light lets about 780 an hour through. With more coming along the main road, the
     // side road got 60 of its 300 an hour in (M23a): a driver creeping up to the line
-    // started its waiting time again, and one standing at the line never let anyone go first.
+    // started its waiting time again, so it never grew impatient enough to push in.
     let (main, side) = side_road_into_a_queue(1200.0, 300.0);
     println!("main road {main:.0}/h, side road {side:.0}/h");
     assert!(side > 100.0, "{side:.0}");
