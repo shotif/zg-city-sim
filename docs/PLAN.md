@@ -803,7 +803,23 @@ The policies' effects and costs are estimates, and the plan says from what. Each
   - Signalled lanes are seldom what limits it. As the engine runs them (merged, with trams and re-timed), 2,562 signalled lanes get 40-47 % of their cycles green on average, by road type; at the 90 % day's busiest hours only 4-11 of them carry over 90 % of what their green passes at 1,900 vehicles an hour (6 at 08:00, 11 at 14:00, 4 at 17:00). Traffic is held up before it reaches them: at give-way junctions, in queues across junctions and in the wrong lanes.
   - Courtesy, tried and kept: without drivers letting one who has waited long go first (a 90 % day on seed 1), 129,300 vehicle-hours are queued within 6 km of the centre (133,700-138,500 with it), but Zabok's roundabouts lock up (42,100 within 5 km, 8,600-11,400 with it), 18,895 vehicles are removed (16,116) and 20 stations are within ±25 % (24). The rule keeps roundabouts and side roads moving, at little cost to the main roads.
   - Drivers cut through side streets a little more as the main roads fill: residential streets carry 8.5 % of the vehicle-km at 80 % and 9.3 % at 90 %, unclassified roads 4.0 % and 4.3 %.
-- **M23d**: the demand share raised step by step, with the count fit, the gridlock and the riders' constant checked at each.
+- **M23d, the demand share** (measured 2026-11-02; the owner's decision pending). Whole days with M23b's engine, on two seeds at each share:
+
+  | Whole day | 80 %, seed 1 | 80 %, seed 2 | 90 %, seed 1 | 90 %, seed 2 |
+  |---|---:|---:|---:|---:|
+  | Trips started | 878,116 | 878,790 | 979,958 | 980,701 |
+  | Removed for gridlock | 7,922 (0.9 %) | 7,002 (0.8 %) | 16,116 (1.6 %) | 15,300 (1.6 %) |
+  | Vehicles on the road at 17:00 | 40,406 | 37,845 | 59,956 | 58,294 |
+  | Mean speed at 17:00 (km/h) | 29 | 31 | 22 | 23 |
+  | Mean trip ending 17:00-18:00 (min) | 43 | 41 | 55 | 54 |
+  | Mean trip over the day (min) | 28.1 | 27.5 | 34.7 | 34.2 |
+  | Queued at junctions (vehicle-hours) | 99,494 | 91,822 | 182,972 | 176,667 |
+  | Stations within ±25 % (of 47) | 24 | 22 | 24 | 24 |
+  | Mean absolute difference from the counts | 50 % | 49 % | 53 % | 53 % |
+  | Total against the counts, scaled to full demand | 0.93 | 0.93 | 0.94 | 0.94 |
+  | Station-hours with GEH below 5 | 50 % | 51 % | 49 % | 49 % |
+
+  At 90 % the counts fit no better (the mean difference a little worse), twice as many vehicles are removed and twice as many vehicle-hours are queued, the evening's trips take a quarter longer and the queues last until about 20:00. The browser would run half as many vehicles again at 17:00.
 
 **Vehicles.**
 - Intelligent Driver Model for car following, MOBIL for lane changes.
