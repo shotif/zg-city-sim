@@ -798,7 +798,11 @@ The policies' effects and costs are estimates, and the plan says from what. Each
   - Tried and left out, by 90 % days on seed 1:
     - A driver standing at the line letting a driver who waited long go first (it counted as unable to stop): 162,500 vehicle-hours in the centre (+22 %), 17,176 removed, and Zabok's roundabouts jammed (16,300 vehicle-hours within 5 km, from 11,400). In a queue on a main road every driver can then stop, so the side road gets priority over it, and the main road's queue backs up across the junctions behind.
     - Drivers coming up slower than 18 km/h into a queue just beyond the junction taking turns with a driver waiting to join the same lane: with both other changes, 168,600 vehicle-hours in the centre and 21,401 removed; without turn-taking, 166,500 and 19,681.
-- **M23c**: the next causes, from M23b's runs.
+- **M23c, what else holds capacity back** (in progress).
+  - From 80 % to 90 % (seed 1) every kind of delay grows by about as much: at red lights from 33,500 to 56,100 vehicle-hours, giving way from 20,100 to 40,100, moving slowly in queues from 17,000 to 35,500, in the wrong lane from 5,000 to 10,300 and blocked by the road ahead from 6,200 to 11,700. No one cause stands out: the network as a whole is near what it carries.
+  - Signalled lanes are seldom what limits it. As the engine runs them (merged, with trams and re-timed), 2,562 signalled lanes get 40-47 % of their cycles green on average, by road type; at the 90 % day's busiest hours only 4-11 of them carry over 90 % of what their green passes at 1,900 vehicles an hour (6 at 08:00, 11 at 14:00, 4 at 17:00). Traffic is held up before it reaches them: at give-way junctions, in queues across junctions and in the wrong lanes.
+  - Courtesy, tried and kept: without drivers letting one who has waited long go first (a 90 % day on seed 1), 129,300 vehicle-hours are queued within 6 km of the centre (133,700-138,500 with it), but Zabok's roundabouts lock up (42,100 within 5 km, 8,600-11,400 with it), 18,895 vehicles are removed (16,116) and 20 stations are within ±25 % (24). The rule keeps roundabouts and side roads moving, at little cost to the main roads.
+  - Drivers cut through side streets a little more as the main roads fill: residential streets carry 8.5 % of the vehicle-km at 80 % and 9.3 % at 90 %, unclassified roads 4.0 % and 4.3 %.
 - **M23d**: the demand share raised step by step, with the count fit, the gridlock and the riders' constant checked at each.
 
 **Vehicles.**
